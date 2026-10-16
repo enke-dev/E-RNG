@@ -1,0 +1,7 @@
+[install]
+# pnpm `save-exact`
+exact = true
+
+# supply-chain guard: only install packages published at least a day ago
+minimumReleaseAge = 86400
+minimumReleaseAgeExcludes = ["@enke.dev/lint"]

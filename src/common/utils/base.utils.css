@@ -1,0 +1,40 @@
+:host {
+  display: contents;
+}
+
+/* layout helpers shared by all elements, the global utility classes do not reach into shadow roots */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-m);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wa-space-s);
+}
+
+.row.end {
+  justify-content: flex-end;
+}
+
+.row.between {
+  justify-content: space-between;
+}
+
+.grid {
+  display: grid;
+  gap: var(--wa-space-m);
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+}
+
+.muted {
+  color: var(--wa-color-text-quiet);
+}
+
+h2 {
+  margin: 0;
+  font-size: var(--wa-font-size-l);
+}

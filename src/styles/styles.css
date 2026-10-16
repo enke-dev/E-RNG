@@ -1,0 +1,7 @@
+@import url(../../node_modules/@awesome.me/webawesome/dist/styles/webawesome.css);
+
+body {
+  height: 100dvh;
+  margin: 0;
+  overflow: hidden;
+}

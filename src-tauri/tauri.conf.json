@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "E-Rng",
+  "version": "0.0.0",
+  "identifier": "dev.enke.e-rng",
+  "build": {
+    "beforeDevCommand": "bun run generate && vite dev --config .configs/vite.config.ts",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run generate && vite build --config .configs/vite.config.ts",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "E-Rng",
+        "width": 1200,
+        "height": 800,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "sidecars/": "sidecars/"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgzQjk3QjlFMjcwNzk0ODMKUldTRGxBY25ubnU1ZzhJbVlPZ25RSTRDTEt1cHFpTFlxWi8rZ0lSL2JBYTRtWis1Q3l0T0lTbm8K",
+      "endpoints": ["https://github.com/enke-dev/e-rng/raw/gh-e-rng-latest/latest.json"]
+    }
+  }
+}

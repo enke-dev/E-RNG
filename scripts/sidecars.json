@@ -1,0 +1,18 @@
+{
+  "typst": {
+    "version": "0.15.1",
+    "url": "https://github.com/typst/typst/releases/download/v0.15.1/typst-aarch64-apple-darwin.tar.xz",
+    "sha256": "48f62ed034aa3a7978309579ac6ca00045e2ef0da73114e8af27cfd8e74dc05a"
+  },
+  "mustang": {
+    "version": "2.26.0",
+    "url": "https://github.com/ZUGFeRD/mustangproject/releases/download/core-2.26.0/Mustang-CLI-2.26.0.jar",
+    "sha256": "42d7868cb68264874a7b8cab4c3587b03b23ccc7cd72373da917f66758bb9736"
+  },
+  "jdk": {
+    "version": "21.0.12.1+1",
+    "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz",
+    "sha256": "3623232f33a9c3baadf304480b2535f9a3cba8a58d42ecbb438ba267315d9998",
+    "modules": "java.base,java.compiler,java.desktop,java.instrument,java.logging,java.management,java.naming,java.prefs,java.sql,java.xml,jdk.unsupported,jdk.xml.dom"
+  }
+}

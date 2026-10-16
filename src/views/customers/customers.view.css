@@ -1,0 +1,17 @@
+:host {
+  display: block;
+}
+
+.customers {
+  display: grid;
+  gap: var(--wa-space-m);
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+}
+
+wa-card {
+  cursor: pointer;
+}
+
+wa-dialog::part(dialog) {
+  max-width: 40rem;
+}

@@ -1,0 +1,46 @@
+:host {
+  display: block;
+}
+
+.positions {
+  display: grid;
+  gap: var(--wa-space-s) var(--wa-space-s);
+  grid-template-columns: minmax(12rem, 1fr) 6rem 8rem 8rem auto;
+  align-items: end;
+}
+
+.positions .head {
+  font-size: var(--wa-font-size-s);
+  color: var(--wa-color-text-quiet);
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: end;
+  gap: var(--wa-space-2xs) var(--wa-space-xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.summary .value {
+  text-align: right;
+}
+
+.summary .total {
+  font-weight: var(--wa-font-weight-bold);
+  border-top: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  padding-top: var(--wa-space-2xs);
+}
+
+ul {
+  margin: var(--wa-space-2xs) 0 0;
+  padding-left: var(--wa-space-l);
+}
+
+wa-dialog::part(dialog) {
+  max-width: 44rem;
+}
+
+.issue {
+  font-size: var(--wa-font-size-s);
+}

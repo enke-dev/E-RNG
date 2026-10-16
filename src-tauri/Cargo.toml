@@ -1,0 +1,40 @@
+[package]
+name = "e_rng"
+version = "0.0.0"
+description = "Desktop app to create ZUGFeRD/Factur-X invoices and XRechnung XML"
+authors = ["David Enke <de@enke.dev>"]
+edition = "2021"
+
+[lib]
+# the `_lib` suffix keeps the lib name unique, it would conflict with the bin name on Windows
+name = "e_rng_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-log = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-os = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+en16931 = { version = "0.8.0", features = ["serde", "chrono"] }
+en16931-formats = { version = "0.8.0", default-features = false, features = ["cii"] }
+tempfile = "3"
+roxmltree = "0.21"
+rust_decimal = "1"
+anyhow = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+
+[dev-dependencies]
+rust_decimal = "1"
+rust_decimal_macros = "1"

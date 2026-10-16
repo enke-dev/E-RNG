@@ -1,0 +1,14 @@
+#[path = "check-invoice.command.rs"]
+pub mod check_invoice_command;
+#[path = "customers.command.rs"]
+pub mod customers_command;
+#[path = "discard-work-dir.command.rs"]
+pub mod discard_work_dir_command;
+#[path = "export-invoice.command.rs"]
+pub mod export_invoice_command;
+#[path = "invoices.command.rs"]
+pub mod invoices_command;
+#[path = "produce-invoice.command.rs"]
+pub mod produce_invoice_command;
+#[path = "settings.command.rs"]
+pub mod settings_command;

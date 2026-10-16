@@ -1,0 +1,58 @@
+:host {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+}
+
+/* room for the traffic lights of the overlay title bar */
+:host([macos]) header {
+  padding-top: 2.25rem;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--wa-space-m) var(--wa-space-l);
+  border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+}
+
+header .end {
+  display: flex;
+  align-items: center;
+  gap: var(--wa-space-s);
+}
+
+h1 {
+  margin: 0;
+  font-size: var(--wa-font-size-l);
+}
+
+nav {
+  display: flex;
+  gap: var(--wa-space-m);
+  margin-inline: var(--wa-space-xl) auto;
+
+  & a {
+    color: var(--wa-color-text-quiet);
+    text-decoration: none;
+    padding-block: var(--wa-space-2xs);
+    border-bottom: 2px solid transparent;
+
+    &[aria-current] {
+      color: var(--wa-color-text-normal);
+      border-bottom-color: var(--wa-color-brand-fill-loud);
+    }
+  }
+}
+
+main {
+  padding: var(--wa-space-l);
+  overflow-y: auto;
+}
+
+#window-decoration {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 28px;
+}

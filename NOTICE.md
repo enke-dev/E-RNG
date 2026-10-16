@@ -1,0 +1,18 @@
+# Notice
+
+The e-invoice model, business rules and CII/UBL bindings come from the
+[`en16931`](https://github.com/hupe1980/en16931) crates (MIT OR Apache-2.0). They implement the
+semantic data model of EN 16931-1 and the syntaxes listed in CEN/TS 16931-2. EN 16931-1 and
+CEN/TS 16931-2 are made available free of charge by CEN and the European Commission under their
+2018 licence agreement, which permits derivative use on condition that derivative applications
+carry a statement to this effect. Copyright in the standard remains with CEN.
+
+## Bundled tools
+
+The app ships these programs next to its binary and runs them as separate processes:
+
+- [Typst](https://github.com/typst/typst) (Apache-2.0) renders the invoice PDF.
+- [Mustang](https://github.com/ZUGFeRD/mustangproject) (Apache-2.0) attaches the XML and validates the result. Its jar includes
+  [veraPDF](https://verapdf.org) (GPL-3.0+ or MPL-2.0, used under the MPL), Saxon and PDFBox with their own licences.
+- A Java runtime linked from [Eclipse Temurin](https://adoptium.net) 21 (GPL-2.0 with Classpath Exception), its licence
+  files stay in `sidecars/jre/legal`.
