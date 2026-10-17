@@ -4,11 +4,14 @@ Goal: Desktop app (Tauri) that generates a **ZUGFeRD/Factur-X PDF** (PDF/A-3 + e
 
 ## Status and leftovers
 
-State on 2026-10-17: phases 1-5 are done (spike, model and XML, Typst template, validation gate, UI). The
-first push (`chore: init`) ran the whole release pipeline green and published **v0.0.1**: draft published,
-tag `v0.0.1`, release commit `chore: release 0.0.1` on `main`, `gh-e-rng-latest` created with a valid
-`latest.json`, assets `E-Rng_0.0.1_aarch64.dmg` (116 MB) and the signed updater archive (`.app.tar.gz` +
-`.sig`). The repo is public. Details per phase below, this list is the index of what is still open.
+State on 2026-10-17: phases 1-5 are done (spike, model and XML, Typst template, validation gate, UI), plus
+a polish round and the app icon. The first push (`chore: init`) ran the whole release pipeline green and
+published **v0.0.1**: draft published, tag `v0.0.1`, release commit `chore: release 0.0.1` on `main`,
+`gh-e-rng-latest` created with a valid `latest.json`, assets `E-Rng_0.0.1_aarch64.dmg` (116 MB) and the
+signed updater archive (`.app.tar.gz` + `.sig`). The repo is public. Work done after v0.0.1 (README, release
+hook fix, icon) is committed locally and ships with the next release. 48 Rust tests (a handful of them run
+the real tools and are ignored by default, see `docs/development.md`), no frontend tests. Details per phase below,
+this list is the index of what is still open.
 
 **Release and CD**
 - [x] First real `release.yml` run verified (see above); the release hook now only edits the version line of `tauri.conf.json` (it used to reformat the file with `jq`)
@@ -39,6 +42,10 @@ tag `v0.0.1`, release commit `chore: release 0.0.1` on `main`, `gh-e-rng-latest`
 - [x] The design lives in `src/assets/icon-default.icon` (Icon Composer; `icon-default.png` is its export, `icon-default.svg` the glyph layer, `icon-default.af` the Affinity source). `scripts/icons.ts` places the export on an 824 px body in a transparent 1024 px canvas (the margin macOS expects in an `.icns`) and runs `tauri icon`: that is the icon for macOS before 26 and for the window. Re-export the PNG from Icon Composer after changing the design
 - [ ] The Liquid Glass icon itself: Tauri's bundler (2.10.3) compiles a `.icon` listed under `bundle.icon` with `actool` (Xcode 26+). With the installed Xcode 27 beta (27A266a) `actool` fails on every `.icon`, even a minimal one (`Failed to create a catalog from the Icon Studio document`, `Bad file descriptor`; reproduced outside Tauri and outside the sandbox), and the bundler treats that as a fatal error. Retry with a release Xcode 26.x or a later 27 build, then add `"../src/assets/icon-default.icon"` to `bundle.icon`. The CI runner's Xcode is untested: if it is tried there, a failed run is cleaned up by the `cleanup` job (draft and tag are removed)
 
+**Repo cleanup**
+- [ ] `src/assets/5632d75c-161f-49e1-83c7-c58c111ceaaf.png` is a stray personal photo that nothing references (it was committed with the docs): remove it
+- [ ] `@enke.dev/lit-utils` is not used (the conventions below mention it as an option)
+
 **Invoice template**
 - [ ] Bundle a sans-serif font (Typst only embeds serif and math fonts; Inter is OFL)
 - [ ] EPC / GiroCode QR code for EUR credit transfers (needs a vendored QR package, no network at compile time)
@@ -54,43 +61,39 @@ tag `v0.0.1`, release commit `chore: release 0.0.1` on `main`, `gh-e-rng-latest`
 
 ## Architecture
 
-Rust owns what is ours (model, XML, rendering, UI, storage). Everything standards-related is delegated to **Mustang**, a battle-tested Java tool (its CLI bundles veraPDF and the official EN 16931 / XRechnung rule sets), shipped as a sidecar with a bundled JRE. No hand-written PDF/A or XMP logic, no re-implemented business rules.
+Rust owns what is ours (model, rules, XML, rendering, storage, the export gate); the webview only edits forms. Everything standards-related that is not a rule on the model is delegated to **Mustang**, a battle-tested Java tool (its CLI bundles veraPDF and the official EN 16931 / XRechnung rule sets), shipped as a sidecar with a bundled JRE. No hand-written PDF/A or XMP logic.
 
 ```
-Invoice data (Rust structs, single source of truth)
- ├─► CII XML (factur-x.xml)
- └─► JSON ─► Typst template ─► PDF/A-3b (plain, no attachment)
-                                  │
-   Mustang (sidecar, bundled JRE) ◄── combine: attach XML + write Factur-X XMP ─► ZUGFeRD PDF
-                                  └── validate: PDF/A-3b (veraPDF) + XML rules (EN 16931 / XRechnung)
+form (webview) ─► InvoiceDraft ─► en16931::Invoice (draft.rs) ─► rule checks (German findings) ─► CII XML
+                                                         └─► view (render/view.rs) ─► Typst ─► PDF/A-3b (plain, no attachment)
+                                                                                              │
+                        Mustang (sidecar, bundled JRE) ◄── combine: attach XML + write Factur-X XMP ─► ZUGFeRD PDF
+                                                       └── validate: PDF/A-3b (veraPDF) + XML rules (EN 16931 / XRechnung)
 ```
 
-Blocking gate in the app, all in a per-invoice temp dir:
+Blocking gate, all in a per-invoice work directory (`pipeline.rs`, `session.rs`):
 
 ```
-generate (temp) ─► Mustang validate ─► pass: save dialog copies temp ─► target
-                                    └─ fail: report in UI, nothing leaves temp
+produce_invoice(id) ─► files + report in a temp dir ─► valid: UI offers "save as" ─► export_invoice copies, then finalizes (number, lock)
+                                                    └─ invalid: report in UI, nothing leaves the directory
 ```
 
+- The invoice model **and** its rules are the `en16931` crate's (`Invoice`, 334 rules, `Validated` proof before the CII writer runs). The rule check is the first gate, Mustang the final authority on the produced file
 - The Mustang calls live in one module (`package.rs`: `combine`, `validate`), so a native implementation can replace them later without touching callers
-- `en16931` crate (Rust): optional, only for live field feedback in the invoice form, never a gate
-- KoSIT validator: cross-check in Phase 1 and local tests only, not shipped
-- Sidecar cost accepted: about 100 MB bundle (59 MB jar + about 40 MB `jlink` JRE), about 1-3 s per run
+- KoSIT validator: cross-check in Phase 1/2 and local tests only, not shipped
+- The gate is enforced on the Rust side: `export_invoice` only copies files of a work directory whose report was valid and which belongs to the invoice
+- Sidecar footprint (measured): Typst 43 MB + Mustang 56 MB + JRE 51 MB = 150 MB, dmg 116 MB; a validation takes about 1.5-2 s
 
-## Verified facts (as of 2026-10-16)
+## Verified facts (spike, 2026-10-16/17)
 
-### Typst (`main`, 0.15.1)
-- [x] PDF/A-3b/3u via the `--pdf-standard a-3b` CLI flag (**no** `#set pdf(standard: ...)` in 0.15.1, verified in the spike)
-- [x] `pdf.attach(path, data, relationship: "alternative", mime-type:, description:)` – mapped to krilla `AssociationKind` in `crates/typst-pdf/src/attach.rs`
-- [ ] **No** custom XMP: `metadata.rs` only writes title, authors, description, keywords, language, creator, ID, date
-- [ ] krilla's `Metadata` API has no hook for custom XMP either
-- ⚠️ For PDF/A-1..3, krilla already writes `<pdfaExtension:schemas><rdf:Bag>` → insert the Factur-X schema **into that Bag**, do not add a second `pdfaExtension:schemas`
+### Typst 0.15.1
+- [x] PDF/A-3b/3u only via the `--pdf-standard a-3b` CLI flag (there is **no** `#set pdf(standard: ...)`)
+- [x] `pdf.attach(...)` exists but writes no Factur-X XMP: not used, Mustang's `combine` does attachment and XMP
+- [x] Typst cannot write custom XMP (`metadata.rs` writes title, authors, description, keywords, language, creator, ID, date; krilla has no hook), which is why the packaging step is Mustang's
+- [x] Typst only embeds serif and math fonts (Libertinus Serif, New Computer Modern, DejaVu Sans Mono)
 
-### lopdf (`main`, 0.45.0, edition 2024, rust-version 1.88) – fallback only, if Mustang cannot take Typst output
-- [x] `IncrementalDocument::load_from`, `get_prev_documents`, `opt_clone_object_to_new_document`, `new_document`, `save_to`
-- [x] `Document::catalog`, `get_object`, `get_object_mut`
-- [x] `Object::as_reference`, `as_stream`, `as_stream_mut` (macro-generated in `object.rs`)
-- [x] `Stream::set_plain_content` removes `/Filter`, `/DecodeParms`, sets `/Length`
+### lopdf (0.45.0): not used
+The planned custom incremental XMP patch was never needed, Mustang takes the Typst output as is. Only relevant as a fallback if a future Mustang stops doing so.
 
 ## Phase 1 – Spike: end-to-end proof
 
@@ -126,7 +129,7 @@ Status: **done 2026-10-17.** Built on the `en16931` and `en16931-formats` crates
 - [x] XRechnung variant: `BR-DE-*` rules (buyer reference / Leitweg-ID, seller contact, business process BT-23, spec id)
 - [x] Golden tests (`cargo test`): standard, multiple rates 19/7, line + document allowances/charges, credit note, reverse charge, XRechnung incl. negative cases (missing buyer reference, wrong totals)
 - [x] Cross-check against the authorities: all 6 generated files accepted by KoSIT (XRechnung config 2026-08-31) and valid in Mustang 2.26.0. Reproduce: `GOLDEN_OUT=<dir> cargo test`, then Mustang `--action validate` / KoSIT `-s scenarios.xml` on `<dir>`
-- [x] Tauri commands `validate_invoice_data` (live findings for the form) and `generate_cii`
+- [x] Rule checks and CII writer wired up as `check_invoice` and the pipeline in Phase 4/5 (the first helper commands `validate_invoice_data` and `generate_cii` were replaced by those)
 
 Findings that shape later phases:
 - A line's net amount (BT-131) is taken as given: it must already include the line's allowances and charges, the crate does not recompute it. The form logic has to
@@ -136,7 +139,7 @@ Findings that shape later phases:
 - The crate asks derivative applications to carry the CEN attribution statement: `NOTICE.md`, show it in an About screen later
 - The crate is young (3 months): the Mustang gate stays the authority, the golden set guards against crate upgrades
 
-Open for Phase 5 (form scope): further payment means (direct debit, card), tax representative, payee, attachments (BG-24), invoice numbering, unit code list (UN/ECE rec. 20), EAS scheme list for electronic addresses
+Form scope that is still open (also in the index at the top): further payment means (direct debit, card), tax representative, payee, attachments (BG-24), a full unit code list (UN/ECE rec. 20: the form offers five), the EAS scheme list for electronic addresses (the form always uses e-mail). Invoice numbering is done in Phase 5.
 
 ## Phase 3 – Typst template
 
@@ -167,8 +170,8 @@ Pipeline (`pipeline::produce`): rules check → CII XML → Typst PDF/A-3b → M
 - [x] Sidecars: `scripts/sidecars.ts` fetches Typst 0.15.1, Mustang 2.26.0 and a Temurin 21 JDK (sha256-pinned in `scripts/sidecars.json`), links a 51 MB JRE with `jlink` into `src-tauri/sidecars/`; `bundle.resources` ships the folder (verified: `tauri build --bundles app` contains it with exec bits, app 196 MB debug). `--stub` writes empty placeholders for lint/typecheck
 - [x] Spawning from Rust (`sidecar::run`): no shell, no webview shell permission, timeout with kill, pipes drained on threads; Mustang with `-Xmx768m`, headless, UTF-8, no file logging
 - [x] Typed report: Mustang's XML report (stdout; logs on stderr) parsed into issues (section pdf/xml/document, level error/warning/notice, rule id); `valid` only if the overall status is valid **and** the exit code is 0
-- [x] Blocking gate enforced in Rust: `Sessions` registers each work directory with its verdict; `export_artifact` copies only files of valid sessions to a user-chosen target, `discard_work_dir` and app exit delete the directories; the UI cannot bypass it
-- [x] Commands: `produce_invoice` (returns work dir + report, or invalid findings / failure), `export_artifact`, `discard_work_dir`
+- [x] Blocking gate enforced in Rust: `Sessions` registers each work directory with its verdict and invoice; `export_invoice` copies only files of a valid session of that invoice to the user-chosen targets, `discard_work_dir` and app exit delete the directories; the UI cannot bypass it
+- [x] Commands: `produce_invoice(id)` (returns work dir, number and report, or input problems / invalid findings / failure), `export_invoice`, `discard_work_dir`
 - [x] Golden set through the real tools: 7 cases (standard, 19/7 %, allowances + charges, 70 lines/multi-page, credit note, reverse charge, XRechnung incl. profile X), all valid; run with `bun run generate:sidecars && cargo test -- --include-ignored`
 - [x] Negative tests: PDF/A without Factur-X XMP is rejected, tampered grand total is rejected (BR-CO-15); invalid invoices never reach a tool
 - [x] CI: lint/typecheck/test use sidecar placeholders (ignored tests skipped), the release build restores and caches the real sidecars
@@ -185,12 +188,12 @@ Findings:
 
 ## Phase 5 – Tauri app
 
-Status: UI and storage done 2026-10-17 (see below), CD/updater/first push still open.
+Status: done 2026-10-17: storage, UI, export flow, CD and the first release (v0.0.1). What is left is in the index at the top.
 
 Decisions (from the owner): one global tax rate (default 19 %, no 0 % / Kleinunternehmer mode yet); a position has a description, an optional quantity (empty = 1) and a **required** unit price; new and duplicated invoices start with today's date (customizable); exported invoices are locked, corrections go through "duplicate"; the UI is German, the invoice PDF too.
 
 - [x] Scaffold per [App conventions](#app-conventions) (tooling, UI shell, Tauri layout): `check`, `lint`, `test`, `vite build`, `tauri dev` and `tauri build --bundles app` verified
-- [x] CD: `.github/workflows/check.yml` + `release.yml`, `.release-it.json`, version sync hook (hook verified on a scratch copy; workflows only YAML-parsed, first real run happens after the first push)
+- [x] CD: `.github/workflows/check.yml` + `release.yml`, `.release-it.json`, version sync hook: the first real run published v0.0.1 (all jobs green, about 14 minutes)
 - [x] Storage: SQLite (`rusqlite`, bundled) in the app data directory, schema versioned by `user_version`, WAL; settings, customers and invoices (`src-tauri/src/store.rs`, 8 tests)
 - [x] Draft → invoice mapping in one place (`draft.rs`): positions → lines via `line_from_unit_price`, seller/customer → parties, SEPA credit transfer, due date from the payment days, XRechnung business process; bad input is reported per field (`InputProblem`), rule violations as findings
 - [x] Numbers: `<prefix><year>-<seq>`, e.g. `RE-2026-001`, assigned only when an invoice is exported (cancelled or invalid attempts never use one), unique in the database
@@ -198,9 +201,10 @@ Decisions (from the owner): one global tax rate (default 19 %, no 0 % / Kleinunt
 - [x] Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `invoice_get/blank/save/duplicate/delete`, `check_invoice` (live totals, input problems and rule findings), `produce_invoice`, `export_invoice`, `discard_work_dir`
 - [x] UI (German, Web Awesome): invoice list with duplicate, invoice editor (customer select + inline new customer, dates, XRechnung switch with Leitweg-ID, positions, note, live totals, problems/findings, export dialog with report and file choice), customers (cards + dialog), settings (company, bank, tax rate, payment days, number prefix, footer, logo)
 - [x] Browser dev mode: `bun run vite dev` without Tauri installs a small mock backend (`common/utils/mock.utils.ts`, floating point totals, no rules) so the UI can be looked at; used to check list, editor, export dialog, lock, settings, customers
-- [x] Auto-update: keypair generated (`~/.tauri/e-rng.key`, empty password, pubkey and `enke-dev/e-rng` endpoint in `tauri.conf.json`), updater component in the header, `publish-manifest` job creates `gh-e-rng-latest` on first run; secret `TAURI_SIGNING_PRIVATE_KEY` set in the repo (GitHub cannot store empty secrets, so no password variable is passed)
+- [x] Auto-update: keypair generated (`~/.tauri/e-rng.key`, empty password, pubkey and `enke-dev/e-rng` endpoint in `tauri.conf.json`), updater component in the header (checks silently on start, a failed check only goes to the log), `publish-manifest` job created `gh-e-rng-latest`; secret `TAURI_SIGNING_PRIVATE_KEY` set in the repo (GitHub cannot store empty secrets, so no password variable is passed)
 - [x] The repo is public, so the manifest needs no authentication
-- [ ] Code signing + notarization only when distributing to others (see [CD](#cd), nested sidecar binaries need signing too)
+- [x] App icon from the Icon Composer export (see the index)
+- [ ] Updater end to end and code signing / notarization: see the index at the top
 
 Polish round (2026-10-17):
 - [x] Rule findings in German: `invoice/german.rs` maps the 20 rules the form can trigger to German texts that say where to fix the problem; the English original stays as `hint`; a test breaks the form field by field and fails when a rule fires without a German text (also flags new rules after a crate upgrade). Rules the form cannot trigger, and Mustang's own report messages, stay English
@@ -223,11 +227,14 @@ Adapted from an existing Tauri + Lit app (reference layout only, no code shared)
 
 ```
 .
+├── .claude/plans/             this plan and the Phase 1 results
 ├── .configs/                  vite.config.ts, vite-watch-lit-css.plugin.ts
 ├── .github/workflows/         check.yml, release.yml
 ├── .husky/pre-commit          bunx --bun lint-staged
+├── scripts/                   sidecars.ts + sidecars.json (pins), icons.ts
 ├── src/                       frontend (Lit)
 ├── src-tauri/                 Rust (Tauri 2)
+├── README.md (short), docs/development.md, NOTICE.md
 ├── eslint.config.ts           re-exports @enke.dev/lint, ignores dist/ + src-tauri/target|gen
 ├── prettier.config.mjs        re-exports @enke.dev/lint prettier config
 ├── tsconfig.json              extends @tsconfig/strictest
@@ -248,7 +255,9 @@ Adapted from an existing Tauri + Lit app (reference layout only, no code shared)
 | `lint` | `lint:rustfmt` + `lint:clippy` + `lint:eslint` |
 | `format` | `format:rustfmt` + `format:eslint` (`eslint --fix`) |
 | `test` | `test:vitest` + `test:cargo` in parallel: `vitest run --config .configs/vite.config.ts --passWithNoTests` and `cargo test --manifest-path src-tauri/Cargo.toml` |
-| `generate:icons` | `scripts/icons.ts`: `tauri icon` on the Icon Composer export (icons dir is gitignored) |
+| `generate` | `generate:icons` + `generate:sidecars` in parallel (both outputs are gitignored) |
+| `generate:icons` | `scripts/icons.ts`: `tauri icon` on the Icon Composer export |
+| `generate:sidecars` | `scripts/sidecars.ts`: downloads Typst, Mustang and a JDK (sha256-pinned), links the JRE; `:stub` writes empty placeholders (what CI uses) |
 | `dev` / `build` | `tauri dev` / `tauri build` |
 
 - **Pre-commit:** husky -> lint-staged runs `bun run format` once for the whole repo (not per file)
@@ -257,74 +266,83 @@ Adapted from an existing Tauri + Lit app (reference layout only, no code shared)
 ### UI stack
 
 - **Lit 3** + decorators (`@customElement`, `@property`, `@state`, `@eventOptions({ passive: true })`)
-- **Web Awesome** (`@awesome.me/webawesome`, pin exact): import each component individually (`.../components/button/button.js`), never the bundle; used: `wa-button`, `wa-input`, `wa-select`/`wa-option`, `wa-combobox`, `wa-checkbox`, `wa-card`, `wa-dialog`, `wa-callout`, `wa-tab-group`, `wa-tooltip`, `wa-icon`, `wa-skeleton`, `wa-progress-bar`
+- **Web Awesome** (`@awesome.me/webawesome`, pin exact): import each component individually (`.../components/button/button.js`), never the bundle; used: `wa-button`, `wa-input`, `wa-textarea`, `wa-select`/`wa-option`, `wa-checkbox`, `wa-switch`, `wa-card`, `wa-dialog`, `wa-callout`, `wa-tag`, `wa-spinner` (no `wa-icon`: the default icon library would load from the network)
 - **Theming:** global WA stylesheet imported in `src/styles/styles.css`; dark mode via `wa-dark` class on `<html>`, always following the system (no setting)
 - **State:** `@lit-labs/signals` (`signal`, `computed`) in `src/state.ts`; base element = `SignalWatcher(LitElement)` so components re-render on signal reads; persistent data lives in SQLite on the Rust side, the webview keeps no storage
-- **Utilities:** `@enke.dev/lit-utils` for shared element helpers
-- **Routing:** `@lit-labs/router` (`RouteConfig[]`), one `*.routes.ts` per view, `registerRouter(this, routes)` in the root view, `urlpattern-polyfill` for WebKit
+- **Routing:** `@lit-labs/router` (`RouteConfig[]`) in one `root.routes.ts`, views are imported lazily on first visit, `registerRouter(this, routes)` in the root view, `urlpattern-polyfill` for WebKit; routes: `/`, `/invoices/:id` (`new` or an id), `/customers`, `/settings`
 - **Base element:** one project base class (`ErngElement`) = `SignalWatcher(LitElement)` + base CSS (`:host { display: contents }`); every component extends it and sets `static styles: CSSResultGroup = [ErngElement.styles, styles]`
 - **CSS:** one `.css` file per component, imported as a Lit `CSSResult` via `vite-plugin-lit-css` (`exclude: src/styles/**`); CSS nesting allowed; custom `litCssWatch` plugin for HMR of component CSS
 - **HMR:** `vite-plugin-web-components-hmr` with `presets.lit`
-- **Boot (`main.ts`):** polyfills (`element-internals-polyfill`, `urlpattern-polyfill`) -> `Promise.all([initLog, initChecks, initRouting, initState, initTitle])` -> on failure write to `errors` signal -> then dynamic `import('./views/root.view.js')`; root view removes the `#wait` boot spinner after first update; error state renders a `wa-dialog` with a reload button
+- **Boot (`main.ts`):** polyfills (`element-internals-polyfill`, `urlpattern-polyfill`) -> `followSystemScheme()` -> in a plain browser the mock backend is installed -> `initLog()` -> on failure write to the `errors` signal -> then dynamic `import('./views/root.view.js')`; the root view removes the `#wait` boot spinner after its first update; the error state renders a `wa-dialog` with a reload button
 
 ### File layout (`src/`)
 
 ```
 src/
 ├── main.ts
-├── state.ts                              global signals
+├── state.ts                              global signals (loading, errors, route) and followSystemScheme()
 ├── styles/                               styles.css, loading.css (boot spinner)
 ├── assets/                               icon-default.{icon,png,svg,af}
 ├── common/
-│   ├── components/<name>/<name>.component.{ts,css}
-│   └── utils/<topic>.utils.ts (+ .test.ts)
+│   ├── components/<name>/                address-fields, customer-form, updater (<name>.component.{ts,css})
+│   └── utils/                            api (typed commands + shapes), base (ErngElement), format, form, log, routing, mock
 └── views/
     ├── root.view.{ts,css}, root.routes.ts
-    └── <view>/<view>.{view,routes,data}.ts (+ .css, .data.test.ts)
+    └── <view>/<view>.view.{ts,css}       invoices, invoice-edit, customers, settings
 ```
 
-- Naming: kebab-case files with role suffix (`.component`, `.view`, `.routes`, `.data`, `.utils`); custom element prefix = app short name (`<app>-root`, ...); `declare global { interface HTMLElementTagNameMap }` per element
-- `*.data.ts` holds a view's pure logic (schemas, queries) so it is testable without the DOM
+- Naming: kebab-case files with role suffix (`.component`, `.view`, `.routes`, `.utils`); custom element prefix `erng-`; `declare global { interface HTMLElementTagNameMap }` per element
+- All commands go through the typed wrappers in `api.utils.ts`, the shapes there mirror `src-tauri/src/model.rs` by hand (snake_case JSON, money and quantities as strings)
+- Logic that is worth testing without the DOM would go into a `*.data.ts` next to its view (none yet)
 
 ### Tauri layout (`src-tauri/`)
 
 ```
 src-tauri/
-├── Cargo.toml                lib `<app>_lib` (staticlib, cdylib, rlib) + bin
+├── Cargo.toml                lib `e_rng_lib` (staticlib, cdylib, rlib) + bin `e_rng`
 ├── build.rs
-├── tauri.conf.json
+├── tauri.conf.json           resources: sidecars/, updater config, createUpdaterArtifacts
 ├── capabilities/
-│   ├── default.json          windows ["*"], core + plugin permissions, scoped fs/http
+│   ├── default.json          windows ["*"]: core, dialog (open/save), fs temp, log, opener, os
 │   └── desktop.json          platforms [macOS]: updater, process
+├── sidecars/                 gitignored: typst, mustang.jar, jre/ (scripts/sidecars.ts)
 └── src/
-    ├── main.rs               calls `<app>_lib::run()`
-    ├── lib.rs                plugins + invoke_handler![...]
-    ├── commands/
-    │   ├── mod.rs            `#[path = "x.command.rs"] pub mod x_command;` per file
-    │   └── <name>.command.rs one `#[tauri::command]` each, logic in a private fn, tests inline
-    └── utils/                shared helpers (+ test scratch dir helper)
+    ├── main.rs, lib.rs       plugins, managed state (Store, Sessions), invoke_handler![...]
+    ├── model.rs              what is stored and edited (settings, customers, drafts, stored invoices)
+    ├── store.rs              SQLite: settings, customers, invoices, numbers, finalize/lock
+    ├── draft.rs              form draft → en16931 invoice, input problems, totals
+    ├── invoice/              profile choice, rule checks (mod.rs), German finding texts (german.rs), golden test set (golden.rs)
+    ├── render/               Typst template (invoice.typ) and the presentation view (view.rs)
+    ├── package.rs            Mustang combine / validate, report parsing
+    ├── pipeline.rs           rules → XML → PDF → combine → validate in a work directory
+    ├── session.rs            work directories and their verdicts, the export gate
+    ├── sidecar.rs            locating and running the bundled tools with a deadline
+    ├── commands/             one tauri command (or a small family) per `<name>.command.rs`, registered via `#[path]` in mod.rs
+    └── utils/                today(), message()
 ```
 
 - Plugins registered in `lib.rs`: `fs`, `dialog`, `log`, `opener`, `os`, `process`, `updater` (desktop only, `cfg(not(any(android, ios)))`)
+- Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `invoice_get/blank/save/duplicate/delete`, `check_invoice`, `produce_invoice`, `export_invoice`, `discard_work_dir`
 - Window: `titleBarStyle: "Overlay"`, `hiddenTitle`, `transparent`, `macOSPrivateApi`; drag region span rendered on macOS only
-- Permissions: least privilege, scope `fs` to specific dirs; only add `http` if needed (this app is offline -> skip)
-- `tauri.conf.json`: `beforeDevCommand`/`beforeBuildCommand` run `generate` + vite; `devUrl` fixed port 1420 + `strictPort`; `frontendDist: ../dist`; `bundle.createUpdaterArtifacts: true`; `plugins.updater` with `active`, `pubkey`, `endpoints` (manifest on a dedicated branch)
+- Permissions: least privilege; no `http`, no `shell` plugin (the app is offline, tools are spawned from Rust)
+- `tauri.conf.json`: `beforeDevCommand`/`beforeBuildCommand` run `generate` + vite; `devUrl` fixed port 1420 + `strictPort`; `frontendDist: ../dist`; `bundle.createUpdaterArtifacts: true`; `bundle.resources: {"sidecars/": "sidecars/"}`; `plugins.updater` with `active`, `pubkey`, `endpoints` (manifest on `gh-e-rng-latest`)
 - Vite: `envPrefix: ['APP_', 'VITE_', 'TAURI_ENV_*']`, `build.target` safari13 (WebKit), `clearScreen: false`, ignore `**/src-tauri/**` in watch, `TAURI_DEV_HOST` for HMR
-- Version: single source in `package.json`, synced to `Cargo.toml`, `Cargo.lock`, `tauri.conf.json` by release-it hook
+- Version: single source in `package.json`, synced to `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` (version line only) by the release-it hook
+- Gotcha: `jlink` output is read-only, `scripts/sidecars.ts` makes it writable, otherwise the second `tauri build` fails copying the resources
 
 ### CD
 
-- **`check.yml`** (on PR + `workflow_call`): checkout -> setup Bun (`.bun-version`) + cache -> Rust stable (rustfmt, clippy) + `rust-cache` -> Tauri Linux deps (`libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`) -> `bun install --frozen-lockfile` -> `check` -> `lint` -> `test` (vitest + cargo test).
-- **`release.yml`** (push to `main`, paths filtered), jobs in order:
+- **`check.yml`** (on PR + `workflow_call`): checkout -> setup Bun (`.bun-version`) + cache -> Rust stable (rustfmt, clippy) + `rust-cache` -> Tauri Linux deps (`libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`) -> `bun install --frozen-lockfile` -> `generate:icons` + `generate:sidecars:stub` (placeholders, the tests that run the real tools are skipped) -> `check` -> `lint` -> `test` (vitest + cargo test).
+- **`release.yml`** (push to `main`, `paths-ignore` for `.claude/**` and `**/*.md`), jobs in order:
   1. `check` – reuses `check.yml`
   2. `prepare` – skip if no commits since last tag; `release-it --ci --no-git` computes version + changelog (conventional commits, angular preset) + runs sync hook; output is a `bump.patch` artifact, nothing pushed yet
-  3. `build` – single macOS aarch64 runner (`--target aarch64-apple-darwin`), no Intel, no Windows; apply patch, sccache + rust-cache, `tauri-apps/tauri-action` into a **draft** release
+  3. `build` – single macOS aarch64 runner (`--target aarch64-apple-darwin`), no Intel, no Windows; apply patch, sccache + rust-cache, cache of `.cache/sidecars`, `tauri-apps/tauri-action` into a **draft** release (`beforeBuildCommand` runs `generate`, which fetches the sidecars)
   4. `release` – commit bump, push to `main`, move tag onto release commit, publish draft
   5. `cleanup` – on build failure delete draft + tag so the version is not consumed
-  6. `publish-manifest` – take `latest.json` from the published release, rewrite asset URLs if the repo is private (authenticated API endpoints), push to a dedicated `gh-<app>-latest` branch that the updater endpoint reads
+  6. `publish-manifest` – take `latest.json` from the published release and push it to the `gh-e-rng-latest` branch (created on the first run) that the updater endpoint reads; no URL rewriting, the repo is public
 - **Hardening:** actions pinned by commit SHA with version comment; least-privilege `permissions`; `concurrency` group so releases never overlap; `timeout-minutes` on every job
-- **`.release-it.json`:** conventional-changelog plugin, `npm.publish: false`, `github.release: false` (tauri-action owns it), tag `v${version}`, `after:bump` hook syncs Cargo/tauri.conf/lockfile
-- **Sidecar:** `build` job also installs a JDK to `jlink` the JRE and fetches the pinned Mustang jar (checksum verified); sidecar binaries must be signed with the app on notarization
+- **`.release-it.json`:** conventional-changelog plugin, `npm.publish: false`, `github.release: false` (tauri-action owns it), tag `v${version}`, `after:bump` hook syncs `Cargo.toml`, `Cargo.lock` and the version line of `tauri.conf.json`; the angular preset puts only `feat`/`fix`/`perf`/`revert` commits into the changelog
+- **Sidecars:** `scripts/sidecars.ts` downloads Typst, Mustang and a Temurin JDK, verifies the pinned checksums and links the JRE, no tools need to be installed on the runner; the nested binaries must be signed with the app once notarization is set up
 - **Secrets needed:** `TAURI_SIGNING_PRIVATE_KEY` (updater signing, public key goes into `tauri.conf.json`); Apple signing/notarization secrets only when distributing outside this machine
 
 ## Deadlines (Germany)
@@ -338,9 +356,10 @@ src-tauri/
 ## References
 
 - Typst PDF docs: https://typst.app/docs/reference/pdf/
-- Typst: `crates/typst-pdf/src/attach.rs`, `metadata.rs`
-- krilla: `crates/krilla/src/configure/validate.rs` (extension schema), `chunk_container.rs` (XMP)
-- lopdf: `src/incremental_document.rs`, `src/object.rs`
-- Code sketch: `zugferd_xmp.rs`
+- Mustang: https://github.com/ZUGFeRD/mustangproject (CLI actions `combine`, `validate`; releases `core-x.y.z`)
+- veraPDF: https://verapdf.org, advisory GHSA-5gvp-6g43-g47v (fixed in 1.30.3)
+- KoSIT validator and the XRechnung configuration: https://github.com/itplr-kosit/validator, https://github.com/itplr-kosit/validator-configuration-xrechnung
+- `en16931` crates: https://github.com/hupe1980/en16931 (model, rules, CII/UBL, MIT OR Apache-2.0)
+- `page` (Rust PDF/A validator, evaluated as pre-check only): https://github.com/josephbarbierdarnal/page
 - Web Awesome: https://webawesome.com/docs
-- Tauri 2: https://v2.tauri.app/ (config, capabilities, `tauri-action`)
+- Tauri 2: https://v2.tauri.app/ (config, capabilities, `tauri-action`, Icon Composer `.icon` support in the bundler)
