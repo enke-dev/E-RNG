@@ -2,6 +2,52 @@
 
 Goal: Desktop app (Tauri) that generates a **ZUGFeRD/Factur-X PDF** (PDF/A-3 + embedded CII XML) and optionally an **XRechnung** (plain XML) from structured invoice data.
 
+## Status and leftovers
+
+State on 2026-10-17: phases 1-5 are done (spike, model and XML, Typst template, validation gate, UI). The
+first push (`chore: init`) ran the whole release pipeline green and published **v0.0.1**: draft published,
+tag `v0.0.1`, release commit `chore: release 0.0.1` on `main`, `gh-e-rng-latest` created with a valid
+`latest.json`, assets `E-Rng_0.0.1_aarch64.dmg` (116 MB) and the signed updater archive (`.app.tar.gz` +
+`.sig`). The repo is public. Details per phase below, this list is the index of what is still open.
+
+**Release and CD**
+- [x] First real `release.yml` run verified (see above); the release hook now only edits the version line of `tauri.conf.json` (it used to reformat the file with `jq`)
+- [ ] Updater end to end: install v0.0.1 from the dmg, cut a second release (any `feat`/`fix`), see the in-app update appear, install and relaunch. The manifest points at `api.github.com/.../releases/assets/<id>` URLs, which is what `tauri-action` writes: check that the updater downloads from them
+- [ ] The changelog only lists `feat`, `fix`, `perf` and `revert` commits (angular preset): `chore` and `docs` stay out of it, v0.0.1 has no entries
+- [ ] Code signing and notarization when the app goes to anyone else, including the nested JRE and Typst binaries
+
+**Validation and safety**
+- [ ] Bump Mustang when a release with veraPDF 1.30.3 exists (`scripts/sidecars.json`; 2.26.0 ships 1.30.2, advisory GHSA-5gvp-6g43-g47v)
+- [ ] Test that fails if anything modifies the PDF after `combine` (no validator checks the attachment relationship)
+- [ ] Check that Mustang makes no network calls (input is only our own files, so low risk)
+- [ ] German texts for Mustang's report messages (the form's rule findings are German already)
+
+**Invoice features not in the UI yet**
+- [ ] Credit notes from the UI (the model and the template support them), several VAT rates, reverse charge and other VAT-free cases, discounts and surcharges
+- [ ] Other payment means (direct debit, card), tax representative, payee, attachments (BG-24)
+- [ ] Kleinunternehmer mode (§ 19 UStG), 0 % rate
+- [ ] Customer-specific payment terms, mark as paid, dunning
+
+**UI polish**
+- [ ] Invoice list: search, filter, sorting, paid status
+- [ ] Reorder positions
+- [ ] A readable maximum width for single-line inputs on very wide windows
+- [ ] Frontend tests (flows were only checked by hand in the browser mock)
+- [ ] Some rule texts may read oddly (e.g. `BR-CO-26` when only a tax number is set): collect and reword
+
+**Invoice template**
+- [ ] Bundle a sans-serif font (Typst only embeds serif and math fonts; Inter is OFL)
+- [ ] EPC / GiroCode QR code for EUR credit transfers (needs a vendored QR package, no network at compile time)
+- [ ] Exact DIN 5008 window geometry and fold marks
+- [ ] English invoices (labels live in `render/view.rs`)
+- [ ] Seller register entry and managing directors as proper fields instead of free footer text
+
+**Manual checks that only the real app can answer** (`bunx tauri dev`)
+- [ ] The whole flow with the real backend: settings, customer, invoice, create and check, save as PDF, open the PDF and its embedded XML in a ZUGFeRD viewer
+- [ ] The macOS title bar overlay and the header spacing next to the traffic lights
+- [ ] Dark and light mode following the system, scrolling to the bottom of a long invoice
+- [ ] An export with a logo, the updater button (hidden until a release exists)
+
 ## Architecture
 
 Rust owns what is ours (model, XML, rendering, UI, storage). Everything standards-related is delegated to **Mustang**, a battle-tested Java tool (its CLI bundles veraPDF and the official EN 16931 / XRechnung rule sets), shipped as a sidecar with a bundled JRE. No hand-written PDF/A or XMP logic, no re-implemented business rules.
@@ -149,7 +195,7 @@ Decisions (from the owner): one global tax rate (default 19 %, no 0 % / Kleinunt
 - [x] UI (German, Web Awesome): invoice list with duplicate, invoice editor (customer select + inline new customer, dates, XRechnung switch with Leitweg-ID, positions, note, live totals, problems/findings, export dialog with report and file choice), customers (cards + dialog), settings (company, bank, tax rate, payment days, number prefix, footer, logo)
 - [x] Browser dev mode: `bun run vite dev` without Tauri installs a small mock backend (`common/utils/mock.utils.ts`, floating point totals, no rules) so the UI can be looked at; used to check list, editor, export dialog, lock, settings, customers
 - [x] Auto-update: keypair generated (`~/.tauri/e-rng.key`, empty password, pubkey and `enke-dev/e-rng` endpoint in `tauri.conf.json`), updater component in the header, `publish-manifest` job creates `gh-e-rng-latest` on first run; secret `TAURI_SIGNING_PRIVATE_KEY` set in the repo (GitHub cannot store empty secrets, so no password variable is passed)
-- [ ] Auto-update, private repo only: manifest needs authenticated asset URLs and the updater a token
+- [x] The repo is public, so the manifest needs no authentication
 - [ ] Code signing + notarization only when distributing to others (see [CD](#cd), nested sidecar binaries need signing too)
 
 Polish round (2026-10-17):

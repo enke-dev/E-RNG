@@ -29,10 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "dmg"
-    ],
+    "targets": ["app", "dmg"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -49,9 +46,7 @@
     "updater": {
       "active": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgzQjk3QjlFMjcwNzk0ODMKUldTRGxBY25ubnU1ZzhJbVlPZ25RSTRDTEt1cHFpTFlxWi8rZ0lSL2JBYTRtWis1Q3l0T0lTbm8K",
-      "endpoints": [
-        "https://github.com/enke-dev/e-rng/raw/gh-e-rng-latest/latest.json"
-      ]
+      "endpoints": ["https://github.com/enke-dev/e-rng/raw/gh-e-rng-latest/latest.json"]
     }
   }
 }
