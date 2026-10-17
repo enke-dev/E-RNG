@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "notes": "See the assets to download this version and install.",
+  "pub_date": "2026-10-17T00:46:35.516Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzJmV29NT3RGQlBGdDYwd3B0THU4K0ZIb25Ud0tFckQ3NjhsWC8yVnoyd3ptYjhJU0ZCeEM2YXRNckJEK3ljbDlRMUpqbGVGanRWRXlCeEJIdUFWeXdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTk3OTgxCWZpbGU6RS1SbmcuYXBwLnRhci5negl2ZXJzaW9uOjAuMC4xCnJ4OUdxL3F0ejBVYUJxUjUzZzFoQW1UTys3L0tVMml3UjZLZVI5WUg1ZU9zQ1pkdXZVcGxtSDFpdCs2UTRoc2tBZE5tS3B1TThSSnBqS0tsSFZzRENnPT0K",
+      "url": "https://api.github.com/repos/enke-dev/e-rng/releases/assets/649092898"
+    },
+    "darwin-aarch64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzJmV29NT3RGQlBGdDYwd3B0THU4K0ZIb25Ud0tFckQ3NjhsWC8yVnoyd3ptYjhJU0ZCeEM2YXRNckJEK3ljbDlRMUpqbGVGanRWRXlCeEJIdUFWeXdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTk3OTgxCWZpbGU6RS1SbmcuYXBwLnRhci5negl2ZXJzaW9uOjAuMC4xCnJ4OUdxL3F0ejBVYUJxUjUzZzFoQW1UTys3L0tVMml3UjZLZVI5WUg1ZU9zQ1pkdXZVcGxtSDFpdCs2UTRoc2tBZE5tS3B1TThSSnBqS0tsSFZzRENnPT0K",
+      "url": "https://api.github.com/repos/enke-dev/e-rng/releases/assets/649092898"
+    }
+  }
+}
