@@ -33,7 +33,8 @@ More: [`.claude/plans/init.md`](.claude/plans/init.md) (plan, decisions, open it
 
 ```sh
 bun install
-bun run generate     # app icons and sidecars: downloads Typst, Mustang and a JDK (checksum-pinned), links the JRE
+bun run generate     # app icons (from the Icon Composer export src/assets/icon-default.png) and sidecars: downloads Typst, Mustang
+                     # and a JDK (checksum-pinned), links the JRE
 bun run dev          # tauri dev
 ```
 
@@ -74,7 +75,7 @@ src-tauri/src/
   pipeline.rs, session.rs  produce a validated file in a work directory, the export gate
   sidecar.rs               running the bundled tools with a deadline
   commands/                one tauri command per file
-scripts/                   sidecars.ts and its pins (sidecars.json)
+scripts/                   sidecars.ts and its pins (sidecars.json), icons.ts
 ```
 
 ## Release

@@ -20,7 +20,7 @@
     "prepare": "husky",
     "generate:sidecars": "bun run scripts/sidecars.ts",
     "generate:sidecars:stub": "bun run scripts/sidecars.ts --stub",
-    "generate:icons": "tauri icon src/assets/icon-default.svg",
+    "generate:icons": "bun run scripts/icons.ts",
     "generate": "bun run --parallel generate:icons generate:sidecars",
     "check": "tsc --noEmit",
     "lint": "bun run --parallel lint:rustfmt lint:clippy lint:eslint",

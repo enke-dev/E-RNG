@@ -35,6 +35,10 @@ tag `v0.0.1`, release commit `chore: release 0.0.1` on `main`, `gh-e-rng-latest`
 - [ ] Frontend tests (flows were only checked by hand in the browser mock)
 - [ ] Some rule texts may read oddly (e.g. `BR-CO-26` when only a tax number is set): collect and reword
 
+**App icon**
+- [x] The design lives in `src/assets/icon-default.icon` (Icon Composer; `icon-default.png` is its export, `icon-default.svg` the glyph layer, `icon-default.af` the Affinity source). `scripts/icons.ts` places the export on an 824 px body in a transparent 1024 px canvas (the margin macOS expects in an `.icns`) and runs `tauri icon`: that is the icon for macOS before 26 and for the window. Re-export the PNG from Icon Composer after changing the design
+- [ ] The Liquid Glass icon itself: Tauri's bundler (2.10.3) compiles a `.icon` listed under `bundle.icon` with `actool` (Xcode 26+). With the installed Xcode 27 beta (27A266a) `actool` fails on every `.icon`, even a minimal one (`Failed to create a catalog from the Icon Studio document`, `Bad file descriptor`; reproduced outside Tauri and outside the sandbox), and the bundler treats that as a fatal error. Retry with a release Xcode 26.x or a later 27 build, then add `"../src/assets/icon-default.icon"` to `bundle.icon`. The CI runner's Xcode is untested: if it is tried there, a failed run is cleaned up by the `cleanup` job (draft and tag are removed)
+
 **Invoice template**
 - [ ] Bundle a sans-serif font (Typst only embeds serif and math fonts; Inter is OFL)
 - [ ] EPC / GiroCode QR code for EUR credit transfers (needs a vendored QR package, no network at compile time)
@@ -244,7 +248,7 @@ Adapted from an existing Tauri + Lit app (reference layout only, no code shared)
 | `lint` | `lint:rustfmt` + `lint:clippy` + `lint:eslint` |
 | `format` | `format:rustfmt` + `format:eslint` (`eslint --fix`) |
 | `test` | `test:vitest` + `test:cargo` in parallel: `vitest run --config .configs/vite.config.ts --passWithNoTests` and `cargo test --manifest-path src-tauri/Cargo.toml` |
-| `generate:icons` | `tauri icon src/assets/icon-default.svg` (icons dir is gitignored) |
+| `generate:icons` | `scripts/icons.ts`: `tauri icon` on the Icon Composer export (icons dir is gitignored) |
 | `dev` / `build` | `tauri dev` / `tauri build` |
 
 - **Pre-commit:** husky -> lint-staged runs `bun run format` once for the whole repo (not per file)
@@ -270,7 +274,7 @@ src/
 ├── main.ts
 ├── state.ts                              global signals
 ├── styles/                               styles.css, loading.css (boot spinner)
-├── assets/                               icon-default.svg
+├── assets/                               icon-default.{icon,png,svg,af}
 ├── common/
 │   ├── components/<name>/<name>.component.{ts,css}
 │   └── utils/<topic>.utils.ts (+ .test.ts)
