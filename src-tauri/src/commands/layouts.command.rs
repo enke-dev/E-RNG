@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 use super::preview_invoice_command::Preview;
 use crate::draft::{build_invoice, for_preview};
@@ -17,8 +17,7 @@ use crate::utils::{message, today};
 
 /// Where the stationery and fonts of own layouts are kept
 fn files_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
+    crate::utils::data_dir(app)
         .map(|dir| dir.join("layouts"))
         .map_err(message)
 }

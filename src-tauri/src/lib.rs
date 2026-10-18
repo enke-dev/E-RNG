@@ -28,7 +28,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
+            let dir = utils::data_dir(app.handle())?;
             std::fs::create_dir_all(&dir)?;
             let store = store::Store::open(&dir.join("e-rng.sqlite3"))?;
             // files of deleted or replaced stationery and fonts, nothing is being edited yet

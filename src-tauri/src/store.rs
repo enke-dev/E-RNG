@@ -41,21 +41,27 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 2 {
         conn.execute_batch(
-            "CREATE TABLE templates (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
+            "CREATE TABLE IF NOT EXISTS templates (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
              PRAGMA user_version = 2;",
         )?;
     }
     if version < 3 {
         conn.execute_batch(
-            "CREATE TABLE layouts (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
+            "CREATE TABLE IF NOT EXISTS layouts (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
              PRAGMA user_version = 3;",
         )?;
     }
     if version < 4 {
-        conn.execute_batch(
-            "ALTER TABLE invoices ADD COLUMN paid_at TEXT;
-             PRAGMA user_version = 4;",
+        // a database that was stamped back by hand may have the column already
+        let has_column: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('invoices') WHERE name = 'paid_at'",
+            [],
+            |r| r.get(0),
         )?;
+        if !has_column {
+            conn.execute_batch("ALTER TABLE invoices ADD COLUMN paid_at TEXT;")?;
+        }
+        conn.execute_batch("PRAGMA user_version = 4;")?;
     }
     Ok(())
 }
@@ -696,6 +702,20 @@ mod tests {
         assert_eq!(store.invoices().unwrap()[0].paid_at, paid.paid_at);
 
         assert_eq!(store.set_paid(id, None).unwrap().paid_at, None);
+    }
+
+    #[test]
+    fn a_database_stamped_back_to_the_first_version_migrates_again() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch("PRAGMA user_version = 1;").unwrap();
+
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
