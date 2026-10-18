@@ -23,10 +23,20 @@ export class SettingsView extends ErngElement {
   @state() private settings: Settings | undefined;
   @state() private message: { variant: 'success' | 'danger'; text: string } | undefined;
 
+  /** The settings as they are stored, what "unchanged" is compared against */
+  #saved = '';
+
+  private get changed() {
+    return JSON.stringify(this.settings) !== this.#saved;
+  }
+
   override connectedCallback() {
     super.connectedCallback();
     api.settingsGet().then(
-      settings => (this.settings = settings),
+      settings => {
+        this.#saved = JSON.stringify(settings);
+        this.settings = settings;
+      },
       (error: unknown) => (this.message = { variant: 'danger', text: errorText(error) })
     );
   }
@@ -89,6 +99,7 @@ export class SettingsView extends ErngElement {
     }
     try {
       await api.settingsSave(settings);
+      this.#saved = JSON.stringify(settings);
       this.message = {
         variant: 'success',
         text: 'Gespeichert. Bereits exportierte Rechnungen behalten ihre alten Angaben.',
@@ -180,7 +191,9 @@ export class SettingsView extends ErngElement {
       ${this.message ? html`<wa-callout variant="${this.message.variant}">${this.message.text}</wa-callout>` : nothing}
 
       <footer>
-        <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
+        <wa-button variant="brand" ?disabled="${!this.changed}" @click="${this.save}">
+          Speichern
+        </wa-button>
       </footer>
     `;
   }
