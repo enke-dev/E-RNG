@@ -111,6 +111,53 @@ wa-dialog::part(dialog) {
   gap: var(--wa-space-xs) var(--wa-space-s);
   grid-template-columns: var(--wa-form-control-height) minmax(10rem, 1fr) 5rem 8rem 7.5rem auto;
   break-inside: auto;
+
+  /* side by side, the header row names the columns: the labels of the fields would repeat it */
+  &:not(.stacked) :is(wa-input, wa-select)::part(form-control-label) {
+    display: none;
+  }
+
+  /* too narrow for the minimum widths of the fields (measured, see measurePositions): stack them,
+     the fields carry their labels then */
+  &.stacked {
+    grid-template-columns: var(--wa-form-control-height) repeat(3, minmax(0, 1fr));
+
+    & .position {
+      align-items: end;
+      padding-bottom: var(--wa-space-s);
+      border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+
+      &.head {
+        display: none;
+      }
+
+      /* handle beside the description, which sits over quantity / unit / price over the actions */
+      & > :nth-child(1) {
+        grid-row: 1;
+      }
+
+      & > :nth-child(2) {
+        grid-column: 2 / -1;
+      }
+
+      & > :nth-child(3) {
+        grid-column: 2;
+      }
+
+      & > :nth-child(4) {
+        grid-column: 3;
+      }
+
+      & > :nth-child(5) {
+        grid-column: 4;
+      }
+
+      & .row-actions {
+        grid-column: 2 / -1;
+        justify-self: start;
+      }
+    }
+  }
 }
 
 .position {
@@ -220,43 +267,5 @@ footer {
 @container (max-width: 62rem) {
   #preview {
     display: none;
-  }
-}
-
-/* the form shares the pane with the preview below this width: stack the fields of a position */
-@container (max-width: 82rem) {
-  .positions {
-    grid-template-columns: var(--wa-form-control-height) repeat(3, minmax(0, 1fr));
-  }
-
-  .position {
-    &.head {
-      display: none;
-    }
-
-    /* handle, then description over quantity / unit / price over the actions */
-    & > :nth-child(1) {
-      grid-row: 1 / span 3;
-    }
-
-    & > :nth-child(2) {
-      grid-column: 2 / -1;
-    }
-
-    & > :nth-child(3) {
-      grid-column: 2;
-    }
-
-    & > :nth-child(4) {
-      grid-column: 3;
-    }
-
-    & > :nth-child(5) {
-      grid-column: 4;
-    }
-
-    & .row-actions {
-      grid-column: 2 / -1;
-    }
   }
 }
