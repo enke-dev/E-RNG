@@ -6,6 +6,8 @@ use en16931::invoice::{DocumentKind, PaymentMeans, PostalAddress};
 use en16931::{Date, Invoice};
 use serde::{Deserialize, Serialize};
 
+use crate::model::{CustomLayout, Insets, InvoiceDraft, Settings};
+
 /// What the user adds to the plain invoice data: look and feel of the document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Branding {
@@ -13,6 +15,45 @@ pub struct Branding {
     pub logo: Option<std::path::PathBuf>,
     /// Free text for the page footer, e.g. managing directors or the commercial register entry.
     pub footer: Option<String>,
+    /// The texts around the table: salutation and introduction, closing
+    pub intro: Option<String>,
+    pub closing: Option<String>,
+    /// The user's own layout when one was chosen: stationery, margins and font
+    pub custom: Option<CustomLayout>,
+    /// Draws lines where the margins are, for looking at a layout while it is made
+    pub guides: bool,
+}
+
+impl Branding {
+    /// Look, feel and letter texts of an invoice: what it chose for itself, else the settings.
+    pub fn for_draft(draft: &InvoiceDraft, settings: &Settings, customs: &[CustomLayout]) -> Self {
+        // what the invoice has is its own, even when it is empty (no text for this one); only an
+        // invoice that never had a text (made before the texts existed) takes the settings
+        let pick = |own: &Option<String>, default: &Option<String>| {
+            own.as_ref()
+                .or(default.as_ref())
+                .filter(|text| !text.trim().is_empty())
+                .cloned()
+        };
+        let wanted = draft
+            .layout
+            .clone()
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| settings.layout.clone());
+        // an exported invoice keeps the layout as it was, whatever became of the original
+        let custom = draft
+            .frozen_layout
+            .clone()
+            .or_else(|| customs.iter().find(|l| l.key() == wanted).cloned());
+        Self {
+            logo: settings.logo.clone(),
+            footer: settings.footer.clone(),
+            custom,
+            guides: false,
+            intro: pick(&draft.intro, &settings.intro),
+            closing: pick(&draft.closing, &settings.closing),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -31,6 +72,70 @@ pub struct InvoiceView {
     pub footer: Option<String>,
     /// File name next to the template, set when a logo was copied there.
     pub logo: Option<String>,
+    /// The letter around the table
+    pub letter: Letter,
+    /// Single facts for layouts that arrange them their own way
+    pub facts: Facts,
+    /// Account holder, IBAN and BIC of the credit transfer, empty without one
+    pub bank: Vec<Labeled>,
+    /// Paper, margins and font: what an own layout changes
+    pub page: PageView,
+}
+
+/// Millimetres, files are names next to the template.
+#[derive(Debug, Default, Serialize)]
+pub struct PageView {
+    pub font: Option<String>,
+    /// Content insets for all pages, `None` keeps those of the layout
+    pub margin: Option<Insets>,
+    /// Insets of the first page when it differs from the others, e.g. for a letterhead
+    pub first_margin: Option<Insets>,
+    pub background: Option<BackgroundView>,
+    /// Lines where the margins are
+    pub guides: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BackgroundView {
+    pub first: String,
+    pub rest: Option<String>,
+}
+
+impl PageView {
+    /// `files` are the names the stationery got next to the template (first and following page).
+    pub fn of(custom: Option<&CustomLayout>, files: Option<(String, Option<String>)>) -> Self {
+        let Some(custom) = custom else {
+            return Self::default();
+        };
+        Self {
+            font: custom.fonts.first().map(|f| f.family.clone()),
+            margin: Some(custom.margins),
+            first_margin: custom
+                .first_margins
+                .filter(|first| *first != custom.margins),
+            background: files.map(|(first, rest)| BackgroundView { first, rest }),
+            guides: false,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Letter {
+    pub intro: Option<String>,
+    pub closing: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Facts {
+    pub number: String,
+    pub date: String,
+    pub service_date: Option<String>,
+    /// The invoice date is also the date of service
+    pub same_day: bool,
+    pub due_date: Option<String>,
+    pub buyer_reference: Option<String>,
+    pub tax_number: Option<String>,
+    pub vat_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -196,6 +301,30 @@ fn party_view(party: &en16931::invoice::Party, seller: bool) -> PartyView {
     }
 }
 
+fn bank_lines(invoice: &Invoice) -> Vec<Labeled> {
+    let Some(PaymentMeans::CreditTransfer(transfers)) =
+        invoice.payment.as_ref().and_then(|p| p.means.as_ref())
+    else {
+        return Vec::new();
+    };
+    transfers
+        .iter()
+        .flat_map(|t| {
+            [
+                ("Kontoinhaber", t.account_name.clone()),
+                ("IBAN", t.account_identifier.clone()),
+                ("BIC", t.provider_identifier.clone()),
+            ]
+        })
+        .filter_map(|(label, value)| {
+            value.map(|value| Labeled {
+                label: label.into(),
+                value,
+            })
+        })
+        .collect()
+}
+
 fn payment_lines(invoice: &Invoice, currency: &str) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(terms) = &invoice.payment_terms {
@@ -226,7 +355,12 @@ fn payment_lines(invoice: &Invoice, currency: &str) -> Vec<String> {
     out
 }
 
-pub fn build(invoice: &Invoice, branding: &Branding, logo: Option<String>) -> InvoiceView {
+pub fn build(
+    invoice: &Invoice,
+    branding: &Branding,
+    logo: Option<String>,
+    page: PageView,
+) -> InvoiceView {
     let currency = invoice.currency.as_ref().map_or("EUR", |c| c.as_str());
     let totals = &invoice.totals;
     let credit = invoice.kind == DocumentKind::CreditNote;
@@ -411,12 +545,128 @@ pub fn build(invoice: &Invoice, branding: &Branding, logo: Option<String>) -> In
         payment: payment_lines(invoice, currency),
         footer: branding.footer.clone(),
         logo,
+        letter: Letter {
+            intro: branding.intro.clone(),
+            closing: branding.closing.clone(),
+        },
+        facts: Facts {
+            number: invoice.number.clone().unwrap_or_default(),
+            date: de_date(issue),
+            service_date: invoice.delivery.as_ref().and_then(|d| d.date).map(de_date),
+            same_day: invoice.delivery.as_ref().and_then(|d| d.date) == Some(issue),
+            due_date: invoice.due_date.map(de_date),
+            buyer_reference: invoice.buyer_reference.clone(),
+            tax_number: invoice.seller.tax_registration.clone(),
+            vat_id: invoice.seller.vat_identifier.clone(),
+        },
+        bank: bank_lines(invoice),
+        page,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn own_layout(id: i64) -> CustomLayout {
+        CustomLayout {
+            id: Some(id),
+            name: "Briefpapier".into(),
+            background: None,
+            margins: Insets::default(),
+            first_margins: None,
+            fonts: Vec::new(),
+            archived: false,
+        }
+    }
+
+    #[test]
+    fn an_own_layout_is_found_by_its_key() {
+        let settings = Settings {
+            layout: "custom-3".into(),
+            ..Settings::default()
+        };
+        let draft = InvoiceDraft::blank("2026-10-18");
+
+        let found = Branding::for_draft(&draft, &settings, &[own_layout(2), own_layout(3)]);
+        assert_eq!(found.custom.and_then(|c| c.id), Some(3));
+
+        // gone: the standard layout takes over, nothing breaks
+        let gone = Branding::for_draft(&draft, &settings, &[own_layout(2)]);
+        assert!(gone.custom.is_none());
+    }
+
+    #[test]
+    fn an_exported_invoice_keeps_the_own_layout_it_was_made_with() {
+        let settings = Settings {
+            layout: "custom-3".into(),
+            ..Settings::default()
+        };
+        let mut draft = InvoiceDraft::blank("2026-10-18");
+        let mut frozen = own_layout(3);
+        frozen.name = "As exported".into();
+        draft.frozen_layout = Some(frozen);
+
+        let branding = Branding::for_draft(&draft, &settings, &[own_layout(3)]);
+        assert_eq!(
+            branding.custom.map(|c| c.name).as_deref(),
+            Some("As exported")
+        );
+    }
+
+    #[test]
+    fn the_first_page_has_its_own_margins_only_when_they_differ() {
+        let mut layout = own_layout(1);
+        layout.margins = Insets {
+            top: 20.0,
+            right: 20.0,
+            bottom: 25.0,
+            left: 25.0,
+        };
+
+        layout.first_margins = Some(layout.margins);
+        assert!(PageView::of(Some(&layout), None).first_margin.is_none());
+
+        let own = Insets {
+            top: 60.0,
+            right: 10.0,
+            bottom: 10.0,
+            left: 30.0,
+        };
+        layout.first_margins = Some(own);
+        assert_eq!(PageView::of(Some(&layout), None).first_margin, Some(own));
+        assert!(PageView::of(None, None).margin.is_none());
+    }
+
+    #[test]
+    fn an_invoice_own_layout_and_texts_win_over_the_settings() {
+        let settings = Settings {
+            layout: "custom-3".into(),
+            intro: Some("Aus den Einstellungen".into()),
+            closing: Some("Danke".into()),
+            ..Settings::default()
+        };
+        let plain = InvoiceDraft::blank("2026-10-17");
+        let own = InvoiceDraft {
+            layout: Some("standard".into()),
+            intro: Some("Nur für diese Rechnung".into()),
+            closing: Some("   ".into()),
+            ..plain.clone()
+        };
+
+        let customs = [own_layout(3)];
+        let by_settings = Branding::for_draft(&plain, &settings, &customs);
+        let by_invoice = Branding::for_draft(&own, &settings, &customs);
+
+        assert!(by_settings.custom.is_some());
+        assert_eq!(by_settings.intro.as_deref(), Some("Aus den Einstellungen"));
+        // the invoice asked for the built-in layout
+        assert!(by_invoice.custom.is_none());
+        assert_eq!(by_invoice.intro.as_deref(), Some("Nur für diese Rechnung"));
+        // an empty text is the invoice's own: no closing, whatever the settings say
+        assert_eq!(by_invoice.closing, None);
+        assert_eq!(by_settings.closing.as_deref(), Some("Danke"));
+    }
 
     #[test]
     fn german_numbers_group_thousands_and_use_a_comma() {
@@ -441,7 +691,7 @@ mod tests {
             .unwrap()
             .1;
 
-        let view = build(&invoice, &Branding::default(), None);
+        let view = build(&invoice, &Branding::default(), None, PageView::default());
 
         assert_eq!(view.vat_notes.len(), 1);
         assert!(view.vat_notes[0].contains("Steuerschuldnerschaft"));

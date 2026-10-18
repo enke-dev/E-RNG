@@ -1,6 +1,7 @@
 mod commands;
 mod draft;
 mod invoice;
+mod layout_files;
 mod model;
 mod package;
 mod pipeline;
@@ -29,7 +30,12 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            app.manage(store::Store::open(&dir.join("e-rng.sqlite3"))?);
+            let store = store::Store::open(&dir.join("e-rng.sqlite3"))?;
+            // files of deleted or replaced stationery and fonts, nothing is being edited yet
+            if let Ok(layouts) = store.layouts_in_use() {
+                let _ = layout_files::prune(&dir.join("layouts"), &layouts);
+            }
+            app.manage(store);
             Ok(())
         })
         .manage(session::Sessions::default())
@@ -46,6 +52,14 @@ pub fn run() {
             commands::invoices_command::invoice_get,
             commands::invoices_command::invoice_save,
             commands::invoices_command::invoices_list,
+            commands::layouts_command::layout_delete,
+            commands::layouts_command::layout_import_background,
+            commands::layouts_command::layout_import_font,
+            commands::layouts_command::layout_preview,
+            commands::layouts_command::layout_save,
+            commands::layouts_command::layout_usage,
+            commands::layouts_command::layouts_custom,
+            commands::layouts_command::layouts_list,
             commands::preview_invoice_command::preview_invoice,
             commands::produce_invoice_command::produce_invoice,
             commands::settings_command::settings_get,

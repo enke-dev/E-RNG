@@ -59,11 +59,10 @@ pub async fn produce_invoice(
     let invoice = build_invoice(&stored.draft, &settings, &number)
         .map_err(|problems| ProduceError::Input { problems })?;
     let total = totals(&invoice).gross;
-    let branding = Branding {
-        logo: settings.logo.clone(),
-        footer: settings.footer.clone(),
-    };
+    let customs = store.custom_layouts().map_err(failed)?;
+    let branding = Branding::for_draft(&stored.draft, &settings, &customs);
     let profile = stored.draft.profile;
+    let produced_layout = branding.custom.clone();
 
     let work_dir = tempfile::Builder::new()
         .prefix("erng-")
@@ -88,6 +87,7 @@ pub async fn produce_invoice(
                     invoice_id: id,
                     number: number.clone(),
                     settings,
+                    custom_layout: produced_layout,
                     total,
                 },
             );

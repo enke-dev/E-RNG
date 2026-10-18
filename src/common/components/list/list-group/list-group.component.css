@@ -1,0 +1,20 @@
+:host {
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wa-space-s);
+  padding: var(--wa-space-xs) var(--wa-space-l);
+
+  border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+  text-transform: uppercase;
+}
+
+slot:not([name])::slotted(erng-)

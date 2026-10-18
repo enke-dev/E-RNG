@@ -30,6 +30,11 @@ export interface Settings {
   number_prefix: string;
   footer: string | null;
   logo: string | null;
+  /** The layout of the invoice document, invoices may choose another */
+  layout: string;
+  /** Texts of the letter, used unless an invoice has its own */
+  intro: string | null;
+  closing: string | null;
 }
 
 export interface Customer {
@@ -62,6 +67,10 @@ export interface InvoiceDraft {
   profile: Profile;
   buyer_reference: string | null;
   note: string | null;
+  /** Empty: the layout and texts from the settings */
+  layout: string | null;
+  intro: string | null;
+  closing: string | null;
   frozen: Settings | null;
 }
 
@@ -108,6 +117,56 @@ export interface Check {
   problems: InputProblem[];
   findings: Finding[];
   totals: Totals | null;
+}
+
+export interface LayoutInfo {
+  id: string;
+  name: string;
+  description: string;
+  /** Made by the user, not built in */
+  custom: boolean;
+  /** Out of the selection, kept for the invoices that were made with it */
+  archived: boolean;
+}
+
+/** Distances from the page edge to the content, in millimetres */
+export interface Insets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+/** The pages of an uploaded PDF as the stationery of a layout */
+export interface Background {
+  name: string;
+  first: string;
+  rest: string | null;
+}
+
+export interface FontFile {
+  family: string;
+  path: string;
+}
+
+/** An invoice made with an own layout, what keeps the layout from being deleted */
+export interface LayoutUsage {
+  invoice_id: number;
+  /** Null for a draft */
+  number: string | null;
+  customer: string;
+}
+
+/** A layout the user made: the built-in design on own stationery and font */
+export interface CustomLayout {
+  id: number | null;
+  name: string;
+  background: Background | null;
+  margins: Insets;
+  /** Insets of the first page when it differs from the others */
+  first_margins: Insets | null;
+  fonts: FontFile[];
+  archived: boolean;
 }
 
 export interface Preview {
@@ -167,6 +226,17 @@ export const api = {
   customersList: () => invoke<Customer[]>('customers_list'),
   customerSave: (customer: Customer) => invoke<Customer>('customer_save', { customer }),
   customerDelete: (id: number) => invoke<null>('customer_delete', { id }),
+
+  layoutsList: () => invoke<LayoutInfo[]>('layouts_list'),
+  layoutsCustom: () => invoke<CustomLayout[]>('layouts_custom'),
+  layoutSave: (layout: CustomLayout) => invoke<CustomLayout>('layout_save', { layout }),
+  layoutPreview: (layout: CustomLayout | null, guides: boolean) =>
+    invoke<Preview>('layout_preview', { layout, guides }),
+  layoutUsage: (id: number) => invoke<LayoutUsage[]>('layout_usage', { id }),
+  layoutDelete: (id: number) => invoke<null>('layout_delete', { id }),
+  layoutImportBackground: (path: string) =>
+    invoke<Background>('layout_import_background', { path }),
+  layoutImportFont: (path: string) => invoke<FontFile>('layout_import_font', { path }),
 
   templatesList: () => invoke<PositionTemplate[]>('templates_list'),
   templateSave: (template: PositionTemplate) =>

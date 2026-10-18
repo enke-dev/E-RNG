@@ -13,11 +13,13 @@ import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '../../common/components/customer-form/customer-form.component.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
+import '../../common/components/sheet/sheet.component.js';
+import '../../common/layouts/editor/editor.layout.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import type WaSwitch from '@awesome.me/webawesome/dist/components/switch/switch.js';
 import { save } from '@tauri-apps/plugin-dialog';
-import type { CSSResultGroup, PropertyValues } from 'lit';
+import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ref } from 'lit/directives/ref.js';
@@ -26,6 +28,7 @@ import type {
   Check,
   Customer,
   InvoiceDraft,
+  LayoutInfo,
   Position,
   PositionTemplate,
   Preview,
@@ -65,9 +68,7 @@ const blankCustomer = (): Customer => ({
 });
 
 @customElement('erng-invoice-edit')
-export class InvoiceEditView extends ErngElement {
-  static override styles: CSSResultGroup = [ErngElement.styles, styles];
-
+export class InvoiceEditView extends ErngElement.withStyles(styles) {
   /** `new` or the id of a stored invoice */
   @property({ attribute: 'invoice-id' }) invoiceId = 'new';
 
@@ -75,6 +76,7 @@ export class InvoiceEditView extends ErngElement {
   @state() private draft: InvoiceDraft | undefined;
   @state() private settings: Settings | undefined;
   @state() private customers: Customer[] = [];
+  @state() private layouts: LayoutInfo[] = [];
   @state() private check: Check | undefined;
   @state() private error = '';
   @state() private notice = '';
@@ -84,7 +86,6 @@ export class InvoiceEditView extends ErngElement {
   @state() private templates: PositionTemplate[] | undefined;
   @state() private templateQuery = '';
   @state() private preview: Preview | undefined;
-  @state() private previewPage = 0;
   @state() private previewError = '';
   /** The fields of a position do not fit side by side any more: stacked, each with its label */
   @state() private stacked = false;
@@ -134,7 +135,6 @@ export class InvoiceEditView extends ErngElement {
     this.#previewRequest++;
     clearTimeout(this.#previewTimer);
     this.preview = undefined;
-    this.previewPage = 0;
     await this.load();
   }
 
@@ -156,12 +156,22 @@ export class InvoiceEditView extends ErngElement {
   private async load() {
     this.error = '';
     try {
-      const [settings, customers] = await Promise.all([api.settingsGet(), api.customersList()]);
+      const [settings, customers, layouts] = await Promise.all([
+        api.settingsGet(),
+        api.customersList(),
+        api.layoutsList(),
+      ]);
+      this.layouts = layouts;
       this.settings = settings;
       this.customers = customers;
       if (this.invoiceId === 'new') {
         this.stored = undefined;
         this.draft = await api.invoiceBlank();
+        // a new invoice starts with the default layout, it can pick another
+        this.draft.layout = settings.layout;
+        // and the texts of the settings, which it can change for itself
+        this.draft.intro = settings.intro ?? '';
+        this.draft.closing = settings.closing ?? '';
       } else {
         this.stored = await api.invoiceGet(Number(this.invoiceId));
         this.draft = this.stored.draft;
@@ -186,7 +196,6 @@ export class InvoiceEditView extends ErngElement {
       }
       this.preview = preview;
       this.previewError = '';
-      this.previewPage = Math.min(this.previewPage, Math.max(0, preview.pages.length - 1));
     } catch (error) {
       if (request === this.#previewRequest) {
         this.previewError = errorText(error);
@@ -463,51 +472,17 @@ export class InvoiceEditView extends ErngElement {
   }
 
   private renderPreviewSheet() {
-    const pages = this.preview?.pages ?? [];
     const problems = this.preview?.problems ?? [];
-    const page = pages[this.previewPage];
     const hint = this.previewError
       ? `Vorschau nicht verfügbar: ${this.previewError}`
       : problems.length > 0
         ? problems.map(p => p.message).join(', ')
         : 'Die Vorschau wird erzeugt…';
-    return html`
-      <div id="sheet" class="${pages.length > 1 ? 'paged' : ''}">
-        <div id="page">
-          ${
-            page
-              ? html`<img
-                  alt="Vorschau, Seite ${this.previewPage + 1} von ${pages.length}"
-                  src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(page)}"
-                >`
-              : html`<span class="muted">${hint}</span>`
-          }
-        </div>
-        ${
-          pages.length > 1
-            ? html`<wa-button-group label="Seiten" class="pager">
-                <wa-button
-                  appearance="outlined"
-                  size="s"
-                  ?disabled="${this.previewPage === 0}"
-                  @click="${() => (this.previewPage -= 1)}"
-                  >Zurück</wa-button
-                >
-                <wa-button appearance="outlined" size="s" disabled>
-                  Seite ${this.previewPage + 1} von ${pages.length}
-                </wa-button>
-                <wa-button
-                  appearance="outlined"
-                  size="s"
-                  ?disabled="${this.previewPage >= pages.length - 1}"
-                  @click="${() => (this.previewPage += 1)}"
-                  >Weiter</wa-button
-                >
-              </wa-button-group>`
-            : nothing
-        }
-      </div>
-    `;
+    return html`<erng-sheet
+      slot="preview"
+      .pages="${this.preview?.pages ?? []}"
+      hint="${hint}"
+    ></erng-sheet>`;
   }
 
   /** Called with the positions grid whenever it is (re)rendered or removed */
@@ -896,8 +871,8 @@ export class InvoiceEditView extends ErngElement {
       (this.check?.findings.some(f => f.severity === 'Fatal') ?? false);
 
     return html`
-      <div id="content">
-        <section id="form">
+      <erng-editor>
+        <section id="form" slot="form">
           ${
             locked
               ? html`
@@ -913,39 +888,49 @@ export class InvoiceEditView extends ErngElement {
           ${this.notice ? html`<wa-callout variant="success">${this.notice}</wa-callout>` : nothing}
 
           <wa-card>
-            <div slot="header">Kunde</div>
-            <div class="customer">
-              <wa-select
-                label="Kunde"
-                placeholder="Kunde auswählen"
-                ?disabled="${locked}"
-                .value="${draft.customer.id == null ? '' : String(draft.customer.id)}"
-                @change="${(e: Event) => this.selectCustomer(String((e.target as WaSelect).value))}"
-              >
-                ${this.customers.map(c => html`<wa-option value="${String(c.id)}">${c.name}</wa-option>`)}
-              </wa-select>
-              ${locked ? nothing : html`<wa-button @click="${() => (this.newCustomer = blankCustomer())}" appearance="outlined">Neuer Kunde</wa-button>`}
-            </div>
-            ${
-              draft.customer.name
-                ? html`
-                    <div class="muted">
-                      ${draft.customer.name}, ${draft.customer.address.street},
-                      ${draft.customer.address.post_code} ${draft.customer.address.city}
-                    </div>
-                  `
-                : nothing
-            }
-          </wa-card>
-
-          <wa-card>
             <div slot="header">Rechnung</div>
             <div class="stack">
+              <div class="grid">
+                <div class="customer">
+                  <wa-select
+                    label="Kunde"
+                    placeholder="Kunde auswählen"
+                    ?disabled="${locked}"
+                    required
+                    .value="${draft.customer.id == null ? '' : String(draft.customer.id)}"
+                    @change="${(e: Event) => this.selectCustomer(String((e.target as WaSelect).value))}"
+                  >
+                    ${this.customers.map(c => html`<wa-option value="${String(c.id)}">${c.name}</wa-option>`)}
+                  </wa-select>
+                  ${locked ? nothing : html`<wa-button @click="${() => (this.newCustomer = blankCustomer())}" appearance="outlined">Neuer Kunde</wa-button>`}
+                </div>
+                <wa-select
+                  label="Layout"
+                  ?disabled="${locked}"
+                  .value="${draft.layout ?? this.settings?.layout ?? 'standard'}"
+                  @change="${(e: Event) => this.edit(d => (d.layout = String((e.target as WaSelect).value)))}"
+                >
+                  ${this.layouts
+                    .filter(l => !l.archived || l.id === draft.layout)
+                    .map(l => html`<wa-option value="${l.id}">${l.name}</wa-option>`)}
+                </wa-select>
+              </div>
+              ${
+                draft.customer.name
+                  ? html`
+                      <div class="muted">
+                        ${draft.customer.name}, ${draft.customer.address.street},
+                        ${draft.customer.address.post_code} ${draft.customer.address.city}
+                      </div>
+                    `
+                  : nothing
+              }
               <div class="grid">
                 <wa-input
                   type="date"
                   label="Rechnungsdatum"
                   ?disabled="${locked}"
+                  required
                   .value="${draft.issue_date}"
                   @input="${(e: Event) => this.edit(d => (d.issue_date = text(e)))}"
                 ></wa-input>
@@ -953,6 +938,7 @@ export class InvoiceEditView extends ErngElement {
                   type="date"
                   label="Leistungsdatum"
                   ?disabled="${locked}"
+                  required
                   .value="${draft.delivery_date}"
                   @input="${(e: Event) => this.edit(d => (d.delivery_date = text(e)))}"
                 ></wa-input>
@@ -970,6 +956,7 @@ export class InvoiceEditView extends ErngElement {
                       <wa-input
                         label="Leitweg-ID / Käuferreferenz"
                         ?disabled="${locked}"
+                        required
                         .value="${draft.buyer_reference ?? ''}"
                         @input="${(e: Event) => this.edit(d => (d.buyer_reference = nullable(text(e))))}"
                       ></wa-input>
@@ -985,21 +972,40 @@ export class InvoiceEditView extends ErngElement {
           </wa-card>
 
           <wa-card>
-            <div slot="header">Anmerkung</div>
-            <wa-textarea
-              aria-label="Anmerkung"
-              rows="2"
-              ?disabled="${locked}"
-              .value="${draft.note ?? ''}"
-              @input="${(e: Event) => this.edit(d => (d.note = nullable(text(e))))}"
-            ></wa-textarea>
+            <div slot="header">Texte</div>
+            <div class="stack">
+              <wa-textarea
+                label="Einleitung"
+                rows="2"
+                ?disabled="${locked}"
+                .placeholder="${this.settings?.intro ?? ''}"
+                .value="${draft.intro ?? ''}"
+                @input="${(e: Event) => this.edit(d => (d.intro = text(e)))}"
+              ></wa-textarea>
+              <wa-textarea
+                label="Anmerkung"
+                hint="Steht nach der Einleitung, vor den Positionen"
+                rows="2"
+                ?disabled="${locked}"
+                .value="${draft.note ?? ''}"
+                @input="${(e: Event) => this.edit(d => (d.note = nullable(text(e))))}"
+              ></wa-textarea>
+              <wa-textarea
+                label="Schlusstext"
+                rows="2"
+                ?disabled="${locked}"
+                .placeholder="${this.settings?.closing ?? ''}"
+                .value="${draft.closing ?? ''}"
+                @input="${(e: Event) => this.edit(d => (d.closing = text(e)))}"
+              ></wa-textarea>
+            </div>
           </wa-card>
 
           ${this.renderCheck()}
         </section>
 
-        <section id="preview">${this.renderPreviewSheet()}</section>
-      </div>
+        ${this.renderPreviewSheet()}
+      </erng-editor>
 
       <footer>
         <wa-tag>${stored ? (stored.number ?? 'Entwurf') : 'Neue Rechnung'}</wa-tag>
@@ -1059,9 +1065,9 @@ export class InvoiceEditView extends ErngElement {
             : nothing
         }
         <wa-button-group slot="footer" label="Kunde">
-          <wa-button appearance="outlined" @click="${() => (this.newCustomer = undefined)}"
-            >Abbrechen</wa-button
-          >
+          <wa-button appearance="outlined" @click="${() => (this.newCustomer = undefined)}">
+            Abbrechen
+          </wa-button>
           <wa-button variant="brand" @click="${this.saveNewCustomer}">Speichern</wa-button>
         </wa-button-group>
       </wa-dialog>

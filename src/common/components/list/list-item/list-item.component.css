@@ -1,0 +1,66 @@
+:host {
+  display: block;
+}
+
+button {
+  all: unset;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 var(--wa-space-s);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--wa-space-s) var(--wa-space-l);
+  cursor: pointer;
+  border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+
+  &:hover {
+    background: var(--wa-color-surface-lowered);
+  }
+
+  &:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: calc(-1 * var(--wa-focus-ring-width, 2px));
+  }
+}
+
+:host([selected]) button {
+  background: var(--wa-color-brand-fill-normal);
+  color: var(--wa-color-text-on-brand-fill);
+}
+
+/* out of the way, but still there for those who made something with it */
+:host([archived]:not([selected])) button {
+  opacity: 0.5;
+}
+
+.name {
+  grid-area: 1 / 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+::slotted([slot='end']),
+::slotted([slot='sub-end']) {
+  grid-column: 2;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+::slotted([slot='end']) {
+  grid-row: 1;
+}
+
+::slotted([slot='sub']),
+::slotted([slot='sub-end']) {
+  grid-row: 2;
+  color: var(--wa-color-text-quiet);
+}
+
+::slotted([slot='sub']) {
+  grid-column: 1;
+}
+
+:host([selected]) ::slotted([slot^='sub']) {
+  color: inherit;
+}

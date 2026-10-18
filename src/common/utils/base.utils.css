@@ -6,7 +6,7 @@
 .stack {
   display: flex;
   flex-direction: column;
-  gap: var(--wa-space-m);
+  gap: var(--wa-space-s);
 }
 
 .row {

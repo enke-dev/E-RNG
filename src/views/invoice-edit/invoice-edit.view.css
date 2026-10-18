@@ -10,79 +10,20 @@
   container-type: inline-size;
 }
 
-#content {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: row;
-}
-
 #form {
-  flex: 1 1 0;
-  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--wa-space-m);
-  padding: var(--wa-space-m) var(--wa-space-l);
 }
 
-#preview {
-  /* the page needs room to be readable: a share of the pane, between 20 and 36rem */
-  flex: 0 0 clamp(20rem, 38%, 36rem);
-  display: flex;
-  align-items: start;
-  justify-content: center;
-
-  padding: 0 var(--wa-space-l);
-  background: var(--wa-color-surface-lowered);
+erng-sheet {
+  --reserve: var(--footer-height);
 }
 
-#sheet {
-  /* room for a pager under the page, only when there is one */
-  --pager: 0rem;
-
-  position: sticky;
-  top: 0;
-  box-sizing: border-box;
-  /* never taller than the visible part of the pane that scrolls: page and pager stay in reach */
-  max-height: calc(100cqb - var(--footer-height));
-  align-self: start;
+.first-line {
   display: flex;
-  flex-direction: column;
-  gap: var(--wa-space-s);
-  align-items: center;
-  width: 100%;
-  padding-block: var(--wa-space-m);
-
-  &.paged {
-    --pager: 3rem;
-  }
-}
-
-#page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  aspect-ratio: 210 / 297;
-  min-width: 5rem;
-  /* as wide as the column allows and as tall as the pane allows (A4, portrait) */
-  width: min(
-    100%,
-    calc((100cqb - var(--footer-height) - 2 * var(--wa-space-m) - var(--pager)) * 210 / 297)
-  );
-  background: #fff;
-  box-shadow: var(--wa-shadow-m);
-
-  & img {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-
-  & .muted {
-    padding: var(--wa-space-l);
-    text-align: center;
-    color: #777;
-  }
+  flex-direction: row;
+  gap: var(--wa-space-m);
 }
 
 .customer {
@@ -90,6 +31,10 @@
   flex-direction: row;
   align-items: end;
   gap: var(--wa-space-s);
+}
+
+#layout {
+  width: fit-content;
 }
 
 .summary {
@@ -283,12 +228,5 @@ footer {
 
   wa-button-group::part(base) {
     flex-wrap: nowrap;
-  }
-}
-
-/* too narrow for form and page side by side: the form wins */
-@container (max-width: 62rem) {
-  #preview {
-    display: none;
   }
 }

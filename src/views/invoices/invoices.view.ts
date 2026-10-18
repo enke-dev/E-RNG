@@ -4,10 +4,13 @@ import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
+import '../../common/components/list/list/list.component.js';
+import '../../common/components/list/list-item/list-item.component.js';
+import '../../common/layouts/split/split.layout.js';
 import '../invoice-edit/invoice-edit.view.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
-import type { CSSResultGroup, PropertyValues } from 'lit';
+import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
@@ -16,7 +19,6 @@ import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { formatDate, money } from '../../common/utils/format.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
-import styles from './invoices.view.css';
 
 type StatusFilter = 'all' | 'draft' | 'exported';
 
@@ -38,8 +40,6 @@ function haystack(entry: ListEntry): string {
  */
 @customElement('erng-invoices')
 export class InvoicesView extends ErngElement {
-  static override styles: CSSResultGroup = [ErngElement.styles, styles];
-
   /** From the address: `new`, an id, or empty for "the newest" */
   @property() selected = '';
 
@@ -133,8 +133,9 @@ export class InvoicesView extends ErngElement {
   override render() {
     const shown = this.shown;
     return html`
-      <aside>
+      <erng-split @invoice-changed="${this.handleChanged}">
         <erng-filter-bar
+          slot="list"
           .query="${this.query}"
           placeholder="Rechnungen suchen"
           @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
@@ -159,11 +160,11 @@ export class InvoicesView extends ErngElement {
           </wa-button>
         </erng-filter-bar>
 
-        ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
+        ${this.error ? html`<wa-callout slot="list" variant="danger">${this.error}</wa-callout>` : nothing}
         ${
           this.incomplete
             ? html`
-                <wa-callout variant="warning">
+                <wa-callout slot="list" variant="warning">
                   Bitte zuerst <a href="/settings">Unternehmen und Bankverbindung</a> in den
                   Einstellungen eintragen.
                 </wa-callout>
@@ -172,42 +173,39 @@ export class InvoicesView extends ErngElement {
         }
         ${
           this.entries && shown.length === 0
-            ? html`<wa-callout variant="neutral"
-                >${this.entries.length === 0 ? 'Noch keine Rechnungen.' : 'Keine Treffer.'}</wa-callout
-              >`
+            ? html`<wa-callout slot="list" variant="neutral">
+                ${this.entries.length === 0 ? 'Noch keine Rechnungen.' : 'Keine Treffer.'}
+              </wa-callout>`
             : nothing
         }
 
-        <ul>
+        <erng-list slot="list">
           ${shown.map(
             e => html`
-              <li>
-                <button
-                  class="item"
-                  type="button"
-                  aria-current="${String(String(e.id) === this.highlighted)}"
-                  @click="${() => goto(`/invoices/${e.id}`)}"
-                >
-                  <span class="name">${e.customer_name || html`<span class="muted">–</span>`}</span>
-                  <span class="amount">${money(e.total)}</span>
-                  <span class="muted">
-                    ${e.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
-                  </span>
-                  <span class="muted amount">${formatDate(e.issue_date)}</span>
-                </button>
-              </li>
+              <erng-list-item
+                ?selected="${String(e.id) === this.highlighted}"
+                @click="${() => goto(`/invoices/${e.id}`)}"
+              >
+                ${e.customer_name || '–'}
+                <span slot="end">${money(e.total)}</span>
+                <span slot="sub">
+                  ${e.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
+                </span>
+                <span slot="sub-end">${formatDate(e.issue_date)}</span>
+              </erng-list-item>
             `
           )}
-        </ul>
-      </aside>
+        </erng-list>
 
-      <article class="detail" @invoice-changed="${this.handleChanged}">
         ${
           this.entries
-            ? html`<erng-invoice-edit invoice-id="${this.current}"></erng-invoice-edit>`
+            ? html`<erng-invoice-edit
+                slot="detail"
+                invoice-id="${this.current}"
+              ></erng-invoice-edit>`
             : nothing
         }
-      </article>
+      </erng-split>
     `;
   }
 }

@@ -7,6 +7,7 @@ import { mockIPC } from '@tauri-apps/api/mocks';
 
 import type {
   Customer,
+  CustomLayout,
   InvoiceDraft,
   PositionTemplate,
   Settings,
@@ -40,6 +41,9 @@ const settings: Settings = {
   number_prefix: 'RE-',
   footer: null,
   logo: null,
+  layout: 'standard',
+  intro: null,
+  closing: null,
 };
 
 const customers: Customer[] = [
@@ -61,6 +65,8 @@ const customers: Customer[] = [
   },
 ];
 
+const customLayouts: CustomLayout[] = [];
+
 const templates: PositionTemplate[] = [
   { id: 1, description: 'Beratung', quantity: '1', unit: 'HUR', price: '95,00' },
   { id: 2, description: 'Reisekosten', quantity: null, unit: null, price: '42,50' },
@@ -75,6 +81,9 @@ const draftOf = (customer: Customer): InvoiceDraft => ({
   profile: 'en16931',
   buyer_reference: null,
   note: null,
+  layout: null,
+  intro: null,
+  closing: null,
   frozen: null,
 });
 
@@ -169,6 +178,55 @@ export function installMocks() {
             customer.id === null ? -1 : customers.findIndex(c => c.id === customer.id)
           );
         }
+        case 'layouts_custom':
+          return customLayouts;
+        case 'layout_save': {
+          const layout = args['layout'] as CustomLayout;
+          if (layout.id === null) {
+            customLayouts.push({ ...layout, id: customLayouts.length + 1 });
+            return customLayouts.at(-1);
+          }
+          customLayouts[customLayouts.findIndex(l => l.id === layout.id)] = layout;
+          return layout;
+        }
+        case 'layout_delete':
+          customLayouts.splice(
+            customLayouts.findIndex(l => l.id === args['id']),
+            1
+          );
+          return null;
+        case 'layout_import_background':
+          return { name: String(args['path']).split('/').pop(), first: '/mock/1.svg', rest: null };
+        case 'layout_import_font':
+          return { family: 'Mock Sans', path: String(args['path']) };
+        case 'layouts_list':
+          return [
+            {
+              id: 'standard',
+              name: 'Klassisch',
+              description:
+                'Serifenschrift, Positionen mit Menge, Einheit und Preisen, Zahlungsblock',
+              custom: false,
+              archived: false,
+            },
+            ...customLayouts.map(l => ({
+              id: `custom-${l.id}`,
+              name: l.name,
+              description: 'Eigenes Layout',
+              custom: true,
+              archived: l.archived,
+            })),
+          ];
+        case 'layout_preview':
+          return {
+            pages: [1, 2].map(
+              n =>
+                `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297"><text x="20" y="40" font-size="12">Beispiel Seite ${n}</text></svg>`
+            ),
+            problems: [],
+          };
+        case 'layout_usage':
+          return [];
         case 'templates_list':
           return templates;
         case 'template_save': {

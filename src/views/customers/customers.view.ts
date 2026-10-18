@@ -5,15 +5,14 @@ import '@awesome.me/webawesome/dist/components/card/card.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '../../common/components/customer-form/customer-form.component.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
+import '../../common/layouts/cards/cards.layout.js';
 
-import type { CSSResultGroup } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import type { Customer } from '../../common/utils/api.utils.js';
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
-import styles from './customers.view.css';
 
 const blank = (): Customer => ({
   id: null,
@@ -26,8 +25,6 @@ const blank = (): Customer => ({
 
 @customElement('erng-customers')
 export class CustomersView extends ErngElement {
-  static override styles: CSSResultGroup = [ErngElement.styles, styles];
-
   @state() private customers: Customer[] = [];
   @state() private editing: Customer | undefined;
   @state() private error = '';
@@ -93,29 +90,30 @@ export class CustomersView extends ErngElement {
         .includes(query)
     );
     return html`
-      <erng-filter-bar
-        .query="${this.query}"
-        placeholder="Kunden suchen"
-        @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
-      >
-        <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
-          Neuer Kunde
-        </wa-button>
-      </erng-filter-bar>
+      <erng-cards>
+        <erng-filter-bar
+          slot="header"
+          .query="${this.query}"
+          placeholder="Kunden suchen"
+          @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
+        >
+          <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
+            Neuer Kunde
+          </wa-button>
+        </erng-filter-bar>
 
-      ${this.error && !editing ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
-      ${
-        shown.length === 0
-          ? html`
-              <wa-callout variant="neutral">
-                ${this.customers.length === 0 ? 'Noch keine Kunden angelegt.' : 'Keine Treffer.'}
-              </wa-callout>
-            `
-          : html`
-              <div class="customers">
+        ${this.error && !editing ? html`<wa-callout slot="notice" variant="danger">${this.error}</wa-callout>` : nothing}
+        ${
+          shown.length === 0
+            ? html`
+                <wa-callout slot="notice" variant="neutral">
+                  ${this.customers.length === 0 ? 'Noch keine Kunden angelegt.' : 'Keine Treffer.'}
+                </wa-callout>
+              `
+            : html`
                 ${shown.map(
                   c => html`
-                    <wa-card @click="${() => this.edit(c)}">
+                    <wa-card slot="cards" @click="${() => this.edit(c)}">
                       <strong>${c.name}</strong>
                       <div class="muted">
                         ${c.address.street}<br>${c.address.post_code} ${c.address.city}
@@ -123,49 +121,50 @@ export class CustomersView extends ErngElement {
                     </wa-card>
                   `
                 )}
-              </div>
-            `
-      }
+              `
+        }
 
-      <wa-dialog
-        ?open="${editing !== undefined}"
-        label="${editing?.id == null ? 'Neuer Kunde' : 'Kunde bearbeiten'}"
-        @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.editing = undefined)}"
-      >
-        ${
-          editing
-            ? html`
-                <div class="stack">
-                  <erng-customer-form
-                    .customer="${editing}"
-                    @change="${() => this.requestUpdate()}"
-                  ></erng-customer-form>
-                  ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
-                </div>
-              `
-            : nothing
-        }
-        ${
-          editing?.id != null
-            ? html`
-                <wa-button
-                  slot="footer"
-                  variant="danger"
-                  appearance="outlined"
-                  @click="${this.deleteCustomer}"
-                >
-                  Löschen
-                </wa-button>
-              `
-            : nothing
-        }
-        <wa-button-group slot="footer" label="Bearbeiten">
-          <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}">
-            Abbrechen
-          </wa-button>
-          <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
-        </wa-button-group>
-      </wa-dialog>
+        <wa-dialog
+          slot="dialog"
+          ?open="${editing !== undefined}"
+          label="${editing?.id == null ? 'Neuer Kunde' : 'Kunde bearbeiten'}"
+          @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.editing = undefined)}"
+        >
+          ${
+            editing
+              ? html`
+                  <div class="stack">
+                    <erng-customer-form
+                      .customer="${editing}"
+                      @change="${() => this.requestUpdate()}"
+                    ></erng-customer-form>
+                    ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
+                  </div>
+                `
+              : nothing
+          }
+          ${
+            editing?.id != null
+              ? html`
+                  <wa-button
+                    slot="footer"
+                    variant="danger"
+                    appearance="outlined"
+                    @click="${this.deleteCustomer}"
+                  >
+                    Löschen
+                  </wa-button>
+                `
+              : nothing
+          }
+          <wa-button-group slot="footer" label="Bearbeiten">
+            <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}">
+              Abbrechen
+            </wa-button>
+            <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
+          </wa-button-group>
+        </wa-dialog>
+      </erng-cards>
     `;
   }
 }

@@ -57,10 +57,8 @@ pub async fn preview_invoice(
             })
         }
     };
-    let branding = Branding {
-        logo: settings.logo.clone(),
-        footer: settings.footer.clone(),
-    };
+    let customs = store.custom_layouts().map_err(message)?;
+    let branding = Branding::for_draft(&draft, &settings, &customs);
     let sidecars = Sidecars::locate(&app).map_err(message)?;
 
     let pages = tauri::async_runtime::spawn_blocking(move || {

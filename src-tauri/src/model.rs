@@ -49,7 +49,9 @@ pub struct Seller {
     pub legal_info: Option<String>,
 }
 
+/// Older databases lack the newer fields, they fall back to the defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub seller: Seller,
     /// VAT rate in percent, one for the whole app
@@ -59,6 +61,11 @@ pub struct Settings {
     pub number_prefix: String,
     pub footer: Option<String>,
     pub logo: Option<PathBuf>,
+    /// The layout of the invoice document (see `render::layouts`), invoices may choose another
+    pub layout: String,
+    /// Texts of the letter around the table, used unless an invoice has its own
+    pub intro: Option<String>,
+    pub closing: Option<String>,
 }
 
 impl Default for Settings {
@@ -70,7 +77,81 @@ impl Default for Settings {
             number_prefix: "RE-".into(),
             footer: None,
             logo: None,
+            layout: "standard".into(),
+            intro: None,
+            closing: None,
         }
+    }
+}
+
+/// Distances from the page edge to the content, in millimetres.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Insets {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
+}
+
+impl Default for Insets {
+    fn default() -> Self {
+        Self {
+            top: 20.0,
+            right: 20.0,
+            bottom: 25.0,
+            left: 25.0,
+        }
+    }
+}
+
+/// The stationery of a layout: the pages of an uploaded PDF, converted to SVG (Typst cannot put
+/// a PDF behind PDF/A pages). One page covers all pages of the invoice, a second one is for
+/// every page after the first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Background {
+    /// Name of the uploaded file, shown in the form
+    pub name: String,
+    pub first: PathBuf,
+    pub rest: Option<PathBuf>,
+}
+
+/// An uploaded font file and the family Typst knows it by.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FontFile {
+    pub family: String,
+    pub path: PathBuf,
+}
+
+/// An invoice that is made with an own layout, what keeps the layout from being deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutUsage {
+    pub invoice_id: i64,
+    /// `None` for a draft
+    pub number: Option<String>,
+    pub customer: String,
+}
+
+/// A layout the user made: the built-in design on the user's stationery and font.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomLayout {
+    pub id: Option<i64>,
+    pub name: String,
+    pub background: Option<Background>,
+    /// Where the content may go on the pages after the first, and on the first unless it has its own
+    pub margins: Insets,
+    /// The first page may have insets of its own on all four sides, e.g. for a letterhead
+    pub first_margins: Option<Insets>,
+    /// The files of one font family, all of them are made available to Typst
+    pub fonts: Vec<FontFile>,
+    /// Out of the selection, kept for the invoices that were made with it
+    #[serde(default)]
+    pub archived: bool,
+}
+
+impl CustomLayout {
+    /// The id the settings and invoices refer to it by
+    pub fn key(&self) -> String {
+        format!("custom-{}", self.id.unwrap_or_default())
     }
 }
 
@@ -105,7 +186,7 @@ pub struct PositionTemplate {
     pub position: Position,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InvoiceDraft {
     /// A copy: later edits of the customer do not touch existing invoices
     pub customer: Customer,
@@ -117,9 +198,21 @@ pub struct InvoiceDraft {
     pub profile: ProfileKind,
     pub buyer_reference: Option<String>,
     pub note: Option<String>,
+    /// A layout for this invoice only, empty means the one from the settings
+    #[serde(default)]
+    pub layout: Option<String>,
+    /// Texts of this invoice, new invoices start with those of the settings; `None` (made before the
+    /// texts existed) takes the settings, an empty text is no text
+    #[serde(default)]
+    pub intro: Option<String>,
+    #[serde(default)]
+    pub closing: Option<String>,
     /// The settings an exported invoice was made with, so it can be produced again unchanged
     #[serde(default)]
     pub frozen: Option<Settings>,
+    /// The own layout it was made with, frozen like the settings
+    #[serde(default)]
+    pub frozen_layout: Option<CustomLayout>,
 }
 
 impl InvoiceDraft {
@@ -132,7 +225,11 @@ impl InvoiceDraft {
             profile: ProfileKind::default(),
             buyer_reference: None,
             note: None,
+            layout: None,
+            intro: None,
+            closing: None,
             frozen: None,
+            frozen_layout: None,
         }
     }
 }
@@ -144,7 +241,7 @@ pub enum Status {
     Exported,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StoredInvoice {
     pub id: i64,
     /// Assigned when the invoice is exported, drafts have none
@@ -165,4 +262,38 @@ pub struct ListEntry {
     pub issue_date: String,
     pub total: Option<String>,
     pub updated_at: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_stored_by_an_older_version_get_the_new_defaults() {
+        let old = r#"{"seller":{"name":"A","address":{"street":"","post_code":"","city":"","country":"DE"},
+            "vat_id":null,"tax_number":null,"contact_name":"","phone":"","email":"","iban":"","bic":null,
+            "account_holder":null,"legal_info":null},"tax_rate":"19","payment_days":14,
+            "number_prefix":"RE-","footer":null,"logo":null}"#;
+
+        let settings: Settings = serde_json::from_str(old).unwrap();
+
+        assert_eq!(settings.seller.name, "A");
+        assert_eq!(settings.layout, "standard");
+        assert_eq!(settings.intro, None);
+    }
+
+    #[test]
+    fn drafts_stored_by_an_older_version_have_no_layout_or_texts() {
+        let mut json = serde_json::to_value(InvoiceDraft::blank("2026-10-17")).unwrap();
+        for key in ["layout", "intro", "closing"] {
+            json.as_object_mut().unwrap().remove(key);
+        }
+
+        let draft: InvoiceDraft = serde_json::from_value(json).unwrap();
+
+        assert_eq!(
+            (draft.layout, draft.intro, draft.closing),
+            (None, None, None)
+        );
+    }
 }

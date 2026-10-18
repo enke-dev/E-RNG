@@ -4,6 +4,8 @@ import { html } from 'lit';
 /** Both address forms show the same element: it stays and only its selection changes */
 const invoices = (selected = '') => html`<erng-invoices selected="${selected}"></erng-invoices>`;
 
+const settings = (section = '') => html`<erng-settings selected="${section}"></erng-settings>`;
+
 /** Views are loaded on first visit, the shell stays small */
 export const routes: RouteConfig[] = [
   {
@@ -44,6 +46,14 @@ export const routes: RouteConfig[] = [
       await import('./settings/settings.view.js');
       return true;
     },
-    render: () => html`<erng-settings></erng-settings>`,
+    render: () => settings(),
+  },
+  {
+    path: '/settings/:section',
+    enter: async () => {
+      await import('./settings/settings.view.js');
+      return true;
+    },
+    render: ({ section }) => settings(section),
   },
 ];

@@ -1,7 +1,6 @@
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 
-import type { CSSResultGroup } from 'lit';
 import { html } from 'lit';
 import { customElement, eventOptions, property } from 'lit/decorators.js';
 
@@ -18,9 +17,7 @@ import styles from './filter-bar.component.css';
  * @fires query-change - `detail` is the search text
  */
 @customElement('erng-filter-bar')
-export class FilterBarComponent extends ErngElement {
-  static override styles: CSSResultGroup = [ErngElement.styles, styles];
-
+export class FilterBarComponent extends ErngElement.withStyles(styles) {
   @property() query = '';
 
   @property() placeholder = 'Suchen';

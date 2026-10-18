@@ -4,7 +4,6 @@ import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '../common/components/updater/updater.component.js';
 
 import { platform } from '@tauri-apps/plugin-os';
-import type { CSSResultGroup } from 'lit';
 import { html } from 'lit';
 import { customElement, eventOptions } from 'lit/decorators.js';
 import { when } from 'lit/directives/when.js';
@@ -28,9 +27,7 @@ const isActive = (href: string) =>
     : location.pathname.startsWith(href);
 
 @customElement('erng-root')
-export class RootView extends ErngElement {
-  static override styles: CSSResultGroup = [ErngElement.styles, styles];
-
+export class RootView extends ErngElement.withStyles(styles) {
   readonly #router = registerRouter(this, routes);
 
   @eventOptions({ passive: true })
@@ -54,9 +51,7 @@ export class RootView extends ErngElement {
 
   protected override render() {
     return html`
-      ${when(platform() === 'macos', () => html`<span id="window-decoration" data-tauri-drag-region></span>`)}
-
-      <header>
+      <header data-tauri-drag-region>
         <div id="start">
           <h1>E-RNG</h1>
           <h2>ZUGFeRD, Factur-X PDF, XRechnung XML</h2>

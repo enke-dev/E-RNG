@@ -8,6 +8,8 @@ pub mod discard_work_dir_command;
 pub mod export_invoice_command;
 #[path = "invoices.command.rs"]
 pub mod invoices_command;
+#[path = "layouts.command.rs"]
+pub mod layouts_command;
 #[path = "preview-invoice.command.rs"]
 pub mod preview_invoice_command;
 #[path = "produce-invoice.command.rs"]

@@ -16,3 +16,5 @@ The app ships these programs next to its binary and runs them as separate proces
   [veraPDF](https://verapdf.org) (GPL-3.0+ or MPL-2.0, used under the MPL), Saxon and PDFBox with their own licences.
 - A Java runtime linked from [Eclipse Temurin](https://adoptium.net) 21 (GPL-2.0 with Classpath Exception), its licence
   files stay in `sidecars/jre/legal`.
+- [Open Sans](https://github.com/googlefonts/opensans), SIL Open Font License 1.1, is used as a font file in the
+  tests only (`src-tauri/test-fixtures/`, licence next to it), it is not part of the app.

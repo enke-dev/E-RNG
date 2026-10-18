@@ -49,7 +49,7 @@ this list is the index of what is still open.
 - [ ] `@enke.dev/lit-utils` is not used (the conventions below mention it as an option)
 
 **Invoice template**
-- [ ] Bundle a sans-serif font (Typst only embeds serif and math fonts; Inter is OFL)
+- [x] Own layouts (stationery PDF, margins, fonts), default in the settings, optional per invoice, archiving; open items in the proposal "several invoice templates" below
 - [ ] EPC / GiroCode QR code for EUR credit transfers (needs a vendored QR package, no network at compile time)
 - [ ] Exact DIN 5008 window geometry and fold marks
 - [ ] English invoices (labels live in `render/view.rs`)
@@ -157,7 +157,6 @@ Status: **done 2026-10-17** (first version, German only). Code in `src-tauri/src
 Evaluated and rejected: the Typst Universe package `classy-german-invoice` (MIT-0): one VAT rate computed inside the template, no quantities/units/allowances/credit notes/reverse charge/service date, two network packages fetched at compile time. Borrow the idea of an EPC (GiroCode) QR for the payment block.
 
 Open:
-- Bundle a sans-serif font (Typst only embeds serif and math fonts; Inter is OFL) via `--font-path`
 - EPC/GiroCode QR code for EUR credit transfers (needs a vendored QR package, no network at compile time)
 - Exact DIN 5008 window geometry and fold marks
 - English (and other) invoice language: labels live in the view, a language switch would go there
@@ -244,6 +243,42 @@ Not in the first UI version:
 - No unit tests for the frontend yet, UI flows were checked by hand in the browser mock
 
 Manual checks in the real app (`bunx tauri dev`): the whole flow with the real backend (settings → customer → invoice → create and check → save as PDF → open the PDF and the embedded XML), the macOS title bar overlay, dark mode, the updater button (hidden until a release exists), an invoice export with a logo.
+
+## Proposal: several invoice templates
+
+Status: first steps built (see "Built so far" below), the rest is still proposal. In code and UI these are called *layouts* ("Vorlagen" already means the saved positions). Based on two real example invoices (a craftsman's Word letter with a pre-printed letterhead, a freelancer's PDF with a logo and a sans-serif design), their different businesses ignored.
+
+What they have in common, as a letter: letterhead / branding, sender line, recipient, date and invoice number, title, intro text, positions table, totals, legal notes, closing text, greeting, signature. They differ in *which* of these exist, where they sit and how they look:
+
+| | Craftsman (Word) | Freelancer (PDF) | Today's template |
+| --- | --- | --- | --- |
+| Letterhead | full-width header image with tagline and services, logo; footer strip with contact, bank, tax number | logo top right, no footer | seller name or logo, text footer |
+| Type | serif | sans-serif | serif (Typst's only embedded text font) |
+| Date / number | "Ort, Datum" top right, number under the title | meta block top right (tax no., date, number) | meta block top right |
+| Bank details | in the footer strip | block in the header | in the payment text |
+| Extras | subject line (BV), intro naming the work period, construction notes (Lohnkosten, § 48b), thank-you paragraph | salutation, "date equals service date", due date sentence, thank-you paragraph | none |
+| Table | Pos., description, **total only** | Pos., description, quantity, unit price, amount, **sum row** | Pos., description, quantity, unit, unit price, net |
+| Totals | Summe, + 19 % MwSt., Summe gesamt | one sum, no VAT: § 19 UStG statement | net, VAT per rate, gross, due |
+
+Suggestion, in layers (each can ship on its own):
+
+1. **Content contract.** The data the template gets (`data.json`, today built by `render/view.rs`) gets a version (`schema`) and the pieces both examples show as data, not layout: `subject`, `intro`, `closing`, `signature`, `notices` (legal notes), `place` (for "Dresden, 16.08.2026"), `service_period`, a column mode (`detailed` / `total-only`) and totals mode (`net-vat-gross` / `no-vat`). Texts become editable fields with defaults in the settings and per-invoice overrides (placeholders such as the due date and service period filled by the app, so wording stays the user's). The `no-vat` mode needs the Kleinunternehmer switch that is on the open list: it also decides the EN 16931 VAT category (E/O) of the XML.
+2. **Template = a folder.** `invoice.typ` + assets + `manifest.json` (name, description, schema version, options with defaults: column mode, where the bank details go (header / footer / under the totals), letterhead on the first page or on every page, accent colour). The app stages the folder next to `data.json` and compiles it exactly as today, so the preview, the PDF and the validation gate need no change.
+3. **A small Typst library** shared by all templates (address block, meta grid, positions table, totals, notices, footer columns). The existing template becomes the first composition of it ("Standard"); the freelancer layout ("Modern": sans, logo top right, bank block in the header, quantity/unit price/amount, sum row) and the craftsman layout ("Handwerk": letterhead header and footer, total-only table, subject, notes) are two more, each little more than a page of Typst.
+4. **Branding in the settings, not in the template:** logo, letterhead header and footer images (PNG/JPEG/SVG), accent colour, font choice. A Word letterhead cannot be imported; it is exported once as an image (header and footer strip) and uploaded.
+5. **Choosing:** a "Vorlage" select in the settings with a live preview of a sample invoice (the preview command already exists), later an override per invoice.
+6. **Own templates:** a templates folder in the app data directory plus an import button; a template with an invalid manifest is listed as broken, not loaded. The final PDF always goes through the validator, so a template that breaks PDF/A or the Factur-X attachment cannot produce a file that can be saved.
+
+Built so far (2026-10-18), direction decided: **one built-in layout, the rest is the user's own**:
+- [x] One built-in layout, *Klassisch* (id `standard`, not called "Standard" so it is not mistaken for the default layout; `render/layouts/standard.typ`, shared helpers in `prelude.typ`). A first "Modern" layout and bundled Inter/Open Sans fonts were dropped again: users bring their own stationery and fonts
+- [x] **Own layouts** (`CustomLayout`, table `layouts`): the built-in design on a PDF as stationery (page 1 = first page, page 2 = all following, a single page = all; converted to SVG with `hayro-svg` because Typst refuses PDFs in PDF/A output), content margins (top/right/bottom/left, mm), insets of its own for the first page on all four sides (laid out in two runs: units are measured, what fits goes to the first page), uploaded fonts (family read with `ttf-parser`, files copied into the app data directory). With stationery the layout's own footer gives way to page numbers
+- [x] Default layout in the settings (`Settings.layout`, set on the layout's page), optional override per invoice (`InvoiceDraft.layout`); `Branding::for_draft` picks. An exported invoice freezes its own layout (`InvoiceDraft.frozen_layout`) like the settings
+- [x] Lifecycle: a layout is deleted only while no invoice uses it and it is not the default, else archived (greyed out in the settings, gone from the invoice's selection, still resolved for invoices that use it); the Rust side enforces it
+- [x] The letter texts `intro`, `closing` (set in the settings, a new invoice starts with them filled in and can change them for itself; no signature field, the closing text carries the greeting); the view carries `letter`, `facts`, `bank` for layouts that arrange these themselves
+- [x] Every layout page (built-in too) shows the same sample invoice (30 positions, two pages) in the layout as edited, rendered by the real template (`layout_preview`, debounced), with optional margin guides; shared form-and-page layout `erng-editor` (also used by the invoice editor, the preview wraps below the form instead of hiding)
+- [x] UI layouts in `src/common/layouts/`: `split` (list left, detail right: invoices, settings) and `cards` (wide header, card grid, dialog: customers, templates); a new invoice pre-selects the default layout, no "from the settings" choice
+- [x] Tests: every golden invoice validates in the built-in layout and on stationery with an uploaded font; layout storage and usage counting
+- [ ] Still open: `subject`, `notices` and `place` as data, the column mode (total-only) and totals mode (no VAT, needs the Kleinunternehmer switch), a bank name field, a second built-in design if wanted (the bank/facts data exists)
 
 ## App conventions
 
@@ -338,7 +373,7 @@ src-tauri/
     ├── store.rs              SQLite: settings, customers, invoices, numbers, finalize/lock
     ├── draft.rs              form draft → en16931 invoice, input problems, totals
     ├── invoice/              profile choice, rule checks (mod.rs), German finding texts (german.rs), golden test set (golden.rs)
-    ├── render/               Typst template (invoice.typ) and the presentation view (view.rs)
+    ├── render/               layouts (layouts.rs, layouts/*.typ) and the presentation view (view.rs)
     ├── package.rs            Mustang combine / validate, report parsing
     ├── pipeline.rs           rules → XML → PDF → combine → validate in a work directory
     ├── session.rs            work directories and their verdicts, the export gate
@@ -348,7 +383,7 @@ src-tauri/
 ```
 
 - Plugins registered in `lib.rs`: `fs`, `dialog`, `log`, `opener`, `os`, `process`, `updater` (desktop only, `cfg(not(any(android, ios)))`)
-- Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `templates_list`, `template_save/delete`, `invoice_get/blank/save/duplicate/delete`, `check_invoice`, `preview_invoice`, `produce_invoice`, `export_invoice`, `discard_work_dir`
+- Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `templates_list`, `template_save/delete`, `layouts_list`, `invoice_get/blank/save/duplicate/delete`, `check_invoice`, `preview_invoice`, `produce_invoice`, `export_invoice`, `discard_work_dir`
 - Window: `titleBarStyle: "Overlay"`, `hiddenTitle`, `transparent`, `macOSPrivateApi`; drag region span rendered on macOS only
 - Permissions: least privilege; no `http`, no `shell` plugin (the app is offline, tools are spawned from Rust)
 - `tauri.conf.json`: `beforeDevCommand`/`beforeBuildCommand` run `generate` + vite; `devUrl` fixed port 1420 + `strictPort`; `frontendDist: ../dist`; `bundle.createUpdaterArtifacts: true`; `bundle.resources: {"sidecars/": "sidecars/"}`; `plugins.updater` with `active`, `pubkey`, `endpoints` (manifest on `gh-e-rng-latest`)

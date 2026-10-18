@@ -1,4 +1,4 @@
-# E-Rng – development
+# E-RNG – development
 
 macOS desktop app that turns structured invoice data into a **ZUGFeRD / Factur-X PDF** (PDF/A-3 with the
 EN 16931 XML embedded) and, if wanted, an **XRechnung** (plain XML). Every file is validated before it can
@@ -65,18 +65,33 @@ GOLDEN_OUT=/some/dir cargo test                                      # writes th
 ```
 src/                       frontend
   views/                   invoices (list + detail), invoice-edit, customers, templates, settings (+ root shell and routes)
-  common/                  components, api.utils.ts (typed commands), format and form helpers, mock backend
+  common/                  components (one folder each: `<name>/<name>.component.{ts,css}`, styles always in the css file, `ErngElement.withStyles(styles)`), layouts (split, cards, editor: slots only, views import no styles), api.utils.ts (typed commands), format and form helpers, mock backend
 src-tauri/src/
   invoice/                 profile choice, rule checks, German finding texts, CII writer, golden test set
   draft.rs                 form draft → invoice model
   store.rs, model.rs       SQLite and the stored shapes
-  render/                  Typst template and the presentation view of an invoice
+  render/                  invoice layouts (Typst) and the presentation view of an invoice
+  layout_files.rs          own layouts: PDF stationery → SVG pages (hayro), font family from the file
   package.rs               Mustang: combine and validate, report parsing
   pipeline.rs, session.rs  produce a validated file in a work directory, the export gate
   sidecar.rs               running the bundled tools with a deadline
   commands/                one tauri command per file
 scripts/                   sidecars.ts and its pins (sidecars.json), icons.ts
+src-tauri/test-fixtures/   a font file for the layout tests (Open Sans, OFL)
 ```
+
+## Own layouts
+
+There is one built-in layout (`render/layouts/standard.typ`). A user layout is that layout plus stationery (PDF),
+content margins and a font (table `layouts`, files in the app data directory). The default layout is a
+setting; a user layout is deleted only while no invoice uses it and it is not the default, else it is archived
+(out of the invoice's selection, kept for the invoices made with it). Typst refuses to embed a PDF in PDF/A output, so the PDF is converted to
+SVG pages when picked (page 1 = first page, page 2 = all following, a single page = all). Margins are the
+page margins; the first page may have its own on all four sides. Typst has one margin per page style, so
+then the content is laid out in two runs (`two-runs` in `prelude.typ`): units (head, table rows, totals, …) are
+measured and as many as fit go to the first page, the rest follows on pages with the other margins.
+The settings show the same 30-position sample invoice in every layout, also the built-in one (`layout_preview`), with optional guides at the margins (red lines, `Branding.guides`). An exported invoice freezes the layout like the settings.
+`cargo test -- --include-ignored` validates every golden case on stationery with an uploaded font.
 
 ## Release
 

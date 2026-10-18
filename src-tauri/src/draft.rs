@@ -379,7 +379,11 @@ pub(crate) mod fixtures {
             profile: ProfileKind::En16931,
             buyer_reference: None,
             note: None,
+            layout: None,
+            intro: None,
+            closing: None,
             frozen: None,
+            frozen_layout: None,
         }
     }
 }

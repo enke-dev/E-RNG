@@ -1,38 +1,14 @@
-:host {
-  flex: 1 1 auto;
+.file {
   display: flex;
-  flex-direction: column;
-  gap: var(--wa-space-m);
-  padding: var(--wa-space-m) 0 0;
-}
-
-.cards {
-  flex: 1 1 auto;
-  display: grid;
-  padding: 0 var(--wa-space-l);
-  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-  gap: var(--wa-space-m);
-
-  wa-card {
-    height: fit-content;
-  }
-}
-
-footer {
-  position: sticky;
-  bottom: 0;
-
-  display: flex;
-  flex-direction: row;
-  justify-content: end;
-  padding: var(--wa-space-m) var(--wa-space-l);
-
-  background: var(--wa-color-surface-default);
-  border-top: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
-}
-
-.logo {
-  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--wa-space-s);
+}
+
+erng-page:not([frameless])::part(content) {
+  max-width: 60rem;
+}
+
+erng-sheet {
+  --reserve: calc(var(--wa-form-control-height) + 2 * var(--wa-space-m));
 }

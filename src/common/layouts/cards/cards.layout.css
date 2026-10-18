@@ -1,25 +1,33 @@
+/* a wide header, the cards below in a grid, a dialog for the selected one */
 :host {
   flex: 1 0 auto;
   display: flex;
   flex-direction: column;
 }
 
-erng-filter-bar {
-  padding: var(--wa-space-m) var(--wa-space-l);
+.header {
   border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
 }
 
-.templates {
+.cards {
   display: grid;
   gap: var(--wa-space-m);
   grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
   padding: var(--wa-space-m) var(--wa-space-l);
 }
 
-wa-card {
+::slotted(erng-filter-bar) {
+  padding: var(--wa-space-m) var(--wa-space-l);
+}
+
+::slotted(wa-callout) {
+  margin: var(--wa-space-m) var(--wa-space-l) 0;
+}
+
+::slotted(wa-card) {
   cursor: pointer;
 }
 
-wa-dialog::part(dialog) {
-  max-width: 40rem;
+::slotted(wa-dialog) {
+  --width: 40rem;
 }

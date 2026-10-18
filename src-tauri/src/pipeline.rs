@@ -104,6 +104,7 @@ mod tests {
         Branding {
             logo: None,
             footer: Some("Geschäftsführer: Max Muster · AG Köln HRB 12345".into()),
+            ..Branding::default()
         }
     }
 
@@ -173,25 +174,31 @@ mod tests {
         assert!(produced.xml.ends_with("xrechnung.xml"));
     }
 
+    fn with_letter() -> Branding {
+        Branding {
+            intro: Some("Sehr geehrte Damen und Herren,\nhiermit stelle ich folgende Positionen in Rechnung.".into()),
+            closing: Some("Vielen Dank für das entgegengebrachte Vertrauen.".into()),
+            ..branding()
+        }
+    }
+
     /// With `RENDER_OUT` set to a directory the PDFs are kept there to look at them.
     #[test]
     #[ignore = "needs the sidecars: bun run generate:sidecars"]
     fn every_golden_case_becomes_a_valid_pdf() {
         let sidecars = Sidecars::in_repo();
+        let layout = "standard";
         for (name, invoice, profile) in crate::invoice::golden::cases() {
             let dir = tempfile::tempdir().unwrap();
 
-            let produced = produce(&sidecars, dir.path(), &invoice, profile, &branding())
-                .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            let produced = produce(&sidecars, dir.path(), &invoice, profile, &with_letter())
+                .unwrap_or_else(|e| panic!("{layout}/{name}: {e:?}"));
 
             let errors: Vec<_> = produced.report.errors().collect();
-            assert!(produced.report.valid, "{name}: {errors:#?}");
+            assert!(produced.report.valid, "{layout}/{name}: {errors:#?}");
             if let Some(out) = std::env::var_os("RENDER_OUT") {
-                std::fs::copy(
-                    &produced.pdf,
-                    std::path::Path::new(&out).join(format!("{name}.pdf")),
-                )
-                .unwrap();
+                let file = std::path::Path::new(&out).join(format!("{layout}-{name}.pdf"));
+                std::fs::copy(&produced.pdf, file).unwrap();
             }
         }
     }
@@ -227,28 +234,29 @@ mod tests {
     fn the_preview_renders_one_svg_per_page() {
         let sidecars = Sidecars::in_repo();
         let cases = crate::invoice::golden::cases();
+        let layout = "standard";
         let pages = |name: &str| {
             let (_, invoice, _) = cases.iter().find(|(n, ..)| *n == name).unwrap();
             let dir = tempfile::tempdir().unwrap();
-            render::render_preview(&sidecars, dir.path(), invoice, &branding()).unwrap()
+            render::render_preview(&sidecars, dir.path(), invoice, &with_letter()).unwrap()
         };
 
         let short = pages("standard");
         let long = pages("many-lines");
 
-        assert_eq!(short.len(), 1);
-        assert!(long.len() >= 3, "{} pages", long.len());
-        assert!(short.iter().chain(&long).all(|svg| svg.contains("<svg")));
+        assert_eq!(short.len(), 1, "{layout}");
+        assert!(long.len() >= 3, "{layout}: {} pages", long.len());
+        assert!(
+            short.iter().chain(&long).all(|svg| svg.contains("<svg")),
+            "{layout}"
+        );
 
         // with `RENDER_OUT` the pages are kept to look at
         if let Some(out) = std::env::var_os("RENDER_OUT") {
-            for (name, pages) in [("preview-short", &short), ("preview-long", &long)] {
+            for (name, pages) in [("short", &short), ("long", &long)] {
                 for (i, svg) in pages.iter().enumerate() {
-                    std::fs::write(
-                        std::path::Path::new(&out).join(format!("{name}-{}.svg", i + 1)),
-                        svg,
-                    )
-                    .unwrap();
+                    let file = format!("preview-{layout}-{name}-{}.svg", i + 1);
+                    std::fs::write(std::path::Path::new(&out).join(file), svg).unwrap();
                 }
             }
         }
@@ -311,5 +319,93 @@ mod tests {
         let content_start = start + xml[start..].find('>').unwrap() + 1;
         let content_end = content_start + xml[content_start..].find('<').unwrap();
         format!("{}{}{}", &xml[..content_start], value, &xml[content_end..])
+    }
+
+    /// Stationery from a PDF (as SVG, Typst cannot embed it in PDF/A) and an uploaded font:
+    /// the result must still validate. `RENDER_OUT` keeps the PDFs.
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn an_own_layout_with_stationery_and_font_is_a_valid_pdf() {
+        use crate::model::{CustomLayout, Insets};
+        let sidecars = Sidecars::in_repo();
+        let work = tempfile::tempdir().unwrap();
+        let files = tempfile::tempdir().unwrap();
+
+        // a two page letterhead: a blue band on the first page, a thin line on the next
+        std::fs::write(
+            work.path().join("paper.typ"),
+            "#set page(paper: \"a4\", margin: 0pt)\n\
+             #place(top, rect(width: 100%, height: 4cm, fill: rgb(\"#1d4ed8\")))\n\
+             #place(bottom, rect(width: 100%, height: 1.5cm, fill: luma(225)))\n\
+             #pagebreak()\n\
+             #place(top, rect(width: 100%, height: 1cm, fill: luma(225)))",
+        )
+        .unwrap();
+        let out = crate::sidecar::run(
+            &sidecars.typst(),
+            &["compile".into(), "paper.typ".into(), "paper.pdf".into()],
+            work.path(),
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
+        assert_eq!(out.code, Some(0), "{}", out.stderr);
+
+        let background =
+            crate::layout_files::import_background(&work.path().join("paper.pdf"), files.path())
+                .unwrap();
+        assert!(background.rest.is_some());
+        let font = crate::layout_files::import_font(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/OpenSans.ttf"),
+            &files.path().join("fonts"),
+        )
+        .unwrap();
+        assert_eq!(font.family, "Open Sans");
+
+        {
+            let base = "standard";
+            for (name, invoice, profile) in crate::invoice::golden::cases() {
+                let dir = tempfile::tempdir().unwrap();
+                let branding = Branding {
+                    custom: Some(CustomLayout {
+                        id: Some(1),
+                        name: "Briefpapier".into(),
+                        background: Some(background.clone()),
+                        margins: Insets {
+                            top: 30.0,
+                            right: 20.0,
+                            bottom: 30.0,
+                            left: 25.0,
+                        },
+                        first_margins: Some(Insets {
+                            top: 70.0,
+                            right: 35.0,
+                            bottom: 40.0,
+                            left: 40.0,
+                        }),
+                        fonts: vec![font.clone()],
+                        archived: false,
+                    }),
+                    ..with_letter()
+                };
+                let produced =
+                    produce(&sidecars, dir.path(), &invoice, profile, &branding).unwrap();
+                let errors: Vec<_> = produced.report.errors().collect();
+                assert!(produced.report.valid, "{base}/{name}: {errors:#?}");
+                if let Ok(keep) = std::env::var("RENDER_OUT") {
+                    let guided = Branding {
+                        guides: true,
+                        ..branding.clone()
+                    };
+                    let pages =
+                        render::render_preview(&sidecars, dir.path(), &invoice, &guided).unwrap();
+                    pages.iter().enumerate().for_each(|(i, svg)| {
+                        std::fs::write(format!("{keep}/own-{base}-{name}-{}.svg", i + 1), svg)
+                            .unwrap()
+                    });
+                    std::fs::create_dir_all(&keep).unwrap();
+                    std::fs::copy(&produced.pdf, format!("{keep}/own-{base}-{name}.pdf")).unwrap();
+                }
+            }
+        }
     }
 }

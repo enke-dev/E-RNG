@@ -1,0 +1,38 @@
+/* list left, detail right; both panes scroll on their own */
+:host {
+  display: grid;
+  grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+[name='list'],
+[name='detail'] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+[name='list'] {
+  border-right: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+}
+
+/* the editor sizes its preview by the height of this pane (`cqb`), not by guessing the window chrome */
+[name='detail'] {
+  container-type: size;
+}
+
+/* the pane owns how what it is given looks: a search bar stays on top, notices keep their distance */
+::slotted(erng-filter-bar) {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--wa-space-m) var(--wa-space-l);
+  background: var(--wa-color-surface-default);
+  border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+}
+
+::slotted(wa-callout) {
+  margin: var(--wa-space-m) var(--wa-space-l);
+}

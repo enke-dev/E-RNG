@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::Settings;
+use crate::model::{CustomLayout, Settings};
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -22,6 +22,8 @@ pub struct Session {
     pub number: String,
     /// The settings in force when they were made, frozen into the invoice on export
     pub settings: Settings,
+    /// Its own layout, if it used one, frozen the same way
+    pub custom_layout: Option<CustomLayout>,
     pub total: String,
 }
 
@@ -92,6 +94,7 @@ mod tests {
             invoice_id: 7,
             number: "RE-2026-001".into(),
             settings: Settings::default(),
+            custom_layout: None,
             total: "1.00".into(),
         }
     }

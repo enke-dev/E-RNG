@@ -1,0 +1,35 @@
+/* the form takes what it needs, the page beside it gets a column of its own and goes away when there
+   is no room for both */
+:host {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  container-type: inline-size;
+}
+
+[name='form'] {
+  flex: 1 1 0;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-m);
+  min-width: 0;
+  padding: var(--wa-space-m) var(--wa-space-l);
+}
+
+[name='preview'] {
+  /* the page needs room to be readable: a share of the pane, between 20 and 36rem */
+  flex: 1 1 clamp(20rem, 38%, 36rem);
+  max-width: 36rem;
+  display: flex;
+  align-items: start;
+  justify-content: center;
+  padding: 0 var(--wa-space-l);
+  background: var(--wa-color-surface-lowered);
+}
+
+@container (max-width: 52rem) {
+  [name='preview'] {
+    display: none;
+  }
+}

@@ -4,7 +4,6 @@ import { error as logError, warn } from '@tauri-apps/plugin-log';
 import { relaunch } from '@tauri-apps/plugin-process';
 import type { Update } from '@tauri-apps/plugin-updater';
 import { check } from '@tauri-apps/plugin-updater';
-import type { CSSResultGroup } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, eventOptions, state } from 'lit/decorators.js';
 
@@ -18,9 +17,7 @@ type UpdaterState = 'idle' | 'checking' | 'available' | 'installing';
  * The button only shows up when there is something to do.
  */
 @customElement('erng-updater')
-export class UpdaterComponent extends ErngElement {
-  static override styles: CSSResultGroup = [ErngElement.styles, styles];
-
+export class UpdaterComponent extends ErngElement.withStyles(styles) {
   #update: Update | undefined;
 
   @state()

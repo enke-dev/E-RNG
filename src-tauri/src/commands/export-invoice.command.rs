@@ -35,7 +35,13 @@ pub fn export_invoice(
     let stored = store.invoice(id).map_err(message)?;
     let result = match stored.status {
         Status::Exported => Ok(stored),
-        Status::Draft => store.finalize(id, &session.number, &session.settings, &session.total),
+        Status::Draft => store.finalize(
+            id,
+            &session.number,
+            &session.settings,
+            session.custom_layout.as_ref(),
+            &session.total,
+        ),
     };
     match result {
         Ok(invoice) => {

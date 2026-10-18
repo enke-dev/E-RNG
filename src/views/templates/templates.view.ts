@@ -7,9 +7,9 @@ import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
+import '../../common/layouts/cards/cards.layout.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
-import type { CSSResultGroup } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
@@ -18,7 +18,6 @@ import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
 import { UNITS } from '../../common/utils/format.utils.js';
-import styles from './templates.view.css';
 
 const blank = (): PositionTemplate => ({
   id: null,
@@ -33,8 +32,6 @@ const unitLabel = (code: string | null) => UNITS.find(u => u.code === (code ?? '
 /** Saved positions the invoice form can start from, as cards like the customers */
 @customElement('erng-templates')
 export class TemplatesView extends ErngElement {
-  static override styles: CSSResultGroup = [ErngElement.styles, styles];
-
   @state() private templates: PositionTemplate[] = [];
   @state() private editing: PositionTemplate | undefined;
   @state() private error = '';
@@ -111,41 +108,43 @@ export class TemplatesView extends ErngElement {
     const editing = this.editing;
     const shown = this.shown;
     return html`
-      <erng-filter-bar
-        .query="${this.query}"
-        placeholder="Vorlagen suchen"
-        @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
-      >
-        <wa-select
-          aria-label="Einheit"
-          .value="${this.unit}"
-          @change="${(e: Event) => (this.unit = String((e.target as WaSelect).value))}"
+      <erng-cards>
+        <erng-filter-bar
+          slot="header"
+          .query="${this.query}"
+          placeholder="Vorlagen suchen"
+          @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
         >
-          <wa-option value="all">Alle Einheiten</wa-option>
-          ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
-        </wa-select>
-        <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
-          Neue Vorlage
-        </wa-button>
-      </erng-filter-bar>
+          <wa-select
+            slot="filters"
+            aria-label="Einheit"
+            .value="${this.unit}"
+            @change="${(e: Event) => (this.unit = String((e.target as WaSelect).value))}"
+          >
+            <wa-option value="all">Alle Einheiten</wa-option>
+            ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
+          </wa-select>
+          <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
+            Neue Vorlage
+          </wa-button>
+        </erng-filter-bar>
 
-      ${this.error && !editing ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
-      ${
-        shown.length === 0
-          ? html`
-              <wa-callout variant="neutral">
-                ${
-                  this.templates.length === 0
-                    ? 'Noch keine Vorlagen. Hier oder im Rechnungsformular mit „Als Vorlage“ anlegen.'
-                    : 'Keine Treffer.'
-                }
-              </wa-callout>
-            `
-          : html`
-              <div class="templates">
+        ${this.error && !editing ? html`<wa-callout slot="notice" variant="danger">${this.error}</wa-callout>` : nothing}
+        ${
+          shown.length === 0
+            ? html`
+                <wa-callout slot="notice" variant="neutral">
+                  ${
+                    this.templates.length === 0
+                      ? 'Noch keine Vorlagen. Hier oder im Rechnungsformular mit „Als Vorlage“ anlegen.'
+                      : 'Keine Treffer.'
+                  }
+                </wa-callout>
+              `
+            : html`
                 ${shown.map(
                   t => html`
-                    <wa-card @click="${() => this.edit(t)}">
+                    <wa-card slot="cards" @click="${() => this.edit(t)}">
                       <strong>${t.description}</strong>
                       <div class="muted">
                         ${t.quantity ?? '1'} ${unitLabel(t.unit)} × ${t.price} €
@@ -153,79 +152,80 @@ export class TemplatesView extends ErngElement {
                     </wa-card>
                   `
                 )}
-              </div>
-            `
-      }
+              `
+        }
 
-      <wa-dialog
-        ?open="${editing !== undefined}"
-        label="${editing?.id == null ? 'Neue Vorlage' : 'Vorlage bearbeiten'}"
-        @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.editing = undefined)}"
-      >
-        ${
-          editing
-            ? html`
-                <div class="stack">
-                  <wa-input
-                    label="Beschreibung"
-                    required
-                    .value="${editing.description}"
-                    @input="${(e: Event) => this.change(t => (t.description = text(e)))}"
-                  ></wa-input>
-                  <div class="grid">
+        <wa-dialog
+          slot="dialog"
+          ?open="${editing !== undefined}"
+          label="${editing?.id == null ? 'Neue Vorlage' : 'Vorlage bearbeiten'}"
+          @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.editing = undefined)}"
+        >
+          ${
+            editing
+              ? html`
+                  <div class="stack">
                     <wa-input
-                      label="Menge"
-                      placeholder="1"
-                      inputmode="decimal"
-                      .value="${editing.quantity ?? ''}"
-                      @input="${(e: Event) => this.change(t => (t.quantity = nullable(text(e))))}"
-                    ></wa-input>
-                    <wa-select
-                      label="Einheit"
-                      .value="${editing.unit ?? 'C62'}"
-                      @change="${(e: Event) =>
-                        this.change(t => {
-                          const unit = String((e.target as WaSelect).value);
-                          t.unit = unit === 'C62' ? null : unit;
-                        })}"
-                    >
-                      ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
-                    </wa-select>
-                    <wa-input
-                      label="Preis (netto)"
-                      inputmode="decimal"
-                      placeholder="0,00"
+                      label="Beschreibung"
                       required
-                      .value="${editing.price}"
-                      @input="${(e: Event) => this.change(t => (t.price = text(e)))}"
+                      .value="${editing.description}"
+                      @input="${(e: Event) => this.change(t => (t.description = text(e)))}"
                     ></wa-input>
+                    <div class="grid">
+                      <wa-input
+                        label="Menge"
+                        placeholder="1"
+                        inputmode="decimal"
+                        .value="${editing.quantity ?? ''}"
+                        @input="${(e: Event) => this.change(t => (t.quantity = nullable(text(e))))}"
+                      ></wa-input>
+                      <wa-select
+                        label="Einheit"
+                        .value="${editing.unit ?? 'C62'}"
+                        @change="${(e: Event) =>
+                          this.change(t => {
+                            const unit = String((e.target as WaSelect).value);
+                            t.unit = unit === 'C62' ? null : unit;
+                          })}"
+                      >
+                        ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
+                      </wa-select>
+                      <wa-input
+                        label="Preis (netto)"
+                        inputmode="decimal"
+                        placeholder="0,00"
+                        required
+                        .value="${editing.price}"
+                        @input="${(e: Event) => this.change(t => (t.price = text(e)))}"
+                      ></wa-input>
+                    </div>
+                    ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
                   </div>
-                  ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
-                </div>
-              `
-            : nothing
-        }
-        ${
-          editing?.id != null
-            ? html`
-                <wa-button
-                  slot="footer"
-                  variant="danger"
-                  appearance="outlined"
-                  @click="${this.deleteTemplate}"
-                >
-                  Löschen
-                </wa-button>
-              `
-            : nothing
-        }
-        <wa-button-group slot="footer" label="Bearbeiten">
-          <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}">
-            Abbrechen
-          </wa-button>
-          <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
-        </wa-button-group>
-      </wa-dialog>
+                `
+              : nothing
+          }
+          ${
+            editing?.id != null
+              ? html`
+                  <wa-button
+                    slot="footer"
+                    variant="danger"
+                    appearance="outlined"
+                    @click="${this.deleteTemplate}"
+                  >
+                    Löschen
+                  </wa-button>
+                `
+              : nothing
+          }
+          <wa-button-group slot="footer" label="Bearbeiten">
+            <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}">
+              Abbrechen
+            </wa-button>
+            <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
+          </wa-button-group>
+        </wa-dialog>
+      </erng-cards>
     `;
   }
 }

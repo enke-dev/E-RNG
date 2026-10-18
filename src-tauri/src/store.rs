@@ -10,12 +10,13 @@ use anyhow::{anyhow, bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::model::{
-    Customer, InvoiceDraft, ListEntry, PositionTemplate, Settings, Status, StoredInvoice,
+    CustomLayout, Customer, InvoiceDraft, LayoutUsage, ListEntry, PositionTemplate, Settings,
+    Status, StoredInvoice,
 };
 
 pub struct Store(Mutex<Connection>);
 
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -42,6 +43,12 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "CREATE TABLE templates (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
              PRAGMA user_version = 2;",
+        )?;
+    }
+    if version < 3 {
+        conn.execute_batch(
+            "CREATE TABLE layouts (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
+             PRAGMA user_version = 3;",
         )?;
     }
     Ok(())
@@ -219,6 +226,102 @@ impl Store {
         Ok(())
     }
 
+    // own layouts
+
+    pub fn custom_layouts(&self) -> Result<Vec<CustomLayout>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare("SELECT id, json FROM layouts")?;
+        let rows =
+            statement.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut layouts = rows
+            .map(|row| {
+                let (id, json) = row?;
+                let mut layout: CustomLayout = serde_json::from_str(&json)?;
+                layout.id = Some(id);
+                Ok(layout)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        layouts.sort_by_key(|l| l.name.to_lowercase());
+        Ok(layouts)
+    }
+
+    pub fn save_custom_layout(&self, layout: &CustomLayout) -> Result<CustomLayout> {
+        let conn = self.conn();
+        let json = serde_json::to_string(&CustomLayout {
+            id: None,
+            ..layout.clone()
+        })?;
+        let id = match layout.id {
+            Some(id) => {
+                let changed = conn.execute(
+                    "UPDATE layouts SET json = ?1 WHERE id = ?2",
+                    params![json, id],
+                )?;
+                if changed == 0 {
+                    bail!("unknown layout");
+                }
+                id
+            }
+            None => {
+                conn.execute("INSERT INTO layouts (json) VALUES (?1)", [json])?;
+                conn.last_insert_rowid()
+            }
+        };
+        Ok(CustomLayout {
+            id: Some(id),
+            ..layout.clone()
+        })
+    }
+
+    /// Every own layout something still points at: the layouts themselves and the copies frozen into
+    /// exported invoices.
+    pub fn layouts_in_use(&self) -> Result<Vec<CustomLayout>> {
+        let mut layouts = self.custom_layouts()?;
+        let conn = self.conn();
+        let mut statement = conn.prepare("SELECT draft FROM invoices")?;
+        for json in statement.query_map([], |r| r.get::<_, String>(0))? {
+            let draft: InvoiceDraft = serde_json::from_str(&json?)?;
+            layouts.extend(draft.frozen_layout);
+        }
+        Ok(layouts)
+    }
+
+    /// The invoices (drafts and exported ones) made with the own layout: chosen for themselves, or
+    /// frozen into them on export.
+    pub fn layout_usages(&self, id: i64) -> Result<Vec<LayoutUsage>> {
+        let key = format!("custom-{id}");
+        let conn = self.conn();
+        let mut statement =
+            conn.prepare("SELECT id, number, draft FROM invoices ORDER BY updated_at DESC")?;
+        let rows = statement.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut usages = Vec::new();
+        for row in rows {
+            let (invoice_id, number, json) = row?;
+            let draft: InvoiceDraft = serde_json::from_str(&json)?;
+            let frozen = draft.frozen_layout.as_ref().and_then(|l| l.id) == Some(id);
+            if draft.layout.as_deref() == Some(key.as_str()) || frozen {
+                usages.push(LayoutUsage {
+                    invoice_id,
+                    number,
+                    customer: draft.customer.name,
+                });
+            }
+        }
+        Ok(usages)
+    }
+
+    pub fn delete_custom_layout(&self, id: i64) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM layouts WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     // invoices
 
     pub fn invoices(&self) -> Result<Vec<ListEntry>> {
@@ -335,10 +438,12 @@ impl Store {
         id: i64,
         number: &str,
         frozen: &Settings,
+        frozen_layout: Option<&CustomLayout>,
         total: &str,
     ) -> Result<StoredInvoice> {
         let mut draft = self.invoice(id)?.draft;
         draft.frozen = Some(frozen.clone());
+        draft.frozen_layout = frozen_layout.cloned();
         let changed = self.conn().execute(
             "UPDATE invoices SET number = ?1, status = 'exported', draft = ?2, total = ?3,
                  exported_at = datetime('now'), updated_at = datetime('now')
@@ -487,6 +592,64 @@ mod tests {
         assert!(store.templates().unwrap().is_empty());
     }
 
+    fn own_layout(name: &str) -> CustomLayout {
+        CustomLayout {
+            id: None,
+            name: name.into(),
+            background: None,
+            margins: Default::default(),
+            first_margins: None,
+            fonts: Vec::new(),
+            archived: false,
+        }
+    }
+
+    #[test]
+    fn own_layouts_are_saved_sorted_and_deleted() {
+        let store = Store::in_memory().unwrap();
+        let b = store.save_custom_layout(&own_layout("Beta")).unwrap();
+        store.save_custom_layout(&own_layout("alpha")).unwrap();
+
+        let names: Vec<_> = store
+            .custom_layouts()
+            .unwrap()
+            .into_iter()
+            .map(|l| l.name)
+            .collect();
+        assert_eq!(names, ["alpha", "Beta"]);
+
+        let archived = CustomLayout {
+            archived: true,
+            ..b.clone()
+        };
+        store.save_custom_layout(&archived).unwrap();
+        assert!(store.custom_layouts().unwrap().iter().any(|l| l.archived));
+
+        store.delete_custom_layout(b.id.unwrap()).unwrap();
+        assert_eq!(store.custom_layouts().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_layout_is_in_use_when_an_invoice_chose_it_or_was_exported_with_it() {
+        let store = Store::in_memory().unwrap();
+        let layout = store
+            .save_custom_layout(&own_layout("Briefpapier"))
+            .unwrap();
+        let id = layout.id.unwrap();
+        assert_eq!(store.layout_usages(id).unwrap().len(), 0);
+
+        let mut chosen = draft();
+        chosen.layout = Some(layout.key());
+        store.save_draft(None, &chosen, None).unwrap();
+        assert_eq!(store.layout_usages(id).unwrap().len(), 1);
+
+        let exported = store.save_draft(None, &draft(), None).unwrap().id;
+        store
+            .finalize(exported, "RE-2026-001", &settings(), Some(&layout), "1.00")
+            .unwrap();
+        assert_eq!(store.layout_usages(id).unwrap().len(), 2);
+    }
+
     #[test]
     fn drafts_are_saved_listed_and_updated() {
         let store = Store::in_memory().unwrap();
@@ -516,11 +679,11 @@ mod tests {
 
         let id = store.save_draft(None, &draft(), None).unwrap().id;
         store
-            .finalize(id, "RE-2026-001", &settings(), "1.00")
+            .finalize(id, "RE-2026-001", &settings(), None, "1.00")
             .unwrap();
         let id = store.save_draft(None, &draft(), None).unwrap().id;
         store
-            .finalize(id, "RE-2026-007", &settings(), "1.00")
+            .finalize(id, "RE-2026-007", &settings(), None, "1.00")
             .unwrap();
 
         assert_eq!(store.next_number("RE-", 2026).unwrap(), "RE-2026-008");
@@ -534,7 +697,7 @@ mod tests {
         let id = store.save_draft(None, &draft(), None).unwrap().id;
 
         let done = store
-            .finalize(id, "RE-2026-001", &settings(), "1181.08")
+            .finalize(id, "RE-2026-001", &settings(), None, "1181.08")
             .unwrap();
 
         assert_eq!(done.status, Status::Exported);
@@ -544,7 +707,7 @@ mod tests {
         assert!(store.save_draft(Some(id), &draft(), None).is_err());
         assert!(store.delete_draft(id).is_err());
         assert!(store
-            .finalize(id, "RE-2026-002", &settings(), "1.00")
+            .finalize(id, "RE-2026-002", &settings(), None, "1.00")
             .is_err());
     }
 
@@ -554,11 +717,11 @@ mod tests {
         let a = store.save_draft(None, &draft(), None).unwrap().id;
         let b = store.save_draft(None, &draft(), None).unwrap().id;
         store
-            .finalize(a, "RE-2026-001", &settings(), "1.00")
+            .finalize(a, "RE-2026-001", &settings(), None, "1.00")
             .unwrap();
 
         let error = store
-            .finalize(b, "RE-2026-001", &settings(), "1.00")
+            .finalize(b, "RE-2026-001", &settings(), None, "1.00")
             .unwrap_err();
 
         assert!(error.to_string().contains("already taken"));
@@ -570,7 +733,7 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let id = store.save_draft(None, &draft(), None).unwrap().id;
         let done = store
-            .finalize(id, "RE-2026-001", &settings(), "1181.08")
+            .finalize(id, "RE-2026-001", &settings(), None, "1181.08")
             .unwrap();
 
         let copy = store.duplicate(done.id, "2026-11-02").unwrap();
