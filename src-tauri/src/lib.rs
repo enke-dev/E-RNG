@@ -46,6 +46,7 @@ pub fn run() {
             commands::invoices_command::invoice_get,
             commands::invoices_command::invoice_save,
             commands::invoices_command::invoices_list,
+            commands::preview_invoice_command::preview_invoice,
             commands::produce_invoice_command::produce_invoice,
             commands::settings_command::settings_get,
             commands::settings_command::settings_save,

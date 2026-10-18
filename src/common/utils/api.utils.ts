@@ -110,6 +110,12 @@ export interface Check {
   totals: Totals | null;
 }
 
+export interface Preview {
+  /** One SVG document per page, rendered by the real template */
+  pages: string[];
+  problems: InputProblem[];
+}
+
 export interface Issue {
   section: 'pdf' | 'xml' | 'document';
   level: 'error' | 'warning' | 'notice';
@@ -175,6 +181,9 @@ export const api = {
   invoiceDuplicate: (id: number) => invoke<StoredInvoice>('invoice_duplicate', { id }),
   invoiceDelete: (id: number) => invoke<null>('invoice_delete', { id }),
   invoiceCheck: (draft: InvoiceDraft) => invoke<Check>('check_invoice', { draft }),
+
+  invoicePreview: (draft: InvoiceDraft, id: number | null) =>
+    invoke<Preview>('preview_invoice', { draft, id }),
 
   produce: (id: number) => invoke<ProduceResult>('produce_invoice', { id }),
   exportInvoice: (

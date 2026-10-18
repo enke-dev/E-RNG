@@ -11,7 +11,8 @@
 }
 
 #form {
-  flex: 1 1 60%;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--wa-space-m);
@@ -19,7 +20,8 @@
 }
 
 #preview {
-  flex: 1 1 40%;
+  /* the page needs room to be readable: a share of the pane, between 20 and 36rem */
+  flex: 0 0 clamp(20rem, 38%, 36rem);
   display: flex;
   align-items: start;
   justify-content: center;
@@ -28,17 +30,39 @@
   background: var(--wa-color-surface-lowered);
 }
 
-#page {
+#sheet {
   position: sticky;
   top: var(--wa-space-m);
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-s);
+  align-items: center;
+  width: 100%;
+  padding-block: var(--wa-space-m);
+}
 
-  display: block;
+#page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   aspect-ratio: 210 / 297;
   min-width: 5rem;
   width: 100%;
-
   background: #fff;
   box-shadow: var(--wa-shadow-m);
+
+  & img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  & .muted {
+    padding: var(--wa-space-l);
+    text-align: center;
+    color: #777;
+  }
 }
 
 .customer {
@@ -190,4 +214,49 @@ footer {
 /* the detail pane can be narrow: stack the position fields by the width of the pane */
 :host {
   container-type: inline-size;
+}
+
+/* too narrow for form and page side by side: the form wins */
+@container (max-width: 62rem) {
+  #preview {
+    display: none;
+  }
+}
+
+/* the form shares the pane with the preview below this width: stack the fields of a position */
+@container (max-width: 82rem) {
+  .positions {
+    grid-template-columns: var(--wa-form-control-height) repeat(3, minmax(0, 1fr));
+  }
+
+  .position {
+    &.head {
+      display: none;
+    }
+
+    /* handle, then description over quantity / unit / price over the actions */
+    & > :nth-child(1) {
+      grid-row: 1 / span 3;
+    }
+
+    & > :nth-child(2) {
+      grid-column: 2 / -1;
+    }
+
+    & > :nth-child(3) {
+      grid-column: 2;
+    }
+
+    & > :nth-child(4) {
+      grid-column: 3;
+    }
+
+    & > :nth-child(5) {
+      grid-column: 4;
+    }
+
+    & .row-actions {
+      grid-column: 2 / -1;
+    }
+  }
 }

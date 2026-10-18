@@ -126,33 +126,37 @@ export class TemplatesView extends ErngElement {
             <wa-option value="all">Alle Einheiten</wa-option>
             ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
           </wa-select>
-          <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}"
-            >Neue Vorlage</wa-button
-          >
+          <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
+            Neue Vorlage
+          </wa-button>
         </erng-filter-bar>
 
         ${this.error && !editing ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
         ${
           shown.length === 0
-            ? html`<wa-callout variant="neutral">
-                ${
-                  this.templates.length === 0
-                    ? 'Noch keine Vorlagen. Hier oder im Rechnungsformular mit „Als Vorlage“ anlegen.'
-                    : 'Keine Treffer.'
-                }
-              </wa-callout>`
-            : html`<div class="templates">
-                ${shown.map(
-                  t => html`
-                    <wa-card @click="${() => this.edit(t)}">
-                      <strong>${t.description}</strong>
-                      <div class="muted">
-                        ${t.quantity ?? '1'} ${unitLabel(t.unit)} × ${t.price} €
-                      </div>
-                    </wa-card>
-                  `
-                )}
-              </div>`
+            ? html`
+                <wa-callout variant="neutral">
+                  ${
+                    this.templates.length === 0
+                      ? 'Noch keine Vorlagen. Hier oder im Rechnungsformular mit „Als Vorlage“ anlegen.'
+                      : 'Keine Treffer.'
+                  }
+                </wa-callout>
+              `
+            : html`
+                <div class="templates">
+                  ${shown.map(
+                    t => html`
+                      <wa-card @click="${() => this.edit(t)}">
+                        <strong>${t.description}</strong>
+                        <div class="muted">
+                          ${t.quantity ?? '1'} ${unitLabel(t.unit)} × ${t.price} €
+                        </div>
+                      </wa-card>
+                    `
+                  )}
+                </div>
+              `
         }
       </div>
 
@@ -163,60 +167,65 @@ export class TemplatesView extends ErngElement {
       >
         ${
           editing
-            ? html`<div class="stack">
-                <wa-input
-                  label="Beschreibung"
-                  required
-                  .value="${editing.description}"
-                  @input="${(e: Event) => this.change(t => (t.description = text(e)))}"
-                ></wa-input>
-                <div class="grid">
+            ? html`
+                <div class="stack">
                   <wa-input
-                    label="Menge"
-                    placeholder="1"
-                    inputmode="decimal"
-                    .value="${editing.quantity ?? ''}"
-                    @input="${(e: Event) => this.change(t => (t.quantity = nullable(text(e))))}"
-                  ></wa-input>
-                  <wa-select
-                    label="Einheit"
-                    .value="${editing.unit ?? 'C62'}"
-                    @change="${(e: Event) =>
-                      this.change(t => {
-                        const unit = String((e.target as WaSelect).value);
-                        t.unit = unit === 'C62' ? null : unit;
-                      })}"
-                  >
-                    ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
-                  </wa-select>
-                  <wa-input
-                    label="Preis (netto)"
-                    inputmode="decimal"
-                    placeholder="0,00"
+                    label="Beschreibung"
                     required
-                    .value="${editing.price}"
-                    @input="${(e: Event) => this.change(t => (t.price = text(e)))}"
+                    .value="${editing.description}"
+                    @input="${(e: Event) => this.change(t => (t.description = text(e)))}"
                   ></wa-input>
+                  <div class="grid">
+                    <wa-input
+                      label="Menge"
+                      placeholder="1"
+                      inputmode="decimal"
+                      .value="${editing.quantity ?? ''}"
+                      @input="${(e: Event) => this.change(t => (t.quantity = nullable(text(e))))}"
+                    ></wa-input>
+                    <wa-select
+                      label="Einheit"
+                      .value="${editing.unit ?? 'C62'}"
+                      @change="${(e: Event) =>
+                        this.change(t => {
+                          const unit = String((e.target as WaSelect).value);
+                          t.unit = unit === 'C62' ? null : unit;
+                        })}"
+                    >
+                      ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
+                    </wa-select>
+                    <wa-input
+                      label="Preis (netto)"
+                      inputmode="decimal"
+                      placeholder="0,00"
+                      required
+                      .value="${editing.price}"
+                      @input="${(e: Event) => this.change(t => (t.price = text(e)))}"
+                    ></wa-input>
+                  </div>
+                  ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
                 </div>
-                ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
-              </div>`
+              `
             : nothing
         }
         ${
           editing?.id != null
-            ? html`<wa-button
-                slot="footer"
-                variant="danger"
-                appearance="outlined"
-                @click="${this.deleteTemplate}"
-                >Löschen</wa-button
-              >`
+            ? html`
+                <wa-button
+                  slot="footer"
+                  variant="danger"
+                  appearance="outlined"
+                  @click="${this.deleteTemplate}"
+                >
+                  Löschen
+                </wa-button>
+              `
             : nothing
         }
         <wa-button-group slot="footer" label="Bearbeiten">
-          <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}"
-            >Abbrechen</wa-button
-          >
+          <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}">
+            Abbrechen
+          </wa-button>
           <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
         </wa-button-group>
       </wa-dialog>

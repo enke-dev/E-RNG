@@ -224,6 +224,38 @@ mod tests {
 
     #[test]
     #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn the_preview_renders_one_svg_per_page() {
+        let sidecars = Sidecars::in_repo();
+        let cases = crate::invoice::golden::cases();
+        let pages = |name: &str| {
+            let (_, invoice, _) = cases.iter().find(|(n, ..)| *n == name).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            render::render_preview(&sidecars, dir.path(), invoice, &branding()).unwrap()
+        };
+
+        let short = pages("standard");
+        let long = pages("many-lines");
+
+        assert_eq!(short.len(), 1);
+        assert!(long.len() >= 3, "{} pages", long.len());
+        assert!(short.iter().chain(&long).all(|svg| svg.contains("<svg")));
+
+        // with `RENDER_OUT` the pages are kept to look at
+        if let Some(out) = std::env::var_os("RENDER_OUT") {
+            for (name, pages) in [("preview-short", &short), ("preview-long", &long)] {
+                for (i, svg) in pages.iter().enumerate() {
+                    std::fs::write(
+                        std::path::Path::new(&out).join(format!("{name}-{}.svg", i + 1)),
+                        svg,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
     fn a_pdfa_without_the_facturx_xmp_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let sidecars = Sidecars::in_repo();

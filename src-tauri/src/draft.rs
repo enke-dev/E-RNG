@@ -275,6 +275,35 @@ pub fn build_invoice(
     })
 }
 
+/// A draft the template can show while it is still being filled in: whatever would stop the invoice
+/// from being built (an empty price, no description, a half typed date) gets a harmless stand-in.
+/// Only for the preview, nothing built from this is ever stored or exported.
+pub fn for_preview(draft: &InvoiceDraft) -> InvoiceDraft {
+    let mut draft = draft.clone();
+    let today = crate::utils::today();
+    if Date::parse(&draft.issue_date).is_err() {
+        draft.issue_date = today;
+    }
+    if Date::parse(&draft.delivery_date).is_err() {
+        draft.delivery_date = draft.issue_date.clone();
+    }
+    if draft.positions.is_empty() {
+        draft.positions.push(Position::default());
+    }
+    for position in &mut draft.positions {
+        if decimal(&position.price).is_none() {
+            position.price = "0".into();
+        }
+        if blank(&position.quantity).is_some_and(|q| decimal(q).is_none_or(|q| q.is_zero())) {
+            position.quantity = None;
+        }
+        if position.description.trim().is_empty() {
+            position.description = "–".into();
+        }
+    }
+    draft
+}
+
 pub fn totals(invoice: &Invoice) -> Totals {
     let t = &invoice.totals;
     Totals {
@@ -427,6 +456,23 @@ mod tests {
         let invoice = build_invoice(&d, &changed, "RE-1").unwrap();
 
         assert_eq!(totals(&invoice).vat, "188.58");
+    }
+
+    #[test]
+    fn a_half_filled_draft_can_still_be_previewed() {
+        let mut d = draft();
+        d.positions[0].price = String::new();
+        d.positions[0].quantity = Some("x".into());
+        d.positions[1].description = String::new();
+        d.issue_date = "17.10".into();
+        d.delivery_date = String::new();
+        assert!(build_invoice(&d, &settings(), "X").is_err());
+
+        let invoice = build_invoice(&for_preview(&d), &settings(), "X").unwrap();
+
+        assert_eq!(invoice.lines[0].net_amount.to_string(), "0.00");
+        assert_eq!(invoice.lines[1].item.name.as_deref(), Some("–"));
+        assert_eq!(invoice.lines[0].quantity.to_string(), "1");
     }
 
     #[test]

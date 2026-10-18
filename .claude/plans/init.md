@@ -224,6 +224,13 @@ Second round (2026-10-18):
 - [x] Deleting an invoice removes it from the list at once and the address goes back to the bare `/`, which redirects to the newest remaining invoice (same logic as on entering); without any left a blank invoice shows
 - [x] No spacing below scrollable areas: `main` has no bottom padding, the panes and views carry their own bottom padding inside the scroll area, so content scrolls to the window frame
 
+Live preview (2026-10-18):
+- [x] The invoice editor has a second column with the invoice as it will look, rendered by the real template: `preview_invoice(draft, id)` builds the invoice the same way as the export, renders it with the Typst sidecar to **SVG pages** (same `invoice.typ` and data as the PDF, no PDF/A) and returns them; the editor shows one page as an `<img>` with a pager for more. Requests are debounced (450 ms) and answered out of order only if newest, switching invoices drops the old preview; a real render takes about 0.1 s, a page is 200-450 KB of SVG
+- [x] Half filled forms are previewed with stand-ins (`draft::for_preview`: price 0, description "–", today for a broken date), so the page is there from the first keystroke; the preview shows the number the invoice would get next (an exported invoice its own) and the frozen settings for locked invoices. Nothing is stored
+- [x] The column has a readable width (20-36 rem) and is hidden when the pane is narrower than 62 rem; below 82 rem the position fields stack (the form shares the pane with the preview)
+- [ ] The preview is the template, not the final file: the PDF/A conversion and the Factur-X attachment only happen on export, so the preview cannot show an export failure
+- [ ] Zoom / fit options for the page; the browser mock only shows a rough placeholder, the real renderer is tested by `the_preview_renders_one_svg_per_page` (`RENDER_OUT=<dir>` keeps the SVGs)
+
 Polish round (2026-10-17):
 - [x] Rule findings in German: `invoice/german.rs` maps the 20 rules the form can trigger to German texts that say where to fix the problem; the English original stays as `hint`; a test breaks the form field by field and fails when a rule fires without a German text (also flags new rules after a crate upgrade). Rules the form cannot trigger, and Mustang's own report messages, stay English
 - [x] Layout: the shell is a grid (header, scrolling main), so the bottom buttons are always reachable; views and cards use the full window width; the macOS header has extra top padding for the traffic lights
@@ -340,7 +347,7 @@ src-tauri/
 ```
 
 - Plugins registered in `lib.rs`: `fs`, `dialog`, `log`, `opener`, `os`, `process`, `updater` (desktop only, `cfg(not(any(android, ios)))`)
-- Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `templates_list`, `template_save/delete`, `invoice_get/blank/save/duplicate/delete`, `check_invoice`, `produce_invoice`, `export_invoice`, `discard_work_dir`
+- Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `templates_list`, `template_save/delete`, `invoice_get/blank/save/duplicate/delete`, `check_invoice`, `preview_invoice`, `produce_invoice`, `export_invoice`, `discard_work_dir`
 - Window: `titleBarStyle: "Overlay"`, `hiddenTitle`, `transparent`, `macOSPrivateApi`; drag region span rendered on macOS only
 - Permissions: least privilege; no `http`, no `shell` plugin (the app is offline, tools are spawned from Rust)
 - `tauri.conf.json`: `beforeDevCommand`/`beforeBuildCommand` run `generate` + vite; `devUrl` fixed port 1420 + `strictPort`; `frontendDist: ../dist`; `bundle.createUpdaterArtifacts: true`; `bundle.resources: {"sidecars/": "sidecars/"}`; `plugins.updater` with `active`, `pubkey`, `endpoints` (manifest on `gh-e-rng-latest`)

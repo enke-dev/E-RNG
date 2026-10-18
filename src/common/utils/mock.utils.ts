@@ -186,6 +186,22 @@ export function installMocks() {
             1
           );
           return null;
+        case 'preview_invoice': {
+          const draft = args['draft'] as InvoiceDraft;
+          const lines = draft.positions.map(
+            (p, i) =>
+              `<text x="60" y="${330 + i * 22}" font-size="12">${i + 1}  ${p.description || '–'}   ${p.price} €</text>`
+          );
+          return {
+            pages: [
+              `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842"><rect width="595" height="842" fill="#fff"/>
+               <text x="60" y="80" font-size="18" font-weight="bold" fill="#222">Vorschau (Mock)</text>
+               <text x="60" y="200" font-size="13" fill="#222">${draft.customer.name || 'Kunde'}</text>
+               <g fill="#222" font-family="serif">${lines.join('')}</g></svg>`,
+            ],
+            problems: [],
+          };
+        }
         case 'invoices_list':
           return invoices.map(i => ({
             id: i.id,

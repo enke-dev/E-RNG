@@ -1,0 +1,77 @@
+use serde::Serialize;
+use tauri::{AppHandle, State};
+
+use crate::draft::{build_invoice, for_preview, InputProblem};
+use crate::model::InvoiceDraft;
+use crate::render::{self, Branding};
+use crate::sidecar::Sidecars;
+use crate::store::Store;
+use crate::utils::message;
+
+#[derive(Debug, Serialize)]
+pub struct Preview {
+    /// One SVG document per page, as the template lays the invoice out
+    pub pages: Vec<String>,
+    /// Set instead of pages when even a half filled form cannot be shown
+    pub problems: Vec<InputProblem>,
+}
+
+/// The invoice as it will look, rendered by the real template for the form's current state.
+/// Nothing is stored, a half filled form is shown with stand-ins for what is missing.
+#[tauri::command]
+pub async fn preview_invoice(
+    app: AppHandle,
+    store: State<'_, Store>,
+    draft: InvoiceDraft,
+    id: Option<i64>,
+) -> Result<Preview, String> {
+    let current = store.settings().map_err(message)?;
+    let settings = draft.frozen.clone().unwrap_or(current.clone());
+
+    // an exported invoice shows its number, a draft the one it would get
+    let stored_number = id
+        .map(|id| store.invoice(id))
+        .transpose()
+        .map_err(message)?
+        .and_then(|invoice| invoice.number);
+    let number = match stored_number {
+        Some(number) => number,
+        None => {
+            let year = draft
+                .issue_date
+                .get(..4)
+                .and_then(|y| y.parse().ok())
+                .unwrap_or(1970);
+            store
+                .next_number(&settings.number_prefix, year)
+                .map_err(message)?
+        }
+    };
+
+    let invoice = match build_invoice(&for_preview(&draft), &current, &number) {
+        Ok(invoice) => invoice,
+        Err(problems) => {
+            return Ok(Preview {
+                pages: Vec::new(),
+                problems,
+            })
+        }
+    };
+    let branding = Branding {
+        logo: settings.logo.clone(),
+        footer: settings.footer.clone(),
+    };
+    let sidecars = Sidecars::locate(&app).map_err(message)?;
+
+    let pages = tauri::async_runtime::spawn_blocking(move || {
+        let dir = tempfile::tempdir()?;
+        render::render_preview(&sidecars, dir.path(), &invoice, &branding)
+    })
+    .await
+    .map_err(message)?
+    .map_err(message)?;
+    Ok(Preview {
+        pages,
+        problems: Vec::new(),
+    })
+}

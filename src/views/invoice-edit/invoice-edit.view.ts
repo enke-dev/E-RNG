@@ -27,6 +27,7 @@ import type {
   InvoiceDraft,
   Position,
   PositionTemplate,
+  Preview,
   ProduceError,
   ProduceResult,
   Settings,
@@ -81,9 +82,17 @@ export class InvoiceEditView extends ErngElement {
   @state() private exporting: Export | undefined;
   @state() private templates: PositionTemplate[] | undefined;
   @state() private templateQuery = '';
+  @state() private preview: Preview | undefined;
+  @state() private previewPage = 0;
+  @state() private previewError = '';
 
   /** Edits that are not saved yet: a draft in this state is saved when another invoice is opened */
   #dirty = false;
+
+  #previewTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Answers of the renderer can arrive out of order, only the newest request counts */
+  #previewRequest = 0;
 
   #timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -96,6 +105,7 @@ export class InvoiceEditView extends ErngElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     clearTimeout(this.#timer);
+    clearTimeout(this.#previewTimer);
   }
 
   /** Opening another invoice keeps what was typed into a draft instead of dropping it */
@@ -112,6 +122,10 @@ export class InvoiceEditView extends ErngElement {
     // what was said about the last invoice (saved, exported) must not show up on the next one
     this.notice = '';
     this.error = '';
+    this.#previewRequest++;
+    clearTimeout(this.#previewTimer);
+    this.preview = undefined;
+    this.previewPage = 0;
     await this.load();
   }
 
@@ -144,8 +158,30 @@ export class InvoiceEditView extends ErngElement {
         this.draft = this.stored.draft;
       }
       await this.runCheck();
+      void this.renderPreview();
     } catch (error) {
       this.error = errorText(error);
+    }
+  }
+
+  /** Asks the real template renderer for the pages of the current form state */
+  private async renderPreview() {
+    if (!this.draft) {
+      return;
+    }
+    const request = ++this.#previewRequest;
+    try {
+      const preview = await api.invoicePreview(this.draft, this.stored?.id ?? null);
+      if (request !== this.#previewRequest) {
+        return;
+      }
+      this.preview = preview;
+      this.previewError = '';
+      this.previewPage = Math.min(this.previewPage, Math.max(0, preview.pages.length - 1));
+    } catch (error) {
+      if (request === this.#previewRequest) {
+        this.previewError = errorText(error);
+      }
     }
   }
 
@@ -162,6 +198,8 @@ export class InvoiceEditView extends ErngElement {
     this.notice = '';
     clearTimeout(this.#timer);
     this.#timer = setTimeout(() => void this.runCheck().catch(() => undefined), 300);
+    clearTimeout(this.#previewTimer);
+    this.#previewTimer = setTimeout(() => void this.renderPreview(), 450);
   }
 
   private edit(change: (draft: InvoiceDraft) => void) {
@@ -415,6 +453,54 @@ export class InvoiceEditView extends ErngElement {
     }
   }
 
+  private renderPreviewSheet() {
+    const pages = this.preview?.pages ?? [];
+    const problems = this.preview?.problems ?? [];
+    const page = pages[this.previewPage];
+    const hint = this.previewError
+      ? `Vorschau nicht verfügbar: ${this.previewError}`
+      : problems.length > 0
+        ? problems.map(p => p.message).join(', ')
+        : 'Die Vorschau wird erzeugt …';
+    return html`
+      <div id="sheet">
+        <div id="page">
+          ${
+            page
+              ? html`<img
+                  alt="Vorschau, Seite ${this.previewPage + 1} von ${pages.length}"
+                  src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(page)}"
+                >`
+              : html`<span class="muted">${hint}</span>`
+          }
+        </div>
+        ${
+          pages.length > 1
+            ? html`<wa-button-group label="Seiten" class="pager">
+                <wa-button
+                  appearance="outlined"
+                  size="s"
+                  ?disabled="${this.previewPage === 0}"
+                  @click="${() => (this.previewPage -= 1)}"
+                  >Zurück</wa-button
+                >
+                <wa-button appearance="outlined" size="s" disabled>
+                  Seite ${this.previewPage + 1} von ${pages.length}
+                </wa-button>
+                <wa-button
+                  appearance="outlined"
+                  size="s"
+                  ?disabled="${this.previewPage >= pages.length - 1}"
+                  @click="${() => (this.previewPage += 1)}"
+                  >Weiter</wa-button
+                >
+              </wa-button-group>`
+            : nothing
+        }
+      </div>
+    `;
+  }
+
   private renderPositions(locked: boolean) {
     const draft = this.draft as InvoiceDraft;
     return html`
@@ -479,13 +565,13 @@ export class InvoiceEditView extends ErngElement {
               ></wa-input>
               <wa-button-group class="row-actions" label="Position">
                 <wa-button
-                  size="s"
+                  size="m"
                   appearance="outlined"
                   @click="${() => void this.saveAsTemplate(p)}"
                   >Als Vorlage</wa-button
                 >
                 <wa-button
-                  size="s"
+                  size="m"
                   appearance="outlined"
                   variant="danger"
                   aria-label="Position entfernen"
@@ -684,8 +770,8 @@ export class InvoiceEditView extends ErngElement {
       `;
     }
     return html`
-      <wa-callout variant="danger"
-        >Die Rechnung verstößt gegen Regeln:
+      <wa-callout variant="danger">
+        Die Rechnung verstößt gegen Regeln:
         <ul>
           ${error.findings.map(f => html`<li><strong>${f.rule}</strong> ${f.message}</li>`)}
         </ul>
@@ -697,12 +783,14 @@ export class InvoiceEditView extends ErngElement {
     const { result } = exporting;
     if (!result.report.valid) {
       const errors = result.report.issues.filter(i => i.level === 'error');
-      return html`<wa-callout variant="danger">
-        Die erzeugte Datei hat die Prüfung nicht bestanden und kann nicht gespeichert werden:
-        <ul>
-          ${errors.map(i => html`<li class="issue"><strong>${i.code}</strong> ${i.message.slice(0, 300)}</li>`)}
-        </ul>
-      </wa-callout>`;
+      return html`
+        <wa-callout variant="danger">
+          Die erzeugte Datei hat die Prüfung nicht bestanden und kann nicht gespeichert werden:
+          <ul>
+            ${errors.map(i => html`<li class="issue"><strong>${i.code}</strong> ${i.message.slice(0, 300)}</li>`)}
+          </ul>
+        </wa-callout>
+      `;
     }
     const warnings = result.report.issues.filter(i => i.level === 'warning');
     return html`
@@ -764,105 +852,109 @@ export class InvoiceEditView extends ErngElement {
       (this.check?.findings.some(f => f.severity === 'Fatal') ?? false);
 
     return html`
-      <div class="content">
-        ${
-          locked
-            ? html`
-                <wa-callout variant="neutral">
-                  Exportiert als <strong>${stored?.number}</strong> am
-                  ${formatDate(stored?.exported_at ?? '', true)}.<br>
-                  <em>Exportierte Rechnungen sind für alle Änderungen gesperrt.</em>
-                </wa-callout>
-              `
-            : nothing
-        }
-        ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
-        ${this.notice ? html`<wa-callout variant="success">${this.notice}</wa-callout>` : nothing}
-
-        <wa-card>
-          <div slot="header">Kunde</div>
-          <div class="customer">
-            <wa-select
-              label="Kunde"
-              placeholder="Kunde auswählen"
-              ?disabled="${locked}"
-              .value="${draft.customer.id == null ? '' : String(draft.customer.id)}"
-              @change="${(e: Event) => this.selectCustomer(String((e.target as WaSelect).value))}"
-            >
-              ${this.customers.map(c => html`<wa-option value="${String(c.id)}">${c.name}</wa-option>`)}
-            </wa-select>
-            ${locked ? nothing : html`<wa-button @click="${() => (this.newCustomer = blankCustomer())}" appearance="outlined">Neuen Kunden anlegen</wa-button>`}
-          </div>
+      <div id="content">
+        <section id="form">
           ${
-            draft.customer.name
+            locked
               ? html`
-                  <div class="muted">
-                    ${draft.customer.name}, ${draft.customer.address.street},
-                    ${draft.customer.address.post_code} ${draft.customer.address.city}
-                  </div>
+                  <wa-callout variant="neutral">
+                    Exportiert als <strong>${stored?.number}</strong> am
+                    ${formatDate(stored?.exported_at ?? '', true)}.<br>
+                    <em>Exportierte Rechnungen sind für alle Änderungen gesperrt.</em>
+                  </wa-callout>
                 `
               : nothing
           }
-        </wa-card>
+          ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
+          ${this.notice ? html`<wa-callout variant="success">${this.notice}</wa-callout>` : nothing}
 
-        <wa-card>
-          <div slot="header">Rechnung</div>
-          <div class="stack">
-            <div class="grid">
-              <wa-input
-                type="date"
-                label="Rechnungsdatum"
+          <wa-card>
+            <div slot="header">Kunde</div>
+            <div class="customer">
+              <wa-select
+                label="Kunde"
+                placeholder="Kunde auswählen"
                 ?disabled="${locked}"
-                .value="${draft.issue_date}"
-                @input="${(e: Event) => this.edit(d => (d.issue_date = text(e)))}"
-              ></wa-input>
-              <wa-input
-                type="date"
-                label="Leistungsdatum"
-                ?disabled="${locked}"
-                .value="${draft.delivery_date}"
-                @input="${(e: Event) => this.edit(d => (d.delivery_date = text(e)))}"
-              ></wa-input>
+                .value="${draft.customer.id == null ? '' : String(draft.customer.id)}"
+                @change="${(e: Event) => this.selectCustomer(String((e.target as WaSelect).value))}"
+              >
+                ${this.customers.map(c => html`<wa-option value="${String(c.id)}">${c.name}</wa-option>`)}
+              </wa-select>
+              ${locked ? nothing : html`<wa-button @click="${() => (this.newCustomer = blankCustomer())}" appearance="outlined">Neuen Kunden anlegen</wa-button>`}
             </div>
-            <wa-switch
-              ?disabled="${locked}"
-              ?checked="${draft.profile === 'xrechnung'}"
-              @change="${(e: Event) => this.edit(d => (d.profile = (e.target as WaSwitch).checked ? 'xrechnung' : 'en16931'))}"
-            >
-              XRechnung (für öffentliche Auftraggeber)
-            </wa-switch>
             ${
-              draft.profile === 'xrechnung'
+              draft.customer.name
                 ? html`
-                    <wa-input
-                      label="Leitweg-ID / Käuferreferenz"
-                      ?disabled="${locked}"
-                      .value="${draft.buyer_reference ?? ''}"
-                      @input="${(e: Event) => this.edit(d => (d.buyer_reference = nullable(text(e))))}"
-                    ></wa-input>
+                    <div class="muted">
+                      ${draft.customer.name}, ${draft.customer.address.street},
+                      ${draft.customer.address.post_code} ${draft.customer.address.city}
+                    </div>
                   `
                 : nothing
             }
-          </div>
-        </wa-card>
+          </wa-card>
 
-        <wa-card>
-          <div slot="header">Positionen</div>
-          <div class="stack">${this.renderPositions(locked)} ${this.renderSummary()}</div>
-        </wa-card>
+          <wa-card>
+            <div slot="header">Rechnung</div>
+            <div class="stack">
+              <div class="grid">
+                <wa-input
+                  type="date"
+                  label="Rechnungsdatum"
+                  ?disabled="${locked}"
+                  .value="${draft.issue_date}"
+                  @input="${(e: Event) => this.edit(d => (d.issue_date = text(e)))}"
+                ></wa-input>
+                <wa-input
+                  type="date"
+                  label="Leistungsdatum"
+                  ?disabled="${locked}"
+                  .value="${draft.delivery_date}"
+                  @input="${(e: Event) => this.edit(d => (d.delivery_date = text(e)))}"
+                ></wa-input>
+              </div>
+              <wa-switch
+                ?disabled="${locked}"
+                ?checked="${draft.profile === 'xrechnung'}"
+                @change="${(e: Event) => this.edit(d => (d.profile = (e.target as WaSwitch).checked ? 'xrechnung' : 'en16931'))}"
+              >
+                XRechnung (für öffentliche Auftraggeber)
+              </wa-switch>
+              ${
+                draft.profile === 'xrechnung'
+                  ? html`
+                      <wa-input
+                        label="Leitweg-ID / Käuferreferenz"
+                        ?disabled="${locked}"
+                        .value="${draft.buyer_reference ?? ''}"
+                        @input="${(e: Event) => this.edit(d => (d.buyer_reference = nullable(text(e))))}"
+                      ></wa-input>
+                    `
+                  : nothing
+              }
+            </div>
+          </wa-card>
 
-        <wa-card>
-          <div slot="header">Anmerkung</div>
-          <wa-textarea
-            aria-label="Anmerkung"
-            rows="2"
-            ?disabled="${locked}"
-            .value="${draft.note ?? ''}"
-            @input="${(e: Event) => this.edit(d => (d.note = nullable(text(e))))}"
-          ></wa-textarea>
-        </wa-card>
+          <wa-card>
+            <div slot="header">Positionen</div>
+            <div class="stack">${this.renderPositions(locked)} ${this.renderSummary()}</div>
+          </wa-card>
 
-        ${this.renderCheck()}
+          <wa-card>
+            <div slot="header">Anmerkung</div>
+            <wa-textarea
+              aria-label="Anmerkung"
+              rows="2"
+              ?disabled="${locked}"
+              .value="${draft.note ?? ''}"
+              @input="${(e: Event) => this.edit(d => (d.note = nullable(text(e))))}"
+            ></wa-textarea>
+          </wa-card>
+
+          ${this.renderCheck()}
+        </section>
+
+        <section id="preview">${this.renderPreviewSheet()}</section>
       </div>
 
       <footer>
