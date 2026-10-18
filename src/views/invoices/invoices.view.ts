@@ -1,5 +1,7 @@
+import '@awesome.me/webawesome/dist/components/badge/badge.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/callout/callout.js';
+import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/tag/tag.js';
@@ -15,9 +17,10 @@ import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { ListEntry, Settings } from '../../common/utils/api.utils.js';
-import { api, errorText } from '../../common/utils/api.utils.js';
+import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { formatDate, money } from '../../common/utils/format.utils.js';
+import { notifyError } from '../../common/utils/notify.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
 
 type StatusFilter = 'all' | 'draft' | 'exported' | 'open' | 'paid';
@@ -57,7 +60,6 @@ export class InvoicesView extends ErngElement {
 
   @state() private entries: ListEntry[] | undefined;
   @state() private settings: Settings | undefined;
-  @state() private error = '';
   @state() private query = '';
   @state() private status: StatusFilter = 'all';
   @state() private year = 'all';
@@ -95,10 +97,9 @@ export class InvoicesView extends ErngElement {
       const [entries, settings] = await Promise.all([api.invoicesList(), api.settingsGet()]);
       this.entries = entries;
       this.settings = settings;
-      this.error = '';
       this.selectNewest();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -208,8 +209,6 @@ export class InvoicesView extends ErngElement {
             Neue Rechnung
           </wa-button>
         </erng-filter-bar>
-
-        ${this.error ? html`<wa-callout slot="list" variant="danger">${this.error}</wa-callout>` : nothing}
         ${
           this.incomplete
             ? html`
@@ -239,7 +238,17 @@ export class InvoicesView extends ErngElement {
                 <span slot="end">${money(e.total)}</span>
                 <span slot="sub">
                   ${e.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
-                  ${e.paid_at ? html`<wa-tag variant="success" size="s">Bezahlt</wa-tag>` : nothing}
+                  ${
+                    e.paid_at
+                      ? html`<wa-badge
+                          variant="success"
+                          pill
+                          title="Bezahlt am ${formatDate(e.paid_at)}"
+                        >
+                          <wa-icon name="check" label="Bezahlt"></wa-icon>
+                        </wa-badge>`
+                      : nothing
+                  }
                 </span>
                 <span slot="sub-end">${formatDate(e.issue_date)}</span>
               </erng-list-item>

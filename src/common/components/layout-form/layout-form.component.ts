@@ -8,9 +8,10 @@ import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type { CustomLayout, Insets } from '../../utils/api.utils.js';
-import { api, errorText } from '../../utils/api.utils.js';
+import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { text } from '../../utils/form.utils.js';
+import { notifyError } from '../../utils/notify.utils.js';
 import styles from './layout-form.component.css';
 
 const EDGES: [keyof Insets, string][] = [
@@ -26,11 +27,9 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
   @property({ attribute: false })
   layout!: CustomLayout;
 
-  @state() private error = '';
   @state() private busy = false;
 
   private changed() {
-    this.error = '';
     this.requestUpdate();
     this.dispatchEvent(new CustomEvent('change', { bubbles: true, composed: true }));
   }
@@ -42,7 +41,7 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
       await step();
       this.changed();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     } finally {
       this.busy = false;
     }
@@ -192,8 +191,6 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
             TTF oder OTF. Alle Schnitte einer Familie auf einmal wählen (Regular, Bold, …).
           </span>
         </div>
-
-        ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
       </div>
     `;
   }

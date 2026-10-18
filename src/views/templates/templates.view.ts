@@ -14,10 +14,11 @@ import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import type { PositionTemplate } from '../../common/utils/api.utils.js';
-import { api, errorText } from '../../common/utils/api.utils.js';
+import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
 import { UNITS } from '../../common/utils/format.utils.js';
+import { notify, notifyError } from '../../common/utils/notify.utils.js';
 
 const blank = (): PositionTemplate => ({
   id: null,
@@ -34,7 +35,6 @@ const unitLabel = (code: string | null) => UNITS.find(u => u.code === (code ?? '
 export class TemplatesView extends ErngElement {
   @state() private templates: PositionTemplate[] = [];
   @state() private editing: PositionTemplate | undefined;
-  @state() private error = '';
   @state() private query = '';
   @state() private unit = 'all';
 
@@ -47,12 +47,11 @@ export class TemplatesView extends ErngElement {
     try {
       this.templates = await api.templatesList();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
   private edit(template: PositionTemplate) {
-    this.error = '';
     this.editing = structuredClone(template);
   }
 
@@ -62,7 +61,7 @@ export class TemplatesView extends ErngElement {
       return;
     }
     if (template.description.trim() === '' || template.price.trim() === '') {
-      this.error = 'Beschreibung und Preis sind erforderlich.';
+      notify('Beschreibung und Preis sind erforderlich.', 'danger');
       return;
     }
     try {
@@ -70,7 +69,7 @@ export class TemplatesView extends ErngElement {
       this.editing = undefined;
       await this.load();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -84,7 +83,7 @@ export class TemplatesView extends ErngElement {
       this.editing = undefined;
       await this.load();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -128,8 +127,6 @@ export class TemplatesView extends ErngElement {
             Neue Vorlage
           </wa-button>
         </erng-filter-bar>
-
-        ${this.error && !editing ? html`<wa-callout slot="notice" variant="danger">${this.error}</wa-callout>` : nothing}
         ${
           shown.length === 0
             ? html`
@@ -199,7 +196,6 @@ export class TemplatesView extends ErngElement {
                         @input="${(e: Event) => this.change(t => (t.price = text(e)))}"
                       ></wa-input>
                     </div>
-                    ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
                   </div>
                 `
               : nothing

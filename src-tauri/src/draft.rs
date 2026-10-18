@@ -45,7 +45,7 @@ fn blank(text: &Option<String>) -> Option<&str> {
 }
 
 /// Accepts `1.234,50` and `1234.50` alike, the webview may hand over either.
-fn decimal(text: &str) -> Option<Decimal> {
+pub(crate) fn decimal(text: &str) -> Option<Decimal> {
     let trimmed = text.trim();
     let normalized = if trimmed.contains(',') {
         trimmed.replace('.', "").replace(',', ".")

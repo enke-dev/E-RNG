@@ -233,6 +233,15 @@ export function installMocks() {
           return templates;
         case 'template_save': {
           const template = args['template'] as PositionTemplate;
+          const same = templates.find(
+            t =>
+              template.id === null &&
+              t.description.trim().toLowerCase() === template.description.trim().toLowerCase() &&
+              t.price === template.price
+          );
+          if (same) {
+            return same;
+          }
           if (template.id === null) {
             templates.push({ ...template, id: templates.length + 1 });
           } else {

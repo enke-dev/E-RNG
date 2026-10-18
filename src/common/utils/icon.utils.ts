@@ -1,4 +1,5 @@
 import { registerIconLibrary } from '@awesome.me/webawesome/dist/components/icon/library.js';
+import check from '@fortawesome/fontawesome-free/svgs/solid/check.svg?url';
 import save from '@fortawesome/fontawesome-free/svgs/solid/floppy-disk.svg?url';
 import trash from '@fortawesome/fontawesome-free/svgs/solid/trash.svg?url';
 
@@ -8,6 +9,7 @@ import trash from '@fortawesome/fontawesome-free/svgs/solid/trash.svg?url';
  * looks, so one place decides which picture stands for "save".
  */
 const ICONS: Record<string, string> = {
+  check,
   save,
   trash,
 };

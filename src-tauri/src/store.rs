@@ -205,7 +205,18 @@ impl Store {
         Ok(templates)
     }
 
+    /// Saves a template. A new one that is the same as a saved one is not saved twice, the saved
+    /// one comes back instead.
     pub fn save_template(&self, template: &PositionTemplate) -> Result<PositionTemplate> {
+        if template.id.is_none() {
+            if let Some(same) = self
+                .templates()?
+                .into_iter()
+                .find(|t| t.position.same_as(&template.position))
+            {
+                return Ok(same);
+            }
+        }
         let conn = self.conn();
         let json = serde_json::to_string(&PositionTemplate {
             id: None,
@@ -553,6 +564,32 @@ mod tests {
                 ..customer()
             })
             .is_err());
+    }
+
+    #[test]
+    fn the_same_template_is_not_saved_twice() {
+        let store = Store::in_memory().unwrap();
+        let template = |description: &str, price: &str| PositionTemplate {
+            id: None,
+            position: Position {
+                description: description.into(),
+                quantity: None,
+                unit: None,
+                price: price.into(),
+            },
+        };
+        let first = store.save_template(&template("Beratung", "95")).unwrap();
+
+        // another way to write the same thing
+        let again = store
+            .save_template(&template(" beratung ", "95,00"))
+            .unwrap();
+        assert_eq!(again.id, first.id);
+        assert_eq!(store.templates().unwrap().len(), 1);
+
+        // a different price is another template
+        store.save_template(&template("Beratung", "120")).unwrap();
+        assert_eq!(store.templates().unwrap().len(), 2);
     }
 
     #[test]

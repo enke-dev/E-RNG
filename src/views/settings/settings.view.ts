@@ -30,6 +30,7 @@ import type {
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
+import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { goto } from '../../common/utils/routing.utils.js';
 import styles from './settings.view.css';
 
@@ -69,8 +70,6 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   @state() private editing: CustomLayout | undefined;
   /** The invoices the selected own layout is used by, unknown while they are looked up */
   @state() private usage: LayoutUsage[] | undefined;
-  @state() private message: { variant: 'success' | 'danger'; text: string } | undefined;
-  @state() private layoutError = '';
   /** The sample invoice in the layout of the form */
   @state() private sample: Preview | undefined;
   @state() private sampleError = '';
@@ -121,14 +120,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         this.#saved = JSON.stringify(settings);
         this.settings = settings;
       },
-      (error: unknown) => (this.message = { variant: 'danger', text: errorText(error) })
+      (error: unknown) => notifyError(error)
     );
   }
 
   protected override updated(changed: PropertyValues<this>) {
     if (changed.has('selected')) {
-      this.layoutError = '';
-      this.message = undefined;
       void this.openLayout();
     }
   }
@@ -138,7 +135,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       [this.layouts, this.customs] = await Promise.all([api.layoutsList(), api.layoutsCustom()]);
       await this.openLayout();
     } catch (error) {
-      this.layoutError = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -174,7 +171,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         this.usage = usage;
       }
     } catch (error) {
-      this.layoutError = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -209,7 +206,6 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       return;
     }
     change(this.settings);
-    this.message = undefined;
     this.requestUpdate();
   }
 
@@ -254,21 +250,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     }
     const rate = Number(settings.tax_rate.replace(',', '.'));
     if (!Number.isFinite(rate) || rate <= 0 || rate > 100) {
-      this.message = {
-        variant: 'danger',
-        text: 'Der Steuersatz muss zwischen 0 und 100 liegen (in Prozent).',
-      };
+      notify('Der Steuersatz muss zwischen 0 und 100 liegen (in Prozent).', 'danger');
       return;
     }
     try {
       await api.settingsSave(settings);
       this.#saved = JSON.stringify(settings);
-      this.message = {
-        variant: 'success',
-        text: 'Gespeichert. Bereits exportierte Rechnungen behalten ihre alten Angaben.',
-      };
+      notify('Gespeichert. Bereits exportierte Rechnungen behalten ihre alten Angaben.');
     } catch (error) {
-      this.message = { variant: 'danger', text: errorText(error) };
+      notifyError(error);
     }
   }
 
@@ -276,11 +266,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   /** Runs a layout action, shows what went wrong */
   private async layoutAction(action: () => Promise<void>) {
-    this.layoutError = '';
     try {
       await action();
     } catch (error) {
-      this.layoutError = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -492,11 +481,6 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     return html`
       <erng-page slot="detail" heading="${heading}">
         ${content()}
-        ${
-          this.message
-            ? html`<wa-callout variant="${this.message.variant}">${this.message.text}</wa-callout>`
-            : nothing
-        }
         <wa-button
           slot="primary"
           variant="brand"
@@ -544,11 +528,6 @@ export class SettingsView extends ErngElement.withStyles(styles) {
               und Schrift legst du mit „Neu“ an. Die Vorschau zeigt dieselben Beispieldaten wie bei
               jedem Layout.
             </span>
-            ${
-              this.layoutError
-                ? html`<wa-callout variant="danger">${this.layoutError}</wa-callout>`
-                : nothing
-            }
           </div>
           ${this.guidesToggle()} ${this.sampleSheet()}
         </erng-editor>
@@ -650,11 +629,6 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           ></erng-layout-form>
           ${this.guidesToggle()} ${this.sampleSheet()}
         </erng-editor>
-        ${
-          this.layoutError
-            ? html`<wa-callout variant="danger">${this.layoutError}</wa-callout>`
-            : nothing
-        }
         ${isNew ? nothing : this.layoutActions(layout)}
         <wa-button
           slot="primary"
@@ -683,9 +657,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   override render() {
     const settings = this.settings;
     if (!settings) {
-      return this.message
-        ? html`<wa-callout variant="danger">${this.message.text}</wa-callout>`
-        : nothing;
+      return nothing;
     }
     return html`<erng-split>${this.renderList()} ${this.renderDetail(settings)}</erng-split>`;
   }

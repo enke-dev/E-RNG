@@ -42,6 +42,7 @@ import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { formatDate, money, UNITS } from '../../common/utils/format.utils.js';
+import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { startReorder } from '../../common/utils/reorder.utils.js';
 import { goto } from '../../common/utils/routing.utils.js';
 import styles from './invoice-edit.view.css';
@@ -79,8 +80,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   @state() private customers: Customer[] = [];
   @state() private layouts: LayoutInfo[] = [];
   @state() private check: Check | undefined;
-  @state() private error = '';
-  @state() private notice = '';
   @state() private busy = false;
   @state() private newCustomer: Customer | undefined;
   @state() private exporting: Export | undefined;
@@ -131,8 +130,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
     this.#dirty = false;
     // what was said about the last invoice (saved, exported) must not show up on the next one
-    this.notice = '';
-    this.error = '';
     this.#previewRequest++;
     clearTimeout(this.#previewTimer);
     this.preview = undefined;
@@ -155,7 +152,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   }
 
   private async load() {
-    this.error = '';
     try {
       const [settings, customers, layouts] = await Promise.all([
         api.settingsGet(),
@@ -180,7 +176,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       await this.runCheck();
       void this.renderPreview();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -214,7 +210,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   private changed() {
     this.#dirty = true;
     this.requestUpdate();
-    this.notice = '';
     clearTimeout(this.#timer);
     this.#timer = setTimeout(() => void this.runCheck().catch(() => undefined), 300);
     clearTimeout(this.#previewTimer);
@@ -255,17 +250,16 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       return;
     }
     if (customer.name.trim() === '') {
-      this.error = 'Bitte einen Namen für den Kunden eingeben.';
+      notify('Bitte einen Namen für den Kunden eingeben.', 'danger');
       return;
     }
     try {
       const saved = await api.customerSave(customer);
       this.customers = await api.customersList();
       this.newCustomer = undefined;
-      this.error = '';
       this.selectCustomer(String(saved.id));
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -288,10 +282,9 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     try {
       await this.persist();
       this.announce();
-      this.notice = 'Entwurf gespeichert.';
-      this.error = '';
+      notify('Entwurf gespeichert.');
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     } finally {
       this.busy = false;
     }
@@ -307,7 +300,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       this.announce({ id: copy.id });
       goto(`/invoices/${copy.id}`);
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -322,7 +315,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       this.announce({ id, deleted: true });
       goto('/');
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -395,7 +388,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       this.#dirty = false;
       this.announce();
       this.exporting = undefined;
-      this.notice = `Gespeichert als ${this.stored.number}. Die Rechnung ist jetzt gesperrt.`;
+      notify(`Gespeichert als ${this.stored.number}. Die Rechnung ist jetzt gesperrt.`);
       await this.runCheck();
     } catch (error) {
       exporting.saving = false;
@@ -438,7 +431,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     try {
       this.templates = await api.templatesList();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -460,15 +453,20 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   private async saveAsTemplate(position: Position) {
     if (position.description.trim() === '') {
-      this.error = 'Eine Vorlage braucht eine Beschreibung.';
+      notify('Eine Vorlage braucht eine Beschreibung.', 'danger');
       return;
     }
     try {
-      await api.templateSave({ ...position, id: null });
-      this.error = '';
-      this.notice = `„${position.description}“ ist jetzt eine Vorlage.`;
+      const before = await api.templatesList();
+      const saved = await api.templateSave({ ...position, id: null });
+      // the same one is not saved twice, the saved one comes back
+      if (before.some(t => t.id === saved.id)) {
+        notify(`„${position.description}“ gibt es schon als Vorlage.`, 'neutral');
+      } else {
+        notify(`„${position.description}“ ist jetzt eine Vorlage.`);
+      }
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -480,10 +478,9 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
     try {
       this.stored = await api.invoiceSetPaid(id, paidAt);
-      this.error = '';
       this.announce();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -912,7 +909,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   override render() {
     const draft = this.draft;
     if (!draft) {
-      return this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing;
+      return nothing;
     }
     const locked = this.locked;
     const stored = this.stored;
@@ -935,8 +932,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
               : nothing
           }
           ${locked ? this.renderPayment() : nothing}
-          ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
-          ${this.notice ? html`<wa-callout variant="success">${this.notice}</wa-callout>` : nothing}
 
           <wa-card>
             <div slot="header">Rechnung</div>

@@ -86,6 +86,13 @@ The database and the layout files live in the app data directory (`~/Library/App
 debug build (`tauri dev`) uses `dev.enke.e-rng.dev` next to it, so a development run never migrates the data of an
 installed app: an older version refuses a database a newer one has migrated ("written by a newer version").
 
+## Messages
+
+`notify(message, variant)` and `notifyError(error)` (`src/common/utils/notify.utils.ts`) show a toast bottom left: the
+answer to something the user just did (saved, failed, already there). What stays true while they work, a locked
+invoice, what is still missing, an empty list, the failure of an export inside its dialog, is a `wa-callout` on the
+page.
+
 ## Icons
 
 `<wa-icon name="save">` resolves against the library registered in `src/common/utils/icon.utils.ts`: a few Font Awesome

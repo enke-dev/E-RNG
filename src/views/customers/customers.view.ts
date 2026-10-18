@@ -14,8 +14,9 @@ import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import type { Customer } from '../../common/utils/api.utils.js';
-import { api, errorText } from '../../common/utils/api.utils.js';
+import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
+import { notify, notifyError } from '../../common/utils/notify.utils.js';
 
 const blank = (): Customer => ({
   id: null,
@@ -36,7 +37,6 @@ const GROUPS = [
 export class CustomersView extends ErngElement {
   @state() private customers: Customer[] = [];
   @state() private editing: Customer | undefined;
-  @state() private error = '';
   @state() private query = '';
   @state() private groups = 'all';
 
@@ -49,12 +49,11 @@ export class CustomersView extends ErngElement {
     try {
       this.customers = await api.customersList();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
   private edit(customer: Customer) {
-    this.error = '';
     this.editing = structuredClone(customer);
   }
 
@@ -64,7 +63,7 @@ export class CustomersView extends ErngElement {
       return;
     }
     if (customer.name.trim() === '') {
-      this.error = 'Bitte einen Namen eingeben.';
+      notify('Bitte einen Namen eingeben.', 'danger');
       return;
     }
     try {
@@ -72,7 +71,7 @@ export class CustomersView extends ErngElement {
       this.editing = undefined;
       await this.load();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -86,7 +85,7 @@ export class CustomersView extends ErngElement {
       this.editing = undefined;
       await this.load();
     } catch (error) {
-      this.error = errorText(error);
+      notifyError(error);
     }
   }
 
@@ -127,8 +126,6 @@ export class CustomersView extends ErngElement {
             Neuer Kunde
           </wa-button>
         </erng-filter-bar>
-
-        ${this.error && !editing ? html`<wa-callout slot="notice" variant="danger">${this.error}</wa-callout>` : nothing}
         ${
           shown.length === 0
             ? html`
@@ -164,7 +161,6 @@ export class CustomersView extends ErngElement {
                       .customer="${editing}"
                       @change="${() => this.requestUpdate()}"
                     ></erng-customer-form>
-                    ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
                   </div>
                 `
               : nothing

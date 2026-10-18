@@ -178,6 +178,34 @@ pub struct Position {
     pub price: String,
 }
 
+impl Position {
+    /// The same position as another one: description (case aside), quantity (empty is 1), unit
+    /// (empty is piece) and price compare as the user means them, `2` is `2,00`.
+    pub fn same_as(&self, other: &Position) -> bool {
+        use crate::draft::decimal;
+        let quantity = |p: &Position| {
+            p.quantity
+                .as_deref()
+                .map(str::trim)
+                .filter(|q| !q.is_empty())
+                .map_or(Some(rust_decimal::Decimal::ONE), decimal)
+        };
+        let unit = |p: &Position| {
+            p.unit
+                .as_deref()
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+                .unwrap_or("C62")
+                .to_owned()
+        };
+        let price = |p: &Position| decimal(&p.price);
+        self.description.trim().to_lowercase() == other.description.trim().to_lowercase()
+            && quantity(self) == quantity(other)
+            && unit(self) == unit(other)
+            && price(self) == price(other)
+    }
+}
+
 /// A saved position the invoice form can start from, edited like a customer.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PositionTemplate {
