@@ -1,12 +1,19 @@
 :host {
-  display: block;
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+erng-filter-bar {
   padding: var(--wa-space-m) var(--wa-space-l);
+  border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
 }
 
 .customers {
   display: grid;
   gap: var(--wa-space-m);
   grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  padding: var(--wa-space-m) var(--wa-space-l);
 }
 
 wa-card {

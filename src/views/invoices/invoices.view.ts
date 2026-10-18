@@ -136,7 +136,7 @@ export class InvoicesView extends ErngElement {
       <aside>
         <erng-filter-bar
           .query="${this.query}"
-          placeholder="Rechnungen suchen …"
+          placeholder="Rechnungen suchen"
           @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
         >
           <wa-select

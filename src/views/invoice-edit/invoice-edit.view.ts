@@ -470,7 +470,7 @@ export class InvoiceEditView extends ErngElement {
       ? `Vorschau nicht verfügbar: ${this.previewError}`
       : problems.length > 0
         ? problems.map(p => p.message).join(', ')
-        : 'Die Vorschau wird erzeugt …';
+        : 'Die Vorschau wird erzeugt…';
     return html`
       <div id="sheet" class="${pages.length > 1 ? 'paged' : ''}">
         <div id="page">
@@ -664,7 +664,7 @@ export class InvoiceEditView extends ErngElement {
         <div class="stack">
           <erng-filter-bar
             .query="${this.templateQuery}"
-            placeholder="Vorlagen durchsuchen …"
+            placeholder="Vorlagen durchsuchen"
             @query-change="${(e: CustomEvent<string>) => (this.templateQuery = e.detail)}"
           ></erng-filter-bar>
           ${
@@ -769,7 +769,7 @@ export class InvoiceEditView extends ErngElement {
       >
         ${
           exporting?.phase === 'busy'
-            ? html`<div class="row"><wa-spinner></wa-spinner> Wird erstellt und geprüft …</div>`
+            ? html`<div class="row"><wa-spinner></wa-spinner> Wird erstellt und geprüft…</div>`
             : nothing
         }
         ${exporting?.phase === 'failed' ? this.renderFailure(exporting.error) : nothing}
@@ -786,7 +786,7 @@ export class InvoiceEditView extends ErngElement {
                     ?loading="${exporting.saving}"
                     @click="${() => void this.saveFiles()}"
                   >
-                    Speichern unter …
+                    Speichern unter…
                   </wa-button>
                 `
               : nothing
@@ -924,7 +924,7 @@ export class InvoiceEditView extends ErngElement {
               >
                 ${this.customers.map(c => html`<wa-option value="${String(c.id)}">${c.name}</wa-option>`)}
               </wa-select>
-              ${locked ? nothing : html`<wa-button @click="${() => (this.newCustomer = blankCustomer())}" appearance="outlined">Neuen Kunden anlegen</wa-button>`}
+              ${locked ? nothing : html`<wa-button @click="${() => (this.newCustomer = blankCustomer())}" appearance="outlined">Neuer Kunde</wa-button>`}
             </div>
             ${
               draft.customer.name

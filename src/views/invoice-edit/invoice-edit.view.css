@@ -1,6 +1,8 @@
 :host {
   /* the sticky footer covers the bottom of the pane: the preview has to leave this much room */
-  --footer-height: calc(var(--wa-form-control-height) + 2 * var(--wa-space-m) + var(--wa-border-width-s));
+  --footer-height: calc(
+    var(--wa-form-control-height) + 2 * var(--wa-space-m) + var(--wa-border-width-s)
+  );
 
   flex: 1 1 auto;
   display: flex;
@@ -63,7 +65,10 @@
   aspect-ratio: 210 / 297;
   min-width: 5rem;
   /* as wide as the column allows and as tall as the pane allows (A4, portrait) */
-  width: min(100%, calc((100cqb - var(--footer-height) - 2 * var(--wa-space-m) - var(--pager)) * 210 / 297));
+  width: min(
+    100%,
+    calc((100cqb - var(--footer-height) - 2 * var(--wa-space-m) - var(--pager)) * 210 / 297)
+  );
   background: #fff;
   box-shadow: var(--wa-shadow-m);
 
@@ -193,7 +198,6 @@ wa-dialog::part(dialog) {
     position: relative;
     z-index: 2;
     box-shadow: var(--wa-shadow-m);
-    opacity: 0.9;
   }
 }
 
@@ -273,7 +277,12 @@ footer {
 
   nav {
     display: flex;
+    flex-flow: row wrap;
     gap: var(--wa-space-s);
+  }
+
+  wa-button-group::part(base) {
+    flex-wrap: nowrap;
   }
 }
 

@@ -111,54 +111,51 @@ export class TemplatesView extends ErngElement {
     const editing = this.editing;
     const shown = this.shown;
     return html`
-      <div class="stack">
-        <h2>Vorlagen</h2>
-        <erng-filter-bar
-          .query="${this.query}"
-          placeholder="Vorlagen suchen …"
-          @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
+      <erng-filter-bar
+        .query="${this.query}"
+        placeholder="Vorlagen suchen"
+        @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
+      >
+        <wa-select
+          aria-label="Einheit"
+          .value="${this.unit}"
+          @change="${(e: Event) => (this.unit = String((e.target as WaSelect).value))}"
         >
-          <wa-select
-            aria-label="Einheit"
-            .value="${this.unit}"
-            @change="${(e: Event) => (this.unit = String((e.target as WaSelect).value))}"
-          >
-            <wa-option value="all">Alle Einheiten</wa-option>
-            ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
-          </wa-select>
-          <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
-            Neue Vorlage
-          </wa-button>
-        </erng-filter-bar>
+          <wa-option value="all">Alle Einheiten</wa-option>
+          ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
+        </wa-select>
+        <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
+          Neue Vorlage
+        </wa-button>
+      </erng-filter-bar>
 
-        ${this.error && !editing ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
-        ${
-          shown.length === 0
-            ? html`
-                <wa-callout variant="neutral">
-                  ${
-                    this.templates.length === 0
-                      ? 'Noch keine Vorlagen. Hier oder im Rechnungsformular mit „Als Vorlage“ anlegen.'
-                      : 'Keine Treffer.'
-                  }
-                </wa-callout>
-              `
-            : html`
-                <div class="templates">
-                  ${shown.map(
-                    t => html`
-                      <wa-card @click="${() => this.edit(t)}">
-                        <strong>${t.description}</strong>
-                        <div class="muted">
-                          ${t.quantity ?? '1'} ${unitLabel(t.unit)} × ${t.price} €
-                        </div>
-                      </wa-card>
-                    `
-                  )}
-                </div>
-              `
-        }
-      </div>
+      ${this.error && !editing ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
+      ${
+        shown.length === 0
+          ? html`
+              <wa-callout variant="neutral">
+                ${
+                  this.templates.length === 0
+                    ? 'Noch keine Vorlagen. Hier oder im Rechnungsformular mit „Als Vorlage“ anlegen.'
+                    : 'Keine Treffer.'
+                }
+              </wa-callout>
+            `
+          : html`
+              <div class="templates">
+                ${shown.map(
+                  t => html`
+                    <wa-card @click="${() => this.edit(t)}">
+                      <strong>${t.description}</strong>
+                      <div class="muted">
+                        ${t.quantity ?? '1'} ${unitLabel(t.unit)} × ${t.price} €
+                      </div>
+                    </wa-card>
+                  `
+                )}
+              </div>
+            `
+      }
 
       <wa-dialog
         ?open="${editing !== undefined}"

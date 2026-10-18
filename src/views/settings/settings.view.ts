@@ -1,10 +1,10 @@
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import '@awesome.me/webawesome/dist/components/card/card.js';
-import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '../../common/components/address-fields/address-fields.component.js';
 
+import WaInput from '@awesome.me/webawesome/dist/components/input/input.js';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { CSSResultGroup } from 'lit';
 import { html, nothing } from 'lit';
@@ -48,7 +48,7 @@ export class SettingsView extends ErngElement {
     const settings = this.settings as Settings;
     return html`<wa-input
       label="${label}"
-      type="${type}"
+      type="${type as WaInput['type']}"
       .value="${settings.seller[key]}"
       @input="${(e: Event) => this.edit(s => (s.seller[key] = text(e)))}"
     ></wa-input>`;
@@ -105,9 +105,7 @@ export class SettingsView extends ErngElement {
     }
 
     return html`
-      <div class="stack">
-        <h2>Einstellungen</h2>
-
+      <div class="cards">
         <wa-card>
           <div slot="header">Unternehmen</div>
           <div class="stack">
@@ -124,13 +122,13 @@ export class SettingsView extends ErngElement {
               ${this.seller('phone', 'Telefon', 'tel')} ${this.seller('email', 'E-Mail', 'email')}
             </div>
             <wa-textarea
-              label="Zusatzangaben im Fuß (Handelsregister, Geschäftsführer …)"
+              label="Zusatzangaben im Fuß (Handelsregister, Geschäftsführer, …)"
               rows="2"
               .value="${settings.footer ?? ''}"
               @input="${(e: Event) => this.edit(s => (s.footer = nullable(text(e))))}"
             ></wa-textarea>
             <div class="logo">
-              <wa-button @click="${this.chooseLogo}" appearance="outlined">Logo wählen …</wa-button>
+              <wa-button @click="${this.chooseLogo}" appearance="outlined">Logo wählen</wa-button>
               ${
                 settings.logo
                   ? html`<span class="muted">${settings.logo.split('/').pop()}</span>
@@ -177,12 +175,13 @@ export class SettingsView extends ErngElement {
             ></wa-input>
           </div>
         </wa-card>
-
-        ${this.message ? html`<wa-callout variant="${this.message.variant}">${this.message.text}</wa-callout>` : nothing}
-        <div class="row end">
-          <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
-        </div>
       </div>
+
+      ${this.message ? html`<wa-callout variant="${this.message.variant}">${this.message.text}</wa-callout>` : nothing}
+
+      <footer>
+        <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
+      </footer>
     `;
   }
 }

@@ -93,39 +93,39 @@ export class CustomersView extends ErngElement {
         .includes(query)
     );
     return html`
-      <div class="stack">
-        <h2>Kunden</h2>
-        <erng-filter-bar
-          .query="${this.query}"
-          placeholder="Kunden suchen …"
-          @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
-        >
-          <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}"
-            >Neuer Kunde</wa-button
-          >
-        </erng-filter-bar>
-        ${this.error && !editing ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
-        ${
-          shown.length === 0
-            ? html`<wa-callout variant="neutral"
-                >${this.customers.length === 0 ? 'Noch keine Kunden angelegt.' : 'Keine Treffer.'}</wa-callout
-              >`
-            : html`
-                <div class="customers">
-                  ${shown.map(
-                    c => html`
-                      <wa-card @click="${() => this.edit(c)}">
-                        <strong>${c.name}</strong>
-                        <div class="muted">
-                          ${c.address.street}<br>${c.address.post_code} ${c.address.city}
-                        </div>
-                      </wa-card>
-                    `
-                  )}
-                </div>
-              `
-        }
-      </div>
+      <erng-filter-bar
+        .query="${this.query}"
+        placeholder="Kunden suchen"
+        @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
+      >
+        <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
+          Neuer Kunde
+        </wa-button>
+      </erng-filter-bar>
+
+      ${this.error && !editing ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
+      ${
+        shown.length === 0
+          ? html`
+              <wa-callout variant="neutral">
+                ${this.customers.length === 0 ? 'Noch keine Kunden angelegt.' : 'Keine Treffer.'}
+              </wa-callout>
+            `
+          : html`
+              <div class="customers">
+                ${shown.map(
+                  c => html`
+                    <wa-card @click="${() => this.edit(c)}">
+                      <strong>${c.name}</strong>
+                      <div class="muted">
+                        ${c.address.street}<br>${c.address.post_code} ${c.address.city}
+                      </div>
+                    </wa-card>
+                  `
+                )}
+              </div>
+            `
+      }
 
       <wa-dialog
         ?open="${editing !== undefined}"
@@ -147,19 +147,22 @@ export class CustomersView extends ErngElement {
         }
         ${
           editing?.id != null
-            ? html`<wa-button
-                slot="footer"
-                variant="danger"
-                appearance="outlined"
-                @click="${this.deleteCustomer}"
-                >Löschen</wa-button
-              >`
+            ? html`
+                <wa-button
+                  slot="footer"
+                  variant="danger"
+                  appearance="outlined"
+                  @click="${this.deleteCustomer}"
+                >
+                  Löschen
+                </wa-button>
+              `
             : nothing
         }
         <wa-button-group slot="footer" label="Bearbeiten">
-          <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}"
-            >Abbrechen</wa-button
-          >
+          <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}">
+            Abbrechen
+          </wa-button>
           <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
         </wa-button-group>
       </wa-dialog>

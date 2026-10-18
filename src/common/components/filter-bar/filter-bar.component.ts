@@ -23,7 +23,7 @@ export class FilterBarComponent extends ErngElement {
 
   @property() query = '';
 
-  @property() placeholder = 'Suchen …';
+  @property() placeholder = 'Suchen';
 
   /** Filters as the user types, the button and Enter are for those who expect to ask for a search */
   @eventOptions({ passive: true })
