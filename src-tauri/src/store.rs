@@ -16,7 +16,7 @@ use crate::model::{
 
 pub struct Store(Mutex<Connection>);
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -51,6 +51,12 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version = 3;",
         )?;
     }
+    if version < 4 {
+        conn.execute_batch(
+            "ALTER TABLE invoices ADD COLUMN paid_at TEXT;
+             PRAGMA user_version = 4;",
+        )?;
+    }
     Ok(())
 }
 
@@ -70,6 +76,7 @@ fn stored(row: &Row) -> rusqlite::Result<(StoredInvoice, String)> {
             draft: InvoiceDraft::blank(""),
             total: row.get("total")?,
             exported_at: row.get("exported_at")?,
+            paid_at: row.get("paid_at")?,
             updated_at: row.get("updated_at")?,
         },
         draft,
@@ -327,7 +334,7 @@ impl Store {
     pub fn invoices(&self) -> Result<Vec<ListEntry>> {
         let conn = self.conn();
         let mut statement = conn.prepare(
-            "SELECT id, number, status, draft, total, exported_at, updated_at FROM invoices
+            "SELECT id, number, status, draft, total, exported_at, paid_at, updated_at FROM invoices
              ORDER BY updated_at DESC, id DESC",
         )?;
         let rows = statement.query_map([], stored)?;
@@ -341,6 +348,7 @@ impl Store {
                 customer_name: draft.customer.name,
                 issue_date: draft.issue_date,
                 total: invoice.total,
+                paid_at: invoice.paid_at,
                 updated_at: invoice.updated_at,
             })
         })
@@ -351,7 +359,7 @@ impl Store {
         let conn = self.conn();
         let (mut invoice, draft) = conn
             .query_row(
-                "SELECT id, number, status, draft, total, exported_at, updated_at FROM invoices WHERE id = ?1",
+                "SELECT id, number, status, draft, total, exported_at, paid_at, updated_at FROM invoices WHERE id = ?1",
                 [id],
                 stored,
             )
@@ -359,6 +367,22 @@ impl Store {
             .ok_or_else(|| anyhow!("unknown invoice"))?;
         invoice.draft = serde_json::from_str(&draft)?;
         Ok(invoice)
+    }
+
+    /// Marks an exported invoice as paid on a date, or as open again (`None`). The invoice itself stays
+    /// locked, this is the one thing that happens to it afterwards.
+    pub fn set_paid(&self, id: i64, paid_at: Option<&str>) -> Result<StoredInvoice> {
+        if let Some(date) = paid_at {
+            en16931::Date::parse(date).map_err(|_| anyhow!("the date of payment is not a date"))?;
+        }
+        let changed = self.conn().execute(
+            "UPDATE invoices SET paid_at = ?1 WHERE id = ?2 AND status = 'exported'",
+            params![paid_at, id],
+        )?;
+        if changed == 0 {
+            bail!("only an exported invoice can be paid");
+        }
+        self.invoice(id)
     }
 
     /// Creates a draft (`id` is `None`) or updates one, exported invoices are refused.
@@ -648,6 +672,30 @@ mod tests {
             .finalize(exported, "RE-2026-001", &settings(), Some(&layout), "1.00")
             .unwrap();
         assert_eq!(store.layout_usages(id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_exported_invoice_can_be_marked_paid_and_open_again() {
+        let store = Store::in_memory().unwrap();
+        let id = store.save_draft(None, &draft(), None).unwrap().id;
+        assert!(
+            store.set_paid(id, Some("2026-10-20")).is_err(),
+            "drafts are not paid"
+        );
+
+        store
+            .finalize(id, "RE-2026-001", &settings(), None, "1.00")
+            .unwrap();
+        assert!(
+            store.set_paid(id, Some("20.10.2026")).is_err(),
+            "not an ISO date"
+        );
+
+        let paid = store.set_paid(id, Some("2026-10-20")).unwrap();
+        assert_eq!(paid.paid_at.as_deref(), Some("2026-10-20"));
+        assert_eq!(store.invoices().unwrap()[0].paid_at, paid.paid_at);
+
+        assert_eq!(store.set_paid(id, None).unwrap().paid_at, None);
     }
 
     #[test]

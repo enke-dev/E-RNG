@@ -230,3 +230,10 @@ footer {
     flex-wrap: nowrap;
   }
 }
+
+.payment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--wa-space-m);
+}

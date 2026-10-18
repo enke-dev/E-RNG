@@ -51,6 +51,7 @@ pub fn run() {
             commands::invoices_command::invoice_duplicate,
             commands::invoices_command::invoice_get,
             commands::invoices_command::invoice_save,
+            commands::invoices_command::invoice_set_paid,
             commands::invoices_command::invoices_list,
             commands::layouts_command::layout_delete,
             commands::layouts_command::layout_import_background,

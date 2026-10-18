@@ -39,7 +39,7 @@ import type {
 } from '../../common/utils/api.utils.js';
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
-import { nullable, text } from '../../common/utils/form.utils.js';
+import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { formatDate, money, UNITS } from '../../common/utils/format.utils.js';
 import { startReorder } from '../../common/utils/reorder.utils.js';
 import { goto } from '../../common/utils/routing.utils.js';
@@ -471,6 +471,48 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
   }
 
+  /** Marks an exported invoice as paid on a date or as open again, the one change it allows */
+  private async setPaid(paidAt: string | null) {
+    const id = this.stored?.id;
+    if (id === undefined) {
+      return;
+    }
+    try {
+      this.stored = await api.invoiceSetPaid(id, paidAt);
+      this.error = '';
+      this.announce();
+    } catch (error) {
+      this.error = errorText(error);
+    }
+  }
+
+  private renderPayment() {
+    const paidAt = this.stored?.paid_at ?? null;
+    return html`
+      <wa-card>
+        <div slot="header">Zahlung</div>
+        <div class="payment">
+          <wa-switch
+            ?checked="${paidAt !== null}"
+            @change="${(e: Event) => void this.setPaid((e.target as WaSwitch).checked ? today() : null)}"
+          >
+            Bezahlt
+          </wa-switch>
+          ${
+            paidAt === null
+              ? nothing
+              : html`<wa-input
+                  type="date"
+                  label="Bezahlt am"
+                  .value="${paidAt}"
+                  @change="${(e: Event) => text(e) && void this.setPaid(text(e))}"
+                ></wa-input>`
+          }
+        </div>
+      </wa-card>
+    `;
+  }
+
   private renderPreviewSheet() {
     const problems = this.preview?.problems ?? [];
     const hint = this.previewError
@@ -884,6 +926,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 `
               : nothing
           }
+          ${locked ? this.renderPayment() : nothing}
           ${this.error ? html`<wa-callout variant="danger">${this.error}</wa-callout>` : nothing}
           ${this.notice ? html`<wa-callout variant="success">${this.notice}</wa-callout>` : nothing}
 

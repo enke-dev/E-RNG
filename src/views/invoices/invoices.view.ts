@@ -20,7 +20,19 @@ import { ErngElement } from '../../common/utils/base.utils.js';
 import { formatDate, money } from '../../common/utils/format.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
 
-type StatusFilter = 'all' | 'draft' | 'exported';
+type StatusFilter = 'all' | 'draft' | 'exported' | 'open' | 'paid';
+
+/** Open is an exported invoice nobody paid yet */
+const matchesStatus = (entry: ListEntry, status: StatusFilter) =>
+  ({
+    all: true,
+    draft: entry.status === 'draft',
+    exported: entry.status === 'exported',
+    open: entry.status === 'exported' && !entry.paid_at,
+    paid: entry.paid_at !== null,
+  })[status];
+
+const yearOf = (entry: ListEntry) => entry.issue_date.slice(0, 4);
 
 /** The text a search looks in: number, customer, date as shown, amount as shown */
 function haystack(entry: ListEntry): string {
@@ -48,6 +60,8 @@ export class InvoicesView extends ErngElement {
   @state() private error = '';
   @state() private query = '';
   @state() private status: StatusFilter = 'all';
+  @state() private year = 'all';
+  @state() private customer = 'all';
   /** An invoice that got its id while the address still says `new` */
   @state() private created: number | undefined;
 
@@ -126,7 +140,22 @@ export class InvoicesView extends ErngElement {
   private get shown(): ListEntry[] {
     const query = this.query.trim().toLowerCase();
     return (this.entries ?? []).filter(
-      e => (this.status === 'all' || e.status === this.status) && haystack(e).includes(query)
+      e =>
+        matchesStatus(e, this.status) &&
+        (this.year === 'all' || yearOf(e) === this.year) &&
+        (this.customer === 'all' || e.customer_name === this.customer) &&
+        haystack(e).includes(query)
+    );
+  }
+
+  /** What the year and customer filters offer: what the invoices have */
+  private get years(): string[] {
+    return [...new Set((this.entries ?? []).map(yearOf))].sort().reverse();
+  }
+
+  private get customers(): string[] {
+    return [...new Set((this.entries ?? []).map(e => e.customer_name).filter(Boolean))].sort(
+      (a, b) => a.localeCompare(b, 'de')
     );
   }
 
@@ -149,6 +178,26 @@ export class InvoicesView extends ErngElement {
             <wa-option value="all">Alle</wa-option>
             <wa-option value="draft">Entwürfe</wa-option>
             <wa-option value="exported">Exportiert</wa-option>
+            <wa-option value="open">Offen</wa-option>
+            <wa-option value="paid">Bezahlt</wa-option>
+          </wa-select>
+          <wa-select
+            slot="filters"
+            aria-label="Jahr"
+            .value="${this.year}"
+            @change="${(e: Event) => (this.year = String((e.target as WaSelect).value))}"
+          >
+            <wa-option value="all">Alle Jahre</wa-option>
+            ${this.years.map(year => html`<wa-option value="${year}">${year}</wa-option>`)}
+          </wa-select>
+          <wa-select
+            slot="filters"
+            aria-label="Kunde"
+            .value="${this.customer}"
+            @change="${(e: Event) => (this.customer = String((e.target as WaSelect).value))}"
+          >
+            <wa-option value="all">Alle Kunden</wa-option>
+            ${this.customers.map(name => html`<wa-option value="${name}">${name}</wa-option>`)}
           </wa-select>
           <wa-button
             slot="actions"
@@ -190,6 +239,7 @@ export class InvoicesView extends ErngElement {
                 <span slot="end">${money(e.total)}</span>
                 <span slot="sub">
                   ${e.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
+                  ${e.paid_at ? html`<wa-tag variant="success" size="s">Bezahlt</wa-tag>` : nothing}
                 </span>
                 <span slot="sub-end">${formatDate(e.issue_date)}</span>
               </erng-list-item>

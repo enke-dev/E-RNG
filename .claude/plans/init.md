@@ -21,7 +21,7 @@ this list is the index of what is still open.
 - [ ] Code signing and notarization when the app goes to anyone else, including the nested JRE and Typst binaries
 
 **Validation and safety**
-- [ ] Bump Mustang when a release with veraPDF 1.30.3 exists (`scripts/sidecars.json`; 2.26.0 ships 1.30.2, advisory GHSA-5gvp-6g43-g47v)
+- [ ] Bump Mustang when a release with veraPDF 1.30.3 exists (`scripts/sidecars.json`; 2.26.0, the latest release of 2026-08-25, ships 1.30.2, advisory GHSA-5gvp-6g43-g47v; Mustang's main branch already has 1.30.3, checked 2026-10-18)
 - [ ] Test that fails if anything modifies the PDF after `combine` (no validator checks the attachment relationship)
 - [ ] Check that Mustang makes no network calls (input is only our own files, so low risk)
 - [ ] German texts for Mustang's report messages (the form's rule findings are German already)
@@ -30,10 +30,12 @@ this list is the index of what is still open.
 - [ ] Credit notes from the UI (the model and the template support them), several VAT rates, reverse charge and other VAT-free cases, discounts and surcharges
 - [ ] Other payment means (direct debit, card), tax representative, payee, attachments (BG-24)
 - [ ] Kleinunternehmer mode (§ 19 UStG), 0 % rate
-- [ ] Customer-specific payment terms, mark as paid, dunning
+- [x] Mark as paid: a switch and a date on exported invoices (`invoices.paid_at`, `invoice_set_paid`, the invoice itself stays locked)
+- [ ] Customer-specific payment terms, dunning
 
 **UI polish**
-- [ ] Invoice list: paid status, more filters (year, customer) and sort options (search and a status filter exist)
+- [x] Invoice list filters: status (all, drafts, exported, open, paid), year, customer, plus the search
+- [ ] Invoice list sort options
 - [ ] Position templates: use counts or favourites, templates with several lines
 - [ ] Unsaved edits are saved as a draft when another invoice is opened, but not when the window closes: save on quit
 - [ ] A readable maximum width for single-line inputs on very wide windows

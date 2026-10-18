@@ -95,6 +95,7 @@ const invoices: StoredInvoice[] = [
     draft: { ...draftOf(customers[0] as Customer), frozen: settings },
     total: '1130.50',
     exported_at: '2026-10-02 08:00:00',
+    paid_at: null,
     updated_at: '2026-10-02 08:00:00',
   },
   {
@@ -104,6 +105,7 @@ const invoices: StoredInvoice[] = [
     draft: draftOf(customers[1] as Customer),
     total: '1130.50',
     exported_at: null,
+    paid_at: null,
     updated_at: '2026-10-05 09:00:00',
   },
 ];
@@ -268,8 +270,14 @@ export function installMocks() {
             customer_name: i.draft.customer.name,
             issue_date: i.draft.issue_date,
             total: i.total,
+            paid_at: i.paid_at,
             updated_at: i.updated_at,
           }));
+        case 'invoice_set_paid': {
+          const stored = find(args['id']);
+          stored.paid_at = (args['paidAt'] as string | null) ?? null;
+          return { ...stored };
+        }
         case 'invoice_get':
           return find(args['id']);
         case 'invoice_blank':
@@ -288,6 +296,7 @@ export function installMocks() {
             draft,
             total: null,
             exported_at: null,
+            paid_at: null,
             updated_at: '',
           };
           stored.draft = draft;
@@ -304,6 +313,7 @@ export function installMocks() {
             number: null,
             status: 'draft',
             exported_at: null,
+            paid_at: null,
           };
           copy.draft.issue_date = today();
           copy.draft.delivery_date = today();

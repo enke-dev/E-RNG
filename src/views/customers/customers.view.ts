@@ -3,10 +3,13 @@ import '@awesome.me/webawesome/dist/components/button-group/button-group.js';
 import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import '@awesome.me/webawesome/dist/components/card/card.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
+import '@awesome.me/webawesome/dist/components/option/option.js';
+import '@awesome.me/webawesome/dist/components/select/select.js';
 import '../../common/components/customer-form/customer-form.component.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
 import '../../common/layouts/cards/cards.layout.js';
 
+import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
@@ -23,12 +26,19 @@ const blank = (): Customer => ({
   buyer_reference: null,
 });
 
+const GROUPS = [
+  { key: 'all', label: 'Alle' },
+  { key: 'public', label: 'Öffentlich' },
+  { key: 'private', label: 'Privat' },
+];
+
 @customElement('erng-customers')
 export class CustomersView extends ErngElement {
   @state() private customers: Customer[] = [];
   @state() private editing: Customer | undefined;
   @state() private error = '';
   @state() private query = '';
+  @state() private groups = 'all';
 
   override connectedCallback() {
     super.connectedCallback();
@@ -80,15 +90,23 @@ export class CustomersView extends ErngElement {
     }
   }
 
+  private get shown(): Customer[] {
+    const query = this.query.trim().toLowerCase();
+    return this.customers.filter(
+      c =>
+        (this.groups === 'all' ||
+          (this.groups === 'public' && c.buyer_reference !== null) ||
+          (this.groups === 'private' && c.buyer_reference === null)) &&
+        [c.name, c.address.city, c.address.post_code, c.email ?? '', c.vat_id ?? '']
+          .join(' ')
+          .toLowerCase()
+          .includes(query)
+    );
+  }
+
   override render() {
     const editing = this.editing;
-    const query = this.query.trim().toLowerCase();
-    const shown = this.customers.filter(c =>
-      [c.name, c.address.city, c.address.post_code, c.email ?? '', c.vat_id ?? '']
-        .join(' ')
-        .toLowerCase()
-        .includes(query)
-    );
+    const shown = this.shown;
     return html`
       <erng-cards>
         <erng-filter-bar
@@ -97,6 +115,14 @@ export class CustomersView extends ErngElement {
           placeholder="Kunden suchen"
           @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
         >
+          <wa-select
+            slot="filters"
+            aria-label="Gruppen"
+            .value="${this.groups}"
+            @change="${(e: Event) => (this.groups = String((e.target as WaSelect).value))}"
+          >
+            ${GROUPS.map(u => html`<wa-option value="${u.key}">${u.label}</wa-option>`)}
+          </wa-select>
           <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
             Neuer Kunde
           </wa-button>

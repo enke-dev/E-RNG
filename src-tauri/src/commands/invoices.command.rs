@@ -21,6 +21,16 @@ pub fn invoice_blank() -> InvoiceDraft {
     InvoiceDraft::blank(&today())
 }
 
+/// Marks an exported invoice as paid on a date (ISO), or as open again.
+#[tauri::command]
+pub fn invoice_set_paid(
+    store: State<'_, Store>,
+    id: i64,
+    paid_at: Option<String>,
+) -> Result<StoredInvoice, String> {
+    store.set_paid(id, paid_at.as_deref()).map_err(message)
+}
+
 /// Creates (`id` is `None`) or updates a draft. Whatever state the form is in is saved, the total
 /// shown in the list is kept only while the draft can be calculated.
 #[tauri::command]

@@ -250,6 +250,8 @@ pub struct StoredInvoice {
     pub draft: InvoiceDraft,
     pub total: Option<String>,
     pub exported_at: Option<String>,
+    /// ISO date the invoice was paid on, set by hand after the export
+    pub paid_at: Option<String>,
     pub updated_at: String,
 }
 
@@ -261,6 +263,7 @@ pub struct ListEntry {
     pub customer_name: String,
     pub issue_date: String,
     pub total: Option<String>,
+    pub paid_at: Option<String>,
     pub updated_at: String,
 }
 

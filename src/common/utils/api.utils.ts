@@ -83,6 +83,8 @@ export interface StoredInvoice {
   draft: InvoiceDraft;
   total: string | null;
   exported_at: string | null;
+  /** ISO date the exported invoice was paid on */
+  paid_at: string | null;
   updated_at: string;
 }
 
@@ -93,6 +95,7 @@ export interface ListEntry {
   customer_name: string;
   issue_date: string;
   total: string | null;
+  paid_at: string | null;
   updated_at: string;
 }
 
@@ -248,6 +251,8 @@ export const api = {
   invoiceBlank: () => invoke<InvoiceDraft>('invoice_blank'),
   invoiceSave: (id: number | null, draft: InvoiceDraft) =>
     invoke<StoredInvoice>('invoice_save', { id, draft }),
+  invoiceSetPaid: (id: number, paidAt: string | null) =>
+    invoke<StoredInvoice>('invoice_set_paid', { id, paidAt }),
   invoiceDuplicate: (id: number) => invoke<StoredInvoice>('invoice_duplicate', { id }),
   invoiceDelete: (id: number) => invoke<null>('invoice_delete', { id }),
   invoiceCheck: (draft: InvoiceDraft) => invoke<Check>('check_invoice', { draft }),

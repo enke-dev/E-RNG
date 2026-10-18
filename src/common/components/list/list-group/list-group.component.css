@@ -17,4 +17,6 @@ header {
   text-transform: uppercase;
 }
 
-slot:not([name])::slotted(erng-)
+slot:not([name])::slotted(erng-list-item) {
+  text-indent: var(--wa-space-l);
+}

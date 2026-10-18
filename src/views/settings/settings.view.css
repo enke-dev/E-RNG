@@ -12,3 +12,7 @@ erng-page:not([frameless])::part(content) {
 erng-sheet {
   --reserve: calc(var(--wa-form-control-height) + 2 * var(--wa-space-m));
 }
+
+wa-tag {
+  text-indent: 0;
+}
