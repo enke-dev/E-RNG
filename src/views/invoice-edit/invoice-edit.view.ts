@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import '@awesome.me/webawesome/dist/components/card/card.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
+import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
@@ -586,12 +587,14 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
               >
                 ⠿
               </button>
-              <wa-input
+              <wa-textarea
                 label="Beschreibung"
+                rows="2"
+                resize="auto"
                 ?disabled="${locked}"
                 .value="${p.description}"
                 @input="${(e: Event) => this.editPosition(i, pos => (pos.description = text(e)))}"
-              ></wa-input>
+              ></wa-textarea>
               <wa-input
                 label="Menge"
                 placeholder="1"
@@ -628,18 +631,23 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 <wa-button
                   size="m"
                   appearance="outlined"
+                  title="Als Vorlage speichern"
+                  aria-label="Als Vorlage speichern"
                   @click="${() => void this.saveAsTemplate(p)}"
-                  >Als Vorlage</wa-button
                 >
+                  <wa-icon name="save"></wa-icon>
+                </wa-button>
                 <wa-button
                   size="m"
                   appearance="outlined"
                   variant="danger"
+                  title="Position entfernen"
                   aria-label="Position entfernen"
                   ?disabled="${locked || draft.positions.length === 1}"
                   @click="${() => this.edit(d => d.positions.splice(i, 1))}"
-                  >Entfernen</wa-button
                 >
+                  <wa-icon name="trash"></wa-icon>
+                </wa-button>
               </wa-button-group>
             </div>
           `
@@ -1054,7 +1062,13 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         <wa-tag>${stored ? (stored.number ?? 'Entwurf') : 'Neue Rechnung'}</wa-tag>
         <nav>
           <wa-button-group label="Rechnung">
-            ${stored && locked ? html`<wa-button appearance="outlined" @click="${this.duplicate}">Duplizieren</wa-button>` : nothing}
+            ${
+              stored && locked
+                ? html`<wa-button appearance="outlined" @click="${this.duplicate}">
+                    Duplizieren
+                  </wa-button>`
+                : nothing
+            }
             ${
               stored && !locked
                 ? html`
@@ -1111,7 +1125,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
           <wa-button appearance="outlined" @click="${() => (this.newCustomer = undefined)}">
             Abbrechen
           </wa-button>
-          <wa-button variant="brand" @click="${this.saveNewCustomer}">Speichern</wa-button>
+          <wa-button variant="brand" @click="${this.saveNewCustomer}"> Speichern </wa-button>
         </wa-button-group>
       </wa-dialog>
     `;

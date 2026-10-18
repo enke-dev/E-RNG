@@ -1,10 +1,12 @@
 import 'element-internals-polyfill';
 import 'urlpattern-polyfill';
 
+import { registerIcons } from './common/utils/icon.utils.js';
 import { initLog } from './common/utils/log.utils.js';
 import { errors, followSystemScheme } from './state.js';
 
 followSystemScheme();
+registerIcons();
 
 /**
  * First set up logging, then load the app

@@ -80,6 +80,14 @@ scripts/                   sidecars.ts and its pins (sidecars.json), icons.ts
 src-tauri/test-fixtures/   a font file for the layout tests (Open Sans, OFL)
 ```
 
+## Icons
+
+`<wa-icon name="save">` resolves against the library registered in `src/common/utils/icon.utils.ts`: a few Font Awesome
+Free SVGs shipped with the app (the Web Awesome default library would load them from a CDN, which an offline app
+cannot). Names say what an icon means (`save`, `trash`), add one by importing its svg there. Buttons with a label have no
+icon; only the actions inside a list (remove a position, save it as a template) are icon only, with a `title` and an
+`aria-label`.
+
 ## Own layouts
 
 There is one built-in layout (`render/layouts/standard.typ`). A user layout is that layout plus stationery (PDF),

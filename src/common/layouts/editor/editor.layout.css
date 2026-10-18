@@ -13,14 +13,14 @@
   display: flex;
   flex-direction: column;
   gap: var(--wa-space-m);
-  min-width: 0;
+  min-width: 25rem;
   padding: var(--wa-space-m) var(--wa-space-l);
 }
 
 [name='preview'] {
   /* the page needs room to be readable: a share of the pane, between 20 and 36rem */
-  flex: 1 1 clamp(20rem, 38%, 36rem);
-  max-width: 36rem;
+  flex: 1 1 clamp(20rem, 38%, 40rem);
+  max-width: 40rem;
   display: flex;
   align-items: start;
   justify-content: center;
@@ -28,7 +28,7 @@
   background: var(--wa-color-surface-lowered);
 }
 
-@container (max-width: 52rem) {
+@container (max-width: 65rem) {
   [name='preview'] {
     display: none;
   }

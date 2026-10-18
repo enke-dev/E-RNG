@@ -78,7 +78,7 @@ wa-dialog::part(dialog) {
   break-inside: auto;
 
   /* side by side, the header row names the columns: the labels of the fields would repeat it */
-  &:not(.stacked) :is(wa-input, wa-select)::part(form-control-label) {
+  &:not(.stacked) :is(wa-input, wa-textarea, wa-select)::part(form-control-label) {
     display: none;
   }
 
@@ -130,7 +130,7 @@ wa-dialog::part(dialog) {
   grid-template-columns: subgrid;
   gap: var(--wa-space-xs);
   grid-column: 1 / -1;
-  align-items: center;
+  align-items: start;
   background: var(--wa-color-surface-default);
   border-radius: var(--wa-border-radius-s);
 
@@ -164,6 +164,7 @@ wa-dialog::part(dialog) {
 .handle {
   all: unset;
   display: inline-flex;
+  align-self: center;
   align-items: center;
   justify-content: center;
   height: var(--wa-form-control-height);

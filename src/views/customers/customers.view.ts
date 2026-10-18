@@ -187,7 +187,7 @@ export class CustomersView extends ErngElement {
             <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}">
               Abbrechen
             </wa-button>
-            <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
+            <wa-button variant="brand" @click="${this.save}"> Speichern </wa-button>
           </wa-button-group>
         </wa-dialog>
       </erng-cards>

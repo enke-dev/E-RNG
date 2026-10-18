@@ -18,3 +18,5 @@ The app ships these programs next to its binary and runs them as separate proces
   files stay in `sidecars/jre/legal`.
 - [Open Sans](https://github.com/googlefonts/opensans), SIL Open Font License 1.1, is used as a font file in the
   tests only (`src-tauri/test-fixtures/`, licence next to it), it is not part of the app.
+- The two icons (save, remove) are [Font Awesome Free](https://fontawesome.com) solid icons (CC BY 4.0), bundled with the
+  app (`src/common/utils/icon.utils.ts`).
