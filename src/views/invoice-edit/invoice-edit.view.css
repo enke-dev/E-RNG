@@ -1,4 +1,7 @@
 :host {
+  /* the sticky footer covers the bottom of the pane: the preview has to leave this much room */
+  --footer-height: calc(var(--wa-form-control-height) + 2 * var(--wa-space-m) + var(--wa-border-width-s));
+
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -32,8 +35,14 @@
 }
 
 #sheet {
+  /* room for a pager under the page, only when there is one */
+  --pager: 0rem;
+
   position: sticky;
-  top: var(--wa-space-m);
+  top: 0;
+  box-sizing: border-box;
+  /* never taller than the visible part of the pane that scrolls: page and pager stay in reach */
+  max-height: calc(100cqb - var(--footer-height));
   align-self: start;
   display: flex;
   flex-direction: column;
@@ -41,6 +50,10 @@
   align-items: center;
   width: 100%;
   padding-block: var(--wa-space-m);
+
+  &.paged {
+    --pager: 3rem;
+  }
 }
 
 #page {
@@ -49,7 +62,8 @@
   justify-content: center;
   aspect-ratio: 210 / 297;
   min-width: 5rem;
-  width: 100%;
+  /* as wide as the column allows and as tall as the pane allows (A4, portrait) */
+  width: min(100%, calc((100cqb - var(--footer-height) - 2 * var(--wa-space-m) - var(--pager)) * 210 / 297));
   background: #fff;
   box-shadow: var(--wa-shadow-m);
 
@@ -245,6 +259,8 @@ wa-dialog::part(dialog) {
 footer {
   position: sticky;
   bottom: 0;
+  box-sizing: border-box;
+  min-height: var(--footer-height);
 
   display: flex;
   gap: var(--wa-space-s);

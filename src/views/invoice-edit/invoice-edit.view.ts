@@ -472,7 +472,7 @@ export class InvoiceEditView extends ErngElement {
         ? problems.map(p => p.message).join(', ')
         : 'Die Vorschau wird erzeugt …';
     return html`
-      <div id="sheet">
+      <div id="sheet" class="${pages.length > 1 ? 'paged' : ''}">
         <div id="page">
           ${
             page

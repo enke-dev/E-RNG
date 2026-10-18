@@ -12,6 +12,11 @@ article {
   overflow-y: auto;
 }
 
+/* the editor sizes its preview by the height of this pane (`cqb`), not by guessing the window chrome */
+article {
+  container-type: size;
+}
+
 aside {
   display: flex;
   flex-direction: column;
