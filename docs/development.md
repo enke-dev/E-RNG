@@ -112,7 +112,11 @@ The settings show the same 30-position sample invoice in every layout, also the 
 Pushing to `main` runs `check`, then bumps the version (conventional commits, `release-it`), builds the app
 on macOS into a draft release, commits the bump, publishes the release and writes `latest.json` for the
 in-app updater to the `gh-e-rng-latest` branch. Needs the repo secret `TAURI_SIGNING_PRIVATE_KEY`.
-Not signed or notarized yet.
+Signed ad hoc (`bundle.macOS.signingIdentity` is `-`), not notarized: no Apple Developer ID. A downloaded copy shows
+Gatekeeper's "cannot verify" dialog, and System Settings → Privacy & Security offers "Open Anyway". A bundle whose
+signature does not verify would say "damaged" instead, with no way around it: check a build with
+`codesign --verify --deep --strict E-RNG.app`. Mind that running a release build uses the real data folder, only
+`tauri dev` has its own.
 
 ## Licences
 

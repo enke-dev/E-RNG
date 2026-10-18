@@ -40,6 +40,9 @@
     "createUpdaterArtifacts": true,
     "resources": {
       "sidecars/": "sidecars/"
+    },
+    "macOS": {
+      "signingIdentity": "-"
     }
   },
   "plugins": {
