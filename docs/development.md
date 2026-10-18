@@ -64,7 +64,7 @@ GOLDEN_OUT=/some/dir cargo test                                      # writes th
 
 ```
 src/                       frontend
-  views/                   invoices, invoice-edit, customers, settings (+ root shell and routes)
+  views/                   invoices (list + detail), invoice-edit, customers, templates, settings (+ root shell and routes)
   common/                  components, api.utils.ts (typed commands), format and form helpers, mock backend
 src-tauri/src/
   invoice/                 profile choice, rule checks, German finding texts, CII writer, golden test set

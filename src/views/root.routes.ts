@@ -1,6 +1,9 @@
 import type { RouteConfig } from '@lit-labs/router';
 import { html } from 'lit';
 
+/** Both address forms show the same element: it stays and only its selection changes */
+const invoices = (selected = '') => html`<erng-invoices selected="${selected}"></erng-invoices>`;
+
 /** Views are loaded on first visit, the shell stays small */
 export const routes: RouteConfig[] = [
   {
@@ -9,15 +12,15 @@ export const routes: RouteConfig[] = [
       await import('./invoices/invoices.view.js');
       return true;
     },
-    render: () => html`<erng-invoices></erng-invoices>`,
+    render: () => invoices(),
   },
   {
     path: '/invoices/:id',
     enter: async () => {
-      await import('./invoice-edit/invoice-edit.view.js');
+      await import('./invoices/invoices.view.js');
       return true;
     },
-    render: ({ id }) => html`<erng-invoice-edit invoice-id="${id ?? 'new'}"></erng-invoice-edit>`,
+    render: ({ id }) => invoices(id),
   },
   {
     path: '/customers',
@@ -26,6 +29,14 @@ export const routes: RouteConfig[] = [
       return true;
     },
     render: () => html`<erng-customers></erng-customers>`,
+  },
+  {
+    path: '/templates',
+    enter: async () => {
+      await import('./templates/templates.view.js');
+      return true;
+    },
+    render: () => html`<erng-templates></erng-templates>`,
   },
   {
     path: '/settings',

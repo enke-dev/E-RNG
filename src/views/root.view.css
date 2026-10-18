@@ -11,13 +11,18 @@
 
 header {
   display: flex;
-  align-items: center;
+  align-items: start;
   justify-content: space-between;
   padding: var(--wa-space-m) var(--wa-space-l);
   border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
 }
 
-header .end {
+#start {
+  display: flex;
+  flex-direction: column;
+}
+
+#end {
   display: flex;
   align-items: center;
   gap: var(--wa-space-s);
@@ -28,6 +33,12 @@ h1 {
   font-size: var(--wa-font-size-l);
 }
 
+h2 {
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+  font-weight: var(--wa-font-weight-normal);
+}
+
 nav {
   display: flex;
   gap: var(--wa-space-m);
@@ -36,8 +47,9 @@ nav {
   & a {
     color: var(--wa-color-text-quiet);
     text-decoration: none;
-    padding-block: var(--wa-space-2xs);
-    border-bottom: 2px solid transparent;
+
+    padding-block: var(--wa-space-2xs) var(--wa-space-xs);
+    border-bottom: var(--wa-border-width-l) solid transparent;
 
     &[aria-current] {
       color: var(--wa-color-text-normal);
@@ -47,7 +59,6 @@ nav {
 }
 
 main {
-  padding: var(--wa-space-l);
   overflow-y: auto;
 }
 

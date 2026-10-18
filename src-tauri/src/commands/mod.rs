@@ -12,3 +12,5 @@ pub mod invoices_command;
 pub mod produce_invoice_command;
 #[path = "settings.command.rs"]
 pub mod settings_command;
+#[path = "templates.command.rs"]
+pub mod templates_command;

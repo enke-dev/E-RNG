@@ -5,7 +5,13 @@
  */
 import { mockIPC } from '@tauri-apps/api/mocks';
 
-import type { Customer, InvoiceDraft, Settings, StoredInvoice } from './api.utils.js';
+import type {
+  Customer,
+  InvoiceDraft,
+  PositionTemplate,
+  Settings,
+  StoredInvoice,
+} from './api.utils.js';
 import { today } from './form.utils.js';
 
 const address = {
@@ -53,6 +59,12 @@ const customers: Customer[] = [
     email: 'rechnung@stadt.example',
     buyer_reference: '991-01234-56',
   },
+];
+
+const templates: PositionTemplate[] = [
+  { id: 1, description: 'Beratung', quantity: '1', unit: 'HUR', price: '95,00' },
+  { id: 2, description: 'Reisekosten', quantity: null, unit: null, price: '42,50' },
+  { id: 3, description: 'Wartungsvertrag', quantity: '12', unit: 'MON', price: '49,00' },
 ];
 
 const draftOf = (customer: Customer): InvoiceDraft => ({
@@ -157,6 +169,23 @@ export function installMocks() {
             customer.id === null ? -1 : customers.findIndex(c => c.id === customer.id)
           );
         }
+        case 'templates_list':
+          return templates;
+        case 'template_save': {
+          const template = args['template'] as PositionTemplate;
+          if (template.id === null) {
+            templates.push({ ...template, id: templates.length + 1 });
+          } else {
+            templates[templates.findIndex(t => t.id === template.id)] = template;
+          }
+          return template.id === null ? templates.at(-1) : template;
+        }
+        case 'template_delete':
+          templates.splice(
+            templates.findIndex(t => t.id === args['id']),
+            1
+          );
+          return null;
         case 'invoices_list':
           return invoices.map(i => ({
             id: i.id,

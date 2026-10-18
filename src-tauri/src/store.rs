@@ -9,11 +9,13 @@ use std::sync::Mutex;
 use anyhow::{anyhow, bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use crate::model::{Customer, InvoiceDraft, ListEntry, Settings, Status, StoredInvoice};
+use crate::model::{
+    Customer, InvoiceDraft, ListEntry, PositionTemplate, Settings, Status, StoredInvoice,
+};
 
 pub struct Store(Mutex<Connection>);
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -34,6 +36,12 @@ fn migrate(conn: &Connection) -> Result<()> {
                  updated_at TEXT NOT NULL
              );
              PRAGMA user_version = 1;",
+        )?;
+    }
+    if version < 2 {
+        conn.execute_batch(
+            "CREATE TABLE templates (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
+             PRAGMA user_version = 2;",
         )?;
     }
     Ok(())
@@ -155,6 +163,59 @@ impl Store {
     pub fn delete_customer(&self, id: i64) -> Result<()> {
         self.conn()
             .execute("DELETE FROM customers WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    // position templates
+
+    pub fn templates(&self) -> Result<Vec<PositionTemplate>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare("SELECT id, json FROM templates")?;
+        let rows =
+            statement.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut templates = rows
+            .map(|row| {
+                let (id, json) = row?;
+                let mut template: PositionTemplate = serde_json::from_str(&json)?;
+                template.id = Some(id);
+                Ok(template)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        templates.sort_by_key(|t| t.position.description.to_lowercase());
+        Ok(templates)
+    }
+
+    pub fn save_template(&self, template: &PositionTemplate) -> Result<PositionTemplate> {
+        let conn = self.conn();
+        let json = serde_json::to_string(&PositionTemplate {
+            id: None,
+            ..template.clone()
+        })?;
+        let id = match template.id {
+            Some(id) => {
+                let changed = conn.execute(
+                    "UPDATE templates SET json = ?1 WHERE id = ?2",
+                    params![json, id],
+                )?;
+                if changed == 0 {
+                    bail!("unknown template");
+                }
+                id
+            }
+            None => {
+                conn.execute("INSERT INTO templates (json) VALUES (?1)", [json])?;
+                conn.last_insert_rowid()
+            }
+        };
+        Ok(PositionTemplate {
+            id: Some(id),
+            ..template.clone()
+        })
+    }
+
+    pub fn delete_template(&self, id: i64) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM templates WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -301,6 +362,7 @@ impl Store {
 mod tests {
     use super::*;
     use crate::draft::fixtures::{customer, draft, settings};
+    use crate::model::Position;
 
     #[test]
     fn settings_default_until_saved() {
@@ -356,6 +418,73 @@ mod tests {
                 ..customer()
             })
             .is_err());
+    }
+
+    #[test]
+    fn templates_are_created_updated_sorted_and_deleted() {
+        let store = Store::in_memory().unwrap();
+        let template = |description: &str| PositionTemplate {
+            id: None,
+            position: Position {
+                description: description.into(),
+                quantity: Some("2".into()),
+                unit: Some("HUR".into()),
+                price: "95,00".into(),
+            },
+        };
+        let b = store.save_template(&template("Beratung")).unwrap();
+        let a = store.save_template(&template("analyse")).unwrap();
+
+        let names = |store: &Store| {
+            store
+                .templates()
+                .unwrap()
+                .into_iter()
+                .map(|t| t.position.description)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&store), ["analyse", "Beratung"]);
+        // the position travels flat in the JSON, next to the id
+        let json = serde_json::to_value(&b).unwrap();
+        assert_eq!(json["description"], "Beratung");
+        assert_eq!(json["id"], b.id.unwrap());
+
+        store
+            .save_template(&PositionTemplate {
+                position: Position {
+                    description: "Zeitaufwand".into(),
+                    ..b.position.clone()
+                },
+                ..b.clone()
+            })
+            .unwrap();
+        assert_eq!(names(&store), ["analyse", "Zeitaufwand"]);
+
+        store.delete_template(a.id.unwrap()).unwrap();
+        assert_eq!(names(&store), ["Zeitaufwand"]);
+        assert!(store
+            .save_template(&PositionTemplate {
+                id: Some(999),
+                ..template("x")
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn a_version_one_database_gets_the_templates_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
+             CREATE TABLE customers (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
+             CREATE TABLE invoices (id INTEGER PRIMARY KEY, number TEXT UNIQUE, status TEXT NOT NULL,
+                 draft TEXT NOT NULL, total TEXT, exported_at TEXT, updated_at TEXT NOT NULL);
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+
+        let store = Store::init(conn).unwrap();
+
+        assert!(store.templates().unwrap().is_empty());
     }
 
     #[test]

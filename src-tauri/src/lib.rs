@@ -49,6 +49,9 @@ pub fn run() {
             commands::produce_invoice_command::produce_invoice,
             commands::settings_command::settings_get,
             commands::settings_command::settings_save,
+            commands::templates_command::template_delete,
+            commands::templates_command::template_save,
+            commands::templates_command::templates_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

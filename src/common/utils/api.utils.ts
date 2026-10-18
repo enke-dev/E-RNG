@@ -48,6 +48,10 @@ export interface Position {
   price: string;
 }
 
+export interface PositionTemplate extends Position {
+  id: number | null;
+}
+
 export type Profile = 'en16931' | 'xrechnung';
 
 export interface InvoiceDraft {
@@ -157,6 +161,11 @@ export const api = {
   customersList: () => invoke<Customer[]>('customers_list'),
   customerSave: (customer: Customer) => invoke<Customer>('customer_save', { customer }),
   customerDelete: (id: number) => invoke<null>('customer_delete', { id }),
+
+  templatesList: () => invoke<PositionTemplate[]>('templates_list'),
+  templateSave: (template: PositionTemplate) =>
+    invoke<PositionTemplate>('template_save', { template }),
+  templateDelete: (id: number) => invoke<null>('template_delete', { id }),
 
   invoicesList: () => invoke<ListEntry[]>('invoices_list'),
   invoiceGet: (id: number) => invoke<StoredInvoice>('invoice_get', { id }),

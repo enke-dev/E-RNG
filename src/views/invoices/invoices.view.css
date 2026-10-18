@@ -1,34 +1,83 @@
+/* list left, detail right; both panes scroll on their own */
 :host {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
+aside,
+article {
+  min-height: 0;
+  overflow-y: auto;
 }
 
-th,
-td {
-  padding: var(--wa-space-s) var(--wa-space-m);
-  text-align: left;
-  border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
-}
+aside {
+  display: flex;
+  flex-direction: column;
+  border-right: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
 
-th {
-  font-weight: var(--wa-font-weight-semibold);
-  color: var(--wa-color-text-quiet);
-}
+  erng-filter-bar {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: var(--wa-space-m) var(--wa-space-l);
+    background: var(--wa-color-surface-default);
+    border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
 
-td.amount,
-th.amount {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
+    wa-select,
+    wa-button {
+      width: 100%;
+    }
+  }
 
-tbody tr {
-  cursor: pointer;
-}
+  ul {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
 
-tbody tr:hover {
-  background: var(--wa-color-surface-lowered);
+    li {
+      padding: 0;
+    }
+  }
+
+  .item {
+    all: unset;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--wa-space-3xs) var(--wa-space-s);
+    box-sizing: border-box;
+    width: 100%;
+    padding: var(--wa-space-s) var(--wa-space-l);
+    text-align: left;
+    cursor: default;
+    border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+
+    &:is(button) {
+      cursor: pointer;
+
+      &:not([aria-current='true']):hover {
+        background: var(--wa-color-surface-lowered);
+      }
+    }
+
+    &[aria-current='true'] {
+      /* background: var(--wa-color-brand-fill-quiet); */
+      background: var(--wa-color-brand-fill-normal);
+      color: var(--wa-color-text-on-brand-fill);
+    }
+
+    & .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    & .amount {
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+  }
 }

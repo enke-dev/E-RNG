@@ -9,10 +9,26 @@ export function money(amount: string | null | undefined): string {
   return `${sign}${grouped},${frac.padEnd(2, '0')} €`;
 }
 
-/** `2026-10-17` → `17.10.2026` */
-export function date(iso: string): string {
-  const [year, month, day] = iso.split('-');
-  return year && month && day ? `${day}.${month}.${year}` : iso;
+/**
+ * Without time, only the date is shown
+ * `2026-10-17` → `17.10.2026`
+ * `2026-10-17 15:32:09` → `17.10.2026`
+ * `2026-10-17T15:32:09.765Z` → `17.10.2026`
+ *
+ * With time, the date and time are shown as `DD.MM.YYYY HH:MM`
+ * `2026-10-17 15:32:09` → `17.10.2026 um 15:32`
+ * `2026-10-17T15:32:09.765Z` → `17.10.2026 um 15:32`
+ */
+export function formatDate(iso: string, withTime = false): string {
+  const [datePart = '', timePart = ''] = iso.split(/[\sT]/);
+  const [year, month, day] = datePart.split('-');
+  const date = year && month && day ? `${day}.${month}.${year}` : datePart;
+  if (!withTime) {
+    return date;
+  }
+
+  const [hours = '00', minutes = '00'] = timePart.split(':');
+  return `${date} um ${hours}:${minutes}`;
 }
 
 export const UNITS = [

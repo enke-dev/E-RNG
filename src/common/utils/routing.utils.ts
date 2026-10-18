@@ -8,6 +8,12 @@ export function registerRouter(host: ReactiveControllerHost & HTMLElement, route
   return new Router(host, routes);
 }
 
+export function redirect(path: string) {
+  history.replaceState({}, '', path);
+  currentRoute.set(path);
+  globalThis.dispatchEvent(new PopStateEvent('popstate'));
+}
+
 export function goto(path: string) {
   history.pushState({}, '', path);
   currentRoute.set(path);

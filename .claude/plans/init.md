@@ -8,15 +8,16 @@ State on 2026-10-17: phases 1-5 are done (spike, model and XML, Typst template, 
 a polish round and the app icon. The first push (`chore: init`) ran the whole release pipeline green and
 published **v0.0.1**: draft published, tag `v0.0.1`, release commit `chore: release 0.0.1` on `main`,
 `gh-e-rng-latest` created with a valid `latest.json`, assets `E-Rng_0.0.1_aarch64.dmg` (116 MB) and the
-signed updater archive (`.app.tar.gz` + `.sig`). The repo is public. Work done after v0.0.1 (README, release
-hook fix, icon) is committed locally and ships with the next release. 48 Rust tests (a handful of them run
+signed updater archive (`.app.tar.gz` + `.sig`). The repo is public. The icon commit then released **v0.1.0**
+(minor: a `feat` commit; the first release with a changelog entry, the run took 5 minutes with the sidecar
+cache). Work after that (list and detail, templates, sortable positions) is committed and ships with the next release. 48 Rust tests (a handful of them run
 the real tools and are ignored by default, see `docs/development.md`), no frontend tests. Details per phase below,
 this list is the index of what is still open.
 
 **Release and CD**
 - [x] First real `release.yml` run verified (see above); the release hook now only edits the version line of `tauri.conf.json` (it used to reformat the file with `jq`)
-- [ ] Updater end to end: install v0.0.1 from the dmg, cut a second release (any `feat`/`fix`), see the in-app update appear, install and relaunch. The manifest points at `api.github.com/.../releases/assets/<id>` URLs, which is what `tauri-action` writes: check that the updater downloads from them
-- [ ] The changelog only lists `feat`, `fix`, `perf` and `revert` commits (angular preset): `chore` and `docs` stay out of it, v0.0.1 has no entries
+- [ ] Updater end to end: install v0.0.1 from its dmg (v0.1.0 is already published as the update), see the in-app update appear, install and relaunch. The manifest points at `api.github.com/.../releases/assets/<id>` URLs, which is what `tauri-action` writes: check that the updater downloads from them
+- [ ] The changelog only lists `feat`, `fix`, `perf` and `revert` commits (angular preset): `chore` and `docs` stay out of it. It now shows the `## 0.0.1` heading twice (release-it writes the header again): find the cause or tidy by hand
 - [ ] Code signing and notarization when the app goes to anyone else, including the nested JRE and Typst binaries
 
 **Validation and safety**
@@ -32,8 +33,9 @@ this list is the index of what is still open.
 - [ ] Customer-specific payment terms, mark as paid, dunning
 
 **UI polish**
-- [ ] Invoice list: search, filter, sorting, paid status
-- [ ] Reorder positions
+- [ ] Invoice list: paid status, more filters (year, customer) and sort options (search and a status filter exist)
+- [ ] Position templates: use counts or favourites, templates with several lines
+- [ ] Unsaved edits are saved as a draft when another invoice is opened, but not when the window closes: save on quit
 - [ ] A readable maximum width for single-line inputs on very wide windows
 - [ ] Frontend tests (flows were only checked by hand in the browser mock)
 - [ ] Some rule texts may read oddly (e.g. `BR-CO-26` when only a tax number is set): collect and reword
@@ -198,13 +200,29 @@ Decisions (from the owner): one global tax rate (default 19 %, no 0 % / Kleinunt
 - [x] Draft → invoice mapping in one place (`draft.rs`): positions → lines via `line_from_unit_price`, seller/customer → parties, SEPA credit transfer, due date from the payment days, XRechnung business process; bad input is reported per field (`InputProblem`), rule violations as findings
 - [x] Numbers: `<prefix><year>-<seq>`, e.g. `RE-2026-001`, assigned only when an invoice is exported (cancelled or invalid attempts never use one), unique in the database
 - [x] Export flow: `produce_invoice(id)` (work dir + validated files) → UI shows the report → save dialogs → `export_invoice` copies the files, **then** finalizes the invoice (number, frozen settings, locked); a failed finalize deletes the copies; re-exporting a locked invoice reuses its number and frozen settings
-- [x] Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `invoice_get/blank/save/duplicate/delete`, `check_invoice` (live totals, input problems and rule findings), `produce_invoice`, `export_invoice`, `discard_work_dir`
-- [x] UI (German, Web Awesome): invoice list with duplicate, invoice editor (customer select + inline new customer, dates, XRechnung switch with Leitweg-ID, positions, note, live totals, problems/findings, export dialog with report and file choice), customers (cards + dialog), settings (company, bank, tax rate, payment days, number prefix, footer, logo)
+- [x] Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `templates_list`, `template_save/delete`, `invoice_get/blank/save/duplicate/delete`, `check_invoice` (live totals, input problems and rule findings), `produce_invoice`, `export_invoice`, `discard_work_dir`
+- [x] UI (German, Web Awesome): invoices as list and detail (see the next round), invoice editor (customer select + inline new customer, dates, XRechnung switch with Leitweg-ID, positions, note, live totals, problems/findings, export dialog with report and file choice), customers (cards + dialog), settings (company, bank, tax rate, payment days, number prefix, footer, logo)
 - [x] Browser dev mode: `bun run vite dev` without Tauri installs a small mock backend (`common/utils/mock.utils.ts`, floating point totals, no rules) so the UI can be looked at; used to check list, editor, export dialog, lock, settings, customers
 - [x] Auto-update: keypair generated (`~/.tauri/e-rng.key`, empty password, pubkey and `enke-dev/e-rng` endpoint in `tauri.conf.json`), updater component in the header (checks silently on start, a failed check only goes to the log), `publish-manifest` job created `gh-e-rng-latest`; secret `TAURI_SIGNING_PRIVATE_KEY` set in the repo (GitHub cannot store empty secrets, so no password variable is passed)
 - [x] The repo is public, so the manifest needs no authentication
 - [x] App icon from the Icon Composer export (see the index)
 - [ ] Updater end to end and code signing / notarization: see the index at the top
+
+List and detail round (2026-10-18):
+- [x] Invoices are one view with a small list on the left and the selected invoice on the right (`/` and `/invoices/:id` render the same element, only its selection changes). The bare address redirects to the newest invoice (`redirect()` in `routing.utils.ts`), so a reload keeps the selection; `/invoices/new` shows a blank one; after a first save the new invoice is highlighted in the list; the list reloads on every `invoice-changed` event of the editor (save, export, duplicate, delete)
+- [x] Shared `erng-filter-bar` (search field, slots for filters and actions): it lays itself out by the width of its container (container query, one column below 40 rem, one row above), so the same component is the sticky header of the narrow invoice list and the wide header of the customer and template cards
+- [x] Position templates: a library of saved positions (description, quantity, unit, price) with cards and a dialog like the customers (page `Vorlagen`, SQLite table `templates`, schema version 2 with a migration test); the editor adds a position from a template ("Aus Vorlage …", searchable) and saves any position as one ("Als Vorlage")
+- [x] Sortable positions: a drag handle with pointer events (`reorder.utils.ts`: the row follows the pointer, the other rows slide apart to open the gap where it would land with a dashed `.drop-slot` in it, the new index is applied on release; unequal row heights work) and the arrow keys on the focused handle, focus follows the moved row. Pointer events instead of the HTML5 drag and drop API, which is unreliable inside webviews; checked with real mouse events in headless Chrome against the browser mock
+- [x] Opening another invoice while a draft has unsaved edits saves the draft first
+- [x] Position rows stack by the width of the detail pane (container query); the header and the rows share the columns through `subgrid`, so the labels sit over the fields
+
+Second round (2026-10-18):
+- [x] A new invoice is not in the list until it is saved as a draft (an earlier version showed a live "Entwurf" entry, removed again): while an unsaved `/invoices/new` is open the "Neue Rechnung" button is disabled, saving lists it, highlights it and enables the button; opening another invoice with unsaved edits saves them as a draft first. Messages of the editor ("Entwurf gespeichert", "gesperrt") are cleared when another invoice opens, so they cannot show up on a locked one
+- [x] Buttons: never plain. Primary actions are `variant="brand"`, everything else `appearance="outlined"` (danger ones `variant="danger" appearance="outlined"`), related actions sit in a `wa-button-group` (position row actions, add position / from template, invoice header actions, save pair, dialog footers: cancel + save). The drag handle is an outlined `wa-button` now. `wa-button-group` only takes `wa-button`, no inputs
+- [x] The shared search field has a lens button in the `end` slot of `wa-input` (docs: `start`/`end` slots take an element such as an icon or a button); the lens is an inline SVG, no icon library. Typing filters live, the button and Enter announce the query again. Fixed on the way: the attribute is `with-clear`, the earlier `clearable` did nothing
+- [x] The list pane has a border on its right
+- [x] Deleting an invoice removes it from the list at once and the address goes back to the bare `/`, which redirects to the newest remaining invoice (same logic as on entering); without any left a blank invoice shows
+- [x] No spacing below scrollable areas: `main` has no bottom padding, the panes and views carry their own bottom padding inside the scroll area, so content scrolls to the window frame
 
 Polish round (2026-10-17):
 - [x] Rule findings in German: `invoice/german.rs` maps the 20 rules the form can trigger to German texts that say where to fix the problem; the English original stays as `hint`; a test breaks the form field by field and fails when a rule fires without a German text (also flags new rules after a crate upgrade). Rules the form cannot trigger, and Mustang's own report messages, stay English
@@ -212,7 +230,7 @@ Polish round (2026-10-17):
 - [x] No scheme select, the app follows the system; the store plugin was removed with it
 
 Not in the first UI version:
-- Invoice list: no search, filter, sorting or payment status; editing positions has no reordering
+- Invoice list: no payment status, no year or customer filter
 - Other payment means (direct debit, card), tax representative, payee, attachments (BG-24), discounts and surcharges, credit notes from the UI (the model supports them), several VAT rates, reverse charge
 - A "mark as paid" / dunning workflow, a customer's own payment terms
 - No unit tests for the frontend yet, UI flows were checked by hand in the browser mock
@@ -266,10 +284,10 @@ Adapted from an existing Tauri + Lit app (reference layout only, no code shared)
 ### UI stack
 
 - **Lit 3** + decorators (`@customElement`, `@property`, `@state`, `@eventOptions({ passive: true })`)
-- **Web Awesome** (`@awesome.me/webawesome`, pin exact): import each component individually (`.../components/button/button.js`), never the bundle; used: `wa-button`, `wa-input`, `wa-textarea`, `wa-select`/`wa-option`, `wa-checkbox`, `wa-switch`, `wa-card`, `wa-dialog`, `wa-callout`, `wa-tag`, `wa-spinner` (no `wa-icon`: the default icon library would load from the network)
+- **Web Awesome** (`@awesome.me/webawesome`, pin exact): buttons are brand or outlined, never plain, related ones in a `wa-button-group`; import each component individually (`.../components/button/button.js`), never the bundle; used: `wa-button`, `wa-input`, `wa-textarea`, `wa-select`/`wa-option`, `wa-checkbox`, `wa-switch`, `wa-button-group`, `wa-card`, `wa-dialog`, `wa-callout`, `wa-tag`, `wa-spinner` (no `wa-icon`: the default icon library would load from the network)
 - **Theming:** global WA stylesheet imported in `src/styles/styles.css`; dark mode via `wa-dark` class on `<html>`, always following the system (no setting)
 - **State:** `@lit-labs/signals` (`signal`, `computed`) in `src/state.ts`; base element = `SignalWatcher(LitElement)` so components re-render on signal reads; persistent data lives in SQLite on the Rust side, the webview keeps no storage
-- **Routing:** `@lit-labs/router` (`RouteConfig[]`) in one `root.routes.ts`, views are imported lazily on first visit, `registerRouter(this, routes)` in the root view, `urlpattern-polyfill` for WebKit; routes: `/`, `/invoices/:id` (`new` or an id), `/customers`, `/settings`
+- **Routing:** `@lit-labs/router` (`RouteConfig[]`) in one `root.routes.ts` (`/`, `/invoices/:id`, `/customers`, `/templates`, `/settings`), views are imported lazily on first visit, `registerRouter(this, routes)` in the root view, `urlpattern-polyfill` for WebKit; `/invoices/:id` is `new` or an id
 - **Base element:** one project base class (`ErngElement`) = `SignalWatcher(LitElement)` + base CSS (`:host { display: contents }`); every component extends it and sets `static styles: CSSResultGroup = [ErngElement.styles, styles]`
 - **CSS:** one `.css` file per component, imported as a Lit `CSSResult` via `vite-plugin-lit-css` (`exclude: src/styles/**`); CSS nesting allowed; custom `litCssWatch` plugin for HMR of component CSS
 - **HMR:** `vite-plugin-web-components-hmr` with `presets.lit`
@@ -284,11 +302,11 @@ src/
 ├── styles/                               styles.css, loading.css (boot spinner)
 ├── assets/                               icon-default.{icon,png,svg,af}
 ├── common/
-│   ├── components/<name>/                address-fields, customer-form, updater (<name>.component.{ts,css})
-│   └── utils/                            api (typed commands + shapes), base (ErngElement), format, form, log, routing, mock
+│   ├── components/<name>/                address-fields, customer-form, filter-bar, updater (<name>.component.{ts,css})
+│   └── utils/                            api (typed commands + shapes), base (ErngElement), format, form, log, routing, reorder, mock
 └── views/
     ├── root.view.{ts,css}, root.routes.ts
-    └── <view>/<view>.view.{ts,css}       invoices, invoice-edit, customers, settings
+    └── <view>/<view>.view.{ts,css}       invoices (list + detail), invoice-edit, customers, templates, settings
 ```
 
 - Naming: kebab-case files with role suffix (`.component`, `.view`, `.routes`, `.utils`); custom element prefix `erng-`; `declare global { interface HTMLElementTagNameMap }` per element
@@ -322,7 +340,7 @@ src-tauri/
 ```
 
 - Plugins registered in `lib.rs`: `fs`, `dialog`, `log`, `opener`, `os`, `process`, `updater` (desktop only, `cfg(not(any(android, ios)))`)
-- Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `invoice_get/blank/save/duplicate/delete`, `check_invoice`, `produce_invoice`, `export_invoice`, `discard_work_dir`
+- Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `templates_list`, `template_save/delete`, `invoice_get/blank/save/duplicate/delete`, `check_invoice`, `produce_invoice`, `export_invoice`, `discard_work_dir`
 - Window: `titleBarStyle: "Overlay"`, `hiddenTitle`, `transparent`, `macOSPrivateApi`; drag region span rendered on macOS only
 - Permissions: least privilege; no `http`, no `shell` plugin (the app is offline, tools are spawned from Rust)
 - `tauri.conf.json`: `beforeDevCommand`/`beforeBuildCommand` run `generate` + vite; `devUrl` fixed port 1420 + `strictPort`; `frontendDist: ../dist`; `bundle.createUpdaterArtifacts: true`; `bundle.resources: {"sidecars/": "sidecars/"}`; `plugins.updater` with `active`, `pubkey`, `endpoints` (manifest on `gh-e-rng-latest`)

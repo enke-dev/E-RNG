@@ -1,5 +1,6 @@
 :host {
   display: block;
+  padding: var(--wa-space-m) var(--wa-space-l);
 }
 
 .customers {

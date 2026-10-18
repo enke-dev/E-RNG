@@ -97,6 +97,14 @@ pub struct Position {
     pub price: String,
 }
 
+/// A saved position the invoice form can start from, edited like a customer.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PositionTemplate {
+    pub id: Option<i64>,
+    #[serde(flatten)]
+    pub position: Position,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvoiceDraft {
     /// A copy: later edits of the customer do not touch existing invoices

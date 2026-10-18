@@ -1,0 +1,33 @@
+/* the bar reacts to the width it is given, not to the window: stacked in the narrow invoice list,
+   a single row above the wide card views */
+:host {
+  display: block;
+  container-type: inline-size;
+}
+
+section {
+  display: grid;
+  gap: var(--wa-space-s);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+[name='filters'],
+[name='actions'] {
+  display: flex;
+  flex-flow: row wrap;
+  gap: var(--wa-space-s);
+  align-items: end;
+  justify-content: stretch;
+}
+
+@container (min-width: 40rem) {
+  section {
+    grid-template-columns: minmax(14rem, 1fr) auto auto;
+    align-items: end;
+  }
+
+  [name='filters'],
+  [name='actions'] {
+    flex-wrap: nowrap;
+  }
+}

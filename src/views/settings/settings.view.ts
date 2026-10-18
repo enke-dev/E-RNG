@@ -130,12 +130,12 @@ export class SettingsView extends ErngElement {
               @input="${(e: Event) => this.edit(s => (s.footer = nullable(text(e))))}"
             ></wa-textarea>
             <div class="logo">
-              <wa-button @click="${this.chooseLogo}">Logo wählen …</wa-button>
+              <wa-button @click="${this.chooseLogo}" appearance="outlined">Logo wählen …</wa-button>
               ${
                 settings.logo
                   ? html`<span class="muted">${settings.logo.split('/').pop()}</span>
                       <wa-button
-                        appearance="plain"
+                        appearance="outlined"
                         @click="${() => this.edit(s => (s.logo = null))}"
                         >Entfernen</wa-button
                       >`

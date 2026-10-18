@@ -1,3 +1,4 @@
+import '@awesome.me/webawesome/dist/components/badge/badge.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '../common/components/updater/updater.component.js';
@@ -17,6 +18,7 @@ import styles from './root.view.css';
 const NAV = [
   ['/', 'Rechnungen'],
   ['/customers', 'Kunden'],
+  ['/templates', 'Vorlagen'],
   ['/settings', 'Einstellungen'],
 ] as const;
 
@@ -55,14 +57,18 @@ export class RootView extends ErngElement {
       ${when(platform() === 'macos', () => html`<span id="window-decoration" data-tauri-drag-region></span>`)}
 
       <header>
-        <h1>E-Rng</h1>
+        <div id="start">
+          <h1>E-RNG</h1>
+          <h2>ZUGFeRD, Factur-X PDF, XRechnung XML</h2>
+        </div>
         <nav>
           ${NAV.map(
-            ([href, label]) =>
-              html`<a href="${href}" ?aria-current="${isActive(href)}">${label}</a>`
+            ([href, label]) => html`
+              <a href="${href}" ?aria-current="${isActive(href)}">${label}</a>
+            `
           )}
         </nav>
-        <div class="end">
+        <div id="end">
           <erng-updater></erng-updater>
         </div>
       </header>
@@ -72,9 +78,9 @@ export class RootView extends ErngElement {
         () => html`
           <wa-dialog open with-footer without-header label="Something went wrong">
             ${errors.get().join('\n') || 'An unexpected error occurred.'}
-            <wa-button slot="footer" variant="brand" @click="${this.handleErrorClick}"
-              >Reload application</wa-button
-            >
+            <wa-button slot="footer" variant="brand" @click="${this.handleErrorClick}">
+              Reload application
+            </wa-button>
           </wa-dialog>
         `,
         () => html`<main>${this.#router.outlet()}</main>`
