@@ -2,6 +2,7 @@
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
 }
 
 #content {
@@ -154,7 +155,7 @@ wa-dialog::part(dialog) {
 
       & .row-actions {
         grid-column: 2 / -1;
-        justify-self: start;
+        justify-self: end;
       }
     }
   }
@@ -163,6 +164,7 @@ wa-dialog::part(dialog) {
 .position {
   display: grid;
   grid-template-columns: subgrid;
+  gap: var(--wa-space-xs);
   grid-column: 1 / -1;
   align-items: center;
   background: var(--wa-color-surface-default);
@@ -189,6 +191,7 @@ wa-dialog::part(dialog) {
 .drop-slot {
   position: absolute;
   inset-inline: 0;
+  left: calc(var(--wa-form-control-height) + var(--wa-space-xs));
   box-sizing: border-box;
   border: 2px dashed var(--wa-color-brand-border-loud);
   border-radius: var(--wa-border-radius-m);
@@ -256,11 +259,6 @@ footer {
     display: flex;
     gap: var(--wa-space-s);
   }
-}
-
-/* the detail pane can be narrow: stack the position fields by the width of the pane */
-:host {
-  container-type: inline-size;
 }
 
 /* too narrow for form and page side by side: the form wins */

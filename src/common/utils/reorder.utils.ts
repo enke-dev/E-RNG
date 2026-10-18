@@ -4,8 +4,9 @@
  *
  * Call it from `pointerdown` on a drag handle. The dragged row follows the pointer, the other rows
  * slide apart to open the gap where it would land, and a dashed `.drop-slot` marks that gap (the
- * rows' container needs `position: relative`, the styles of both live with the caller). On release
- * `done` gets the new index.
+ * rows' container needs `position: relative`, the styles of both live with the caller). The slot is
+ * the one nearest to the dragged row, with a dead band so a swap needs a deliberate move back, too.
+ * On release `done` gets the new index.
  */
 export function startReorder(
   event: PointerEvent,
@@ -25,10 +26,20 @@ export function startReorder(
   const startY = event.clientY;
   const boxes = rows.map(row => row.getBoundingClientRect());
   const tops = boxes.map(box => box.top);
-  const centers = boxes.map(box => box.top + box.height / 2);
   const draggedHeight = boxes[from]?.height ?? 0;
   const containerTop = container.getBoundingClientRect().top;
   let to = from;
+
+  /** Where the top of the dragged row would be if it landed on index `k`, rows of any height */
+  const slotTop = (k: number) =>
+    k <= from ? (tops[k] ?? 0) : (tops[k] ?? 0) + (boxes[k]?.height ?? 0) - draggedHeight;
+  const slotCenter = (k: number) => slotTop(k) + draggedHeight / 2;
+  /**
+   * A swap only counts when the dragged row is past the middle between two slots by this much, in
+   * either direction. Without it a swap is undone by the slightest move back across the same line,
+   * which feels like one direction needs a real move and the other none.
+   */
+  const margin = Math.min(12, draggedHeight * 0.2);
 
   const slot = document.createElement('div');
   slot.className = 'drop-slot';
@@ -65,11 +76,16 @@ export function startReorder(
   const move = (e: PointerEvent) => {
     const offset = e.clientY - startY;
     dragged.style.transform = `translateY(${offset}px)`;
-    const center = (centers[from] ?? 0) + offset;
-    // the new index is the number of the other rows whose middle lies above the dragged one
-    const next = centers.filter((c, i) => i !== from && c < center).length;
-    if (next !== to) {
-      to = next;
+    const center = slotCenter(from) + offset;
+    const before = to;
+    // one slot at a time, each past the middle between two slots plus the margin
+    while (to < rows.length - 1 && center > (slotCenter(to) + slotCenter(to + 1)) / 2 + margin) {
+      to++;
+    }
+    while (to > 0 && center < (slotCenter(to - 1) + slotCenter(to)) / 2 - margin) {
+      to--;
+    }
+    if (to !== before) {
       arrange();
     }
   };
