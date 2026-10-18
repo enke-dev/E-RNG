@@ -1,4 +1,4 @@
-# E-Rng
+# E-RNG
 
 # [0.1.0](https://github.com/enke-dev/e-rng/compare/v0.0.1...v0.1.0) (2026-10-17)
 

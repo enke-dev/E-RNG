@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/icon.png" alt="" width="72">
+  <img src="docs/icon.png" alt="E-RNG logo" width="72">
 </p>
 
-# E-Rng
+# E-RNG
 
 macOS app for e-invoices: fill in an invoice, get a **ZUGFeRD / Factur-X PDF** (or an **XRechnung**
 XML) that was checked before it can be saved.

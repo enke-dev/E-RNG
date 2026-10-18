@@ -2,7 +2,7 @@
   "git": {
     "commitMessage": "chore: release ${version}",
     "tagName": "v${version}",
-    "tagAnnotation": "E-Rng ${version}",
+    "tagAnnotation": "E-RNG ${version}",
     "push": true,
     "pushArgs": ["--follow-tags"],
     "requireCleanWorkingDir": false,
@@ -27,7 +27,7 @@
     "@release-it/conventional-changelog": {
       "preset": "angular",
       "infile": "CHANGELOG.md",
-      "header": "# E-Rng"
+      "header": "# E-RNG"
     }
   }
 }

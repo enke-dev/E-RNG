@@ -150,7 +150,7 @@ jobs:
           SCCACHE_GHA_ENABLED: "true"
         with:
           tagName: v${{ needs.prepare.outputs.version }}
-          releaseName: "E-Rng v${{ needs.prepare.outputs.version }}"
+          releaseName: "E-RNG v${{ needs.prepare.outputs.version }}"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           prerelease: false
@@ -193,7 +193,7 @@ jobs:
           git commit -m "chore: release ${VERSION}"
           git push origin HEAD:main
           # Move tauri-action's tag onto the release commit.
-          git tag -f "v${VERSION}" -m "E-Rng ${VERSION}"
+          git tag -f "v${VERSION}" -m "E-RNG ${VERSION}"
           git push -f origin "v${VERSION}"
 
       - name: Publish release
