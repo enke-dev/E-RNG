@@ -213,7 +213,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     clearTimeout(this.#timer);
     this.#timer = setTimeout(() => void this.runCheck().catch(() => undefined), 300);
     clearTimeout(this.#previewTimer);
-    this.#previewTimer = setTimeout(() => void this.renderPreview(), 450);
+    this.#previewTimer = setTimeout(() => void this.renderPreview(), 100);
   }
 
   private edit(change: (draft: InvoiceDraft) => void) {

@@ -10,16 +10,15 @@ import '../../common/components/list/list/list.component.js';
 import '../../common/components/list/list-group/list-group.component.js';
 import '../../common/components/list/list-item/list-item.component.js';
 import '../../common/components/page/page.component.js';
-import '../../common/components/sheet/sheet.component.js';
 import '../../common/layouts/editor/editor.layout.js';
 import '../../common/layouts/split/split.layout.js';
 
 import WaInput from '@awesome.me/webawesome/dist/components/input/input.js';
-import { open } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { regionKey } from '../../common/components/sheet/sheet.component.js';
 import type {
   CustomLayout,
   LayoutInfo,
@@ -44,15 +43,11 @@ const SECTIONS = [
 
 const LAYOUT = 'layout-';
 
-const blankLayout = (): CustomLayout => ({
-  id: null,
-  name: '',
-  background: null,
-  margins: { top: 20, right: 20, bottom: 25, left: 25 },
-  first_margins: null,
-  fonts: [],
-  archived: false,
-});
+/** The setup and the place of a part in it, from what `regionKey` made */
+const parseKey = (key: string): { first: boolean; index: number } => {
+  const [setup, index] = key.split(':');
+  return { first: setup === 'first', index: Number(index) };
+};
 
 /**
  * Settings: the pages on the left (company, bank, invoices, texts, then the layouts), the selected
@@ -75,6 +70,14 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   @state() private sampleError = '';
   /** Lines where the margins are, to see what a layout does */
   @state() private guides = false;
+  /** What the user points at in the form: a page setup, and a part of it */
+  @state() private pointed: { first: boolean; index: number | null } | undefined;
+  /** The part under the pointer in the sample */
+  @state() private overSample: { first: boolean; index: number } | null = null;
+  /** A part to bring into view in the sample, because it was opened in the form */
+  @state() private showInSample: { key: string; token: number } | undefined;
+  /** A part to open in the form, asked for by a click in the sample */
+  @state() private reveal: { first: boolean; index: number; token: number } | undefined;
 
   /** The settings as they are stored, what "unchanged" is compared against */
   #saved = '';
@@ -146,7 +149,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       this.sample = undefined;
       this.schedulePreview(0);
     }
-    const layout = id === null ? blankLayout() : this.customs.find(c => c.id === id);
+    // a new layout starts as the built-in one, parts and all
+    const layout =
+      id === null
+        ? { ...(await api.layoutBuiltin()), name: '' }
+        : this.customs.find(c => c.id === id);
     if (id === undefined || !layout) {
       this.editing = undefined;
       return;
@@ -158,6 +165,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     this.editing = structuredClone(layout);
     this.#layoutSaved = JSON.stringify(this.editing);
     this.sample = undefined;
+    this.pointed = undefined;
     this.schedulePreview(0);
     this.usage = undefined;
     if (id === null) {
@@ -176,7 +184,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   /** The sample is rendered by the real template, a moment after the last edit */
-  private schedulePreview(delay = 450) {
+  private schedulePreview(delay = 100) {
     clearTimeout(this.#sampleTimer);
     this.#sampleTimer = setTimeout(() => void this.renderSample(), delay);
   }
@@ -230,17 +238,6 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       .value="${settings.seller[key] ?? ''}"
       @input="${(e: Event) => this.edit(s => (s.seller[key] = nullable(text(e))))}"
     ></wa-input>`;
-  }
-
-  private async chooseLogo() {
-    const picked = await open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: 'Bild', extensions: ['png', 'jpg', 'jpeg', 'svg'] }],
-    });
-    if (typeof picked === 'string') {
-      this.edit(s => (s.logo = picked));
-    }
   }
 
   private async save() {
@@ -397,17 +394,6 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         .value="${settings.footer ?? ''}"
         @input="${(e: Event) => this.edit(s => (s.footer = nullable(text(e))))}"
       ></wa-textarea>
-      <div class="file">
-        <wa-button @click="${this.chooseLogo}" appearance="outlined">Logo wählen</wa-button>
-        ${
-          settings.logo
-            ? html`<span class="muted">${settings.logo.split('/').pop()}</span>
-                <wa-button appearance="outlined" @click="${() => this.edit(s => (s.logo = null))}"
-                  >Entfernen</wa-button
-                >`
-            : nothing
-        }
-      </div>
     `;
   }
 
@@ -493,11 +479,38 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     `;
   }
 
+  /** The part marked in the form and in the sample: under the pointer there, or pointed at here */
+  private get active(): { first: boolean; index: number } | null {
+    const here = this.pointed;
+    return (
+      this.overSample ?? (here?.index == null ? null : { first: here.first, index: here.index })
+    );
+  }
+
   /** The sample invoice, rendered by the real template */
   private sampleSheet() {
+    // the first page shows what is set up for it, the second what the others look like
+    const page = this.pointed && !this.pointed.first && this.editing?.first ? 1 : 0;
+    const active = this.active;
     return html`<erng-sheet
       slot="preview"
+      .page="${page}"
       .pages="${this.sample?.pages ?? []}"
+      .regions="${this.sample?.parts ?? []}"
+      .reveal="${this.showInSample}"
+      .active="${active ? regionKey({ first: active.first, index: active.index }) : null}"
+      @page-change="${(e: CustomEvent<number>) => {
+        // the first page is the first setup, the others belong to the other: the tab follows
+        this.pointed = { first: e.detail === 0, index: null };
+      }}"
+      @region-hover="${(e: CustomEvent<string | null>) => {
+        this.overSample = e.detail ? parseKey(e.detail) : null;
+      }}"
+      @region-click="${(e: CustomEvent<string>) => {
+        const part = parseKey(e.detail);
+        this.pointed = { ...part };
+        this.reveal = { ...part, token: (this.reveal?.token ?? 0) + 1 };
+      }}"
       hint="${this.sampleError ? `Vorschau nicht verfügbar: ${this.sampleError}` : (this.sample?.problems.map(p => p.message).join(', ') ?? 'Die Vorschau wird erzeugt…')}"
     ></erng-sheet>`;
   }
@@ -524,9 +537,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           <div slot="form" class="stack">
             <span>${this.layouts.find(l => l.id === 'standard')?.description}</span>
             <span class="muted">
-              Das eingebaute Layout lässt sich nicht ändern. Eigene Layouts mit Briefpapier, Rand
-              und Schrift legst du mit „Neu“ an. Die Vorschau zeigt dieselben Beispieldaten wie bei
-              jedem Layout.
+              Das eingebaute Layout lässt sich nicht ändern. Eigene Layouts mit Rand, Teilen (Texte,
+              Bilder, Briefkopf als Bild) und Schrift legst du mit „Neu“ an. Die Vorschau zeigt
+              dieselben Beispieldaten wie bei jedem Layout.
             </span>
           </div>
           ${this.guidesToggle()} ${this.sampleSheet()}
@@ -626,8 +639,25 @@ export class SettingsView extends ErngElement.withStyles(styles) {
               this.requestUpdate();
               this.schedulePreview();
             }}"
+            .guides="${this.guides}"
+            .active="${this.active}"
+            .reveal="${this.reveal}"
+            .tab="${this.pointed && !this.pointed.first ? 'page' : 'first'}"
+            @guides-change="${(e: CustomEvent<boolean>) => {
+              this.guides = e.detail;
+              this.schedulePreview(0);
+            }}"
+            @part-focus="${(e: CustomEvent<{ first: boolean; index: number | null }>) => {
+              this.pointed = e.detail;
+            }}"
+            @part-open="${(e: CustomEvent<{ first: boolean; index: number }>) => {
+              this.showInSample = {
+                key: regionKey(e.detail),
+                token: (this.showInSample?.token ?? 0) + 1,
+              };
+            }}"
           ></erng-layout-form>
-          ${this.guidesToggle()} ${this.sampleSheet()}
+          ${this.sampleSheet()}
         </erng-editor>
         ${isNew ? nothing : this.layoutActions(layout)}
         <wa-button

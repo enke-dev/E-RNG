@@ -1,35 +1,29 @@
-/* the form takes what it needs, the page beside it gets a column of its own and goes away when there
-   is no room for both */
+/* the form and the page it edits side by side, the divider is the user's to move; the page scales
+   with its panel. Below the room both minimums need, the page goes away. */
 :host {
   flex: 1 1 auto;
   display: flex;
-  flex-direction: row;
-  container-type: inline-size;
-}
-
-[name='form'] {
-  flex: 1 1 0;
-
-  display: flex;
   flex-direction: column;
-  gap: var(--wa-space-m);
-  min-width: 25rem;
-  padding: var(--wa-space-m) var(--wa-space-l);
 }
 
-[name='preview'] {
-  /* the page needs room to be readable: a share of the pane, between 20 and 36rem */
-  flex: 1 1 clamp(20rem, 38%, 40rem);
-  max-width: 40rem;
-  display: flex;
-  align-items: start;
-  justify-content: center;
+wa-split-panel {
+  flex: 1 1 auto;
+  /* the form never gets narrower than it needs, the page keeps its minimum */
+  --min: var(--form-min);
+  --max: calc(100% - var(--preview-min));
+  --divider-width: 0.25rem;
+}
+
+/* the panels of a split panel are slots, so the boxes are ours */
+.preview {
+  min-width: 0;
   padding: 0 var(--wa-space-l);
   background: var(--wa-color-surface-lowered);
 }
 
-@container (max-width: 65rem) {
-  [name='preview'] {
-    display: none;
-  }
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-m);
+  padding: var(--wa-space-m) var(--wa-space-l);
 }

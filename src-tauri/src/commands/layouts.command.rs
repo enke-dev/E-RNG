@@ -5,17 +5,16 @@ use tauri::{AppHandle, State};
 use super::preview_invoice_command::Preview;
 use crate::draft::{build_invoice, for_preview};
 
+use crate::layout::ImageFile;
 use crate::layout_files;
-use crate::model::{
-    Background, CustomLayout, Customer, FontFile, InvoiceDraft, LayoutUsage, Position,
-};
+use crate::model::{CustomLayout, Customer, FontFile, InvoiceDraft, LayoutUsage, Position};
 use crate::render::{self, Branding};
 use crate::render::{layouts, LayoutInfo};
 use crate::sidecar::Sidecars;
 use crate::store::Store;
 use crate::utils::{message, today};
 
-/// Where the stationery and fonts of own layouts are kept
+/// Where the pictures and fonts of own layouts are kept
 fn files_dir(app: &AppHandle) -> Result<PathBuf, String> {
     crate::utils::data_dir(app)
         .map(|dir| dir.join("layouts"))
@@ -65,14 +64,16 @@ pub fn layout_delete(store: State<'_, Store>, id: i64) -> Result<(), String> {
     store.delete_custom_layout(id).map_err(message)
 }
 
-/// Converts the PDF the user picked to the stationery of a layout.
+/// Copies a picture for an image part, refuses what is too big or no picture.
 #[tauri::command]
-pub async fn layout_import_background(app: AppHandle, path: PathBuf) -> Result<Background, String> {
-    let dir = files_dir(&app)?;
-    tauri::async_runtime::spawn_blocking(move || layout_files::import_background(&path, &dir))
-        .await
-        .map_err(message)?
-        .map_err(message)
+pub fn layout_import_image(app: AppHandle, path: PathBuf) -> Result<ImageFile, String> {
+    layout_files::import_image(&path, &files_dir(&app)?).map_err(message)
+}
+
+/// What a new layout starts as: the built-in one, parts and all.
+#[tauri::command]
+pub fn layout_builtin() -> CustomLayout {
+    crate::layout::builtin()
 }
 
 #[tauri::command]
@@ -132,6 +133,7 @@ pub async fn layout_preview(
             return Ok(Preview {
                 pages: Vec::new(),
                 problems,
+                parts: Vec::new(),
             })
         }
     };
@@ -141,9 +143,9 @@ pub async fn layout_preview(
     };
     let sidecars = Sidecars::locate(&app).map_err(message)?;
 
-    let pages = tauri::async_runtime::spawn_blocking(move || {
+    let (pages, parts) = tauri::async_runtime::spawn_blocking(move || {
         let dir = tempfile::tempdir()?;
-        render::render_preview(&sidecars, dir.path(), &invoice, &branding)
+        render::render_sample(&sidecars, dir.path(), &invoice, &branding)
     })
     .await
     .map_err(message)?
@@ -151,6 +153,7 @@ pub async fn layout_preview(
     Ok(Preview {
         pages,
         problems: Vec::new(),
+        parts,
     })
 }
 
@@ -158,17 +161,13 @@ pub async fn layout_preview(
 mod tests {
     use super::*;
     use crate::draft::fixtures::settings;
-    use crate::model::Insets;
 
     fn layout() -> CustomLayout {
         CustomLayout {
             id: None,
             name: "Neu".into(),
-            background: None,
-            margins: Insets::default(),
-            first_margins: None,
             fonts: Vec::new(),
-            archived: false,
+            ..crate::layout::builtin()
         }
     }
 

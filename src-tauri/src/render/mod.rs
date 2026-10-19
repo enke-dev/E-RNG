@@ -2,6 +2,7 @@
 //! are not added here, that is what the packaging step does with the result.
 
 mod layouts;
+mod parts;
 mod view;
 
 use std::ffi::OsString;
@@ -9,44 +10,35 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
 
 use crate::invoice::Invoice;
 use crate::sidecar::{self, Sidecars};
 
-use crate::model::{Background, CustomLayout};
+use crate::layout::{self, CustomLayout, ImageFile};
 pub use layouts::{all as layouts, LayoutInfo};
 pub use view::Branding;
 
 /// Where the fonts of an own layout are put next to the template
 const FONTS_DIR: &str = "fonts";
 
-const LOGO_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "svg"];
-
-/// Writes template, data and logo into `dir`, everything Typst needs to compile `invoice.typ`.
+/// Writes template, data, fonts and pictures into `dir`, everything Typst needs to
+/// compile `invoice.typ`.
 fn stage(dir: &Path, invoice: &Invoice, branding: &Branding) -> Result<()> {
-    let logo = branding
-        .logo
-        .as_deref()
-        .map(|source| copy_logo(source, dir))
-        .transpose()?;
-    let files = branding
-        .custom
-        .as_ref()
-        .and_then(|custom| custom.background.as_ref())
-        .map(|background| stage_background(background, dir))
-        .transpose()?;
-    if let Some(custom) = &branding.custom {
-        stage_fonts(custom, dir)?;
-    }
-    let data = view::build(
-        invoice,
-        branding,
-        logo,
-        view::PageView {
-            guides: branding.guides,
-            ..view::PageView::of(branding.custom.as_ref(), files)
-        },
-    );
+    // without an own layout the built-in one, made of the same parts
+    let layout = branding.custom.clone().unwrap_or_else(layout::builtin);
+    stage_fonts(&layout, dir)?;
+
+    let mut data = view::build(invoice, branding);
+    let mut staged = 0;
+    data.page = view::PageView {
+        guides: branding.guides,
+        marks: branding.marks,
+        ..parts::page_view(&layout, &data, &mut |image| {
+            staged += 1;
+            stage_image(image, staged, dir)
+        })?
+    };
 
     std::fs::write(dir.join("invoice.typ"), layouts::STANDARD_SOURCE)?;
     std::fs::write(dir.join("prelude.typ"), layouts::PRELUDE)?;
@@ -54,9 +46,10 @@ fn stage(dir: &Path, invoice: &Invoice, branding: &Branding) -> Result<()> {
     Ok(())
 }
 
-fn compile(sidecars: &Sidecars, dir: &Path, options: &[&str], output: &str) -> Result<()> {
-    // system fonts are ignored so the output does not depend on the machine it was made on
-    let mut args: Vec<OsString> = ["compile", "--root", ".", "--ignore-system-fonts"]
+/// What every Typst command needs to see the same world: the folder as root, the fonts. System
+/// fonts are ignored so the output does not depend on the machine it was made on.
+fn world_args(dir: &Path) -> Vec<OsString> {
+    let mut args: Vec<OsString> = ["--root", ".", "--ignore-system-fonts"]
         .iter()
         .map(Into::into)
         .collect();
@@ -65,13 +58,23 @@ fn compile(sidecars: &Sidecars, dir: &Path, options: &[&str], output: &str) -> R
         args.push("--font-path".into());
         args.push(dir.join(FONTS_DIR).into());
     }
-    args.extend(options.iter().map(Into::into));
-    args.extend(["invoice.typ", output].iter().map(Into::into));
-    let out = sidecar::run(&sidecars.typst(), &args, dir, Duration::from_secs(60))?;
+    args
+}
+
+fn typst(sidecars: &Sidecars, dir: &Path, args: &[OsString]) -> Result<String> {
+    let out = sidecar::run(&sidecars.typst(), args, dir, Duration::from_secs(60))?;
     if out.code != Some(0) {
         bail!("typst failed: {}", out.stderr.trim());
     }
-    Ok(())
+    Ok(out.stdout)
+}
+
+fn compile(sidecars: &Sidecars, dir: &Path, options: &[&str], output: &str) -> Result<()> {
+    let mut args: Vec<OsString> = vec!["compile".into()];
+    args.extend(world_args(dir));
+    args.extend(options.iter().map(Into::into));
+    args.extend(["invoice.typ", output].iter().map(Into::into));
+    typst(sidecars, dir, &args).map(drop)
 }
 
 /// Writes template, data and logo into `dir` and compiles `invoice.pdf` there.
@@ -96,7 +99,49 @@ pub fn render_preview(
 ) -> Result<Vec<String>> {
     stage(dir, invoice, branding)?;
     compile(sidecars, dir, &["--format", "svg"], "page-{0p}.svg")?;
+    read_pages(dir)
+}
 
+/// Where a part of the layout is on a page, in millimetres from its top left corner.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PartBox {
+    /// From 1
+    pub page: u32,
+    /// On the setup of the first page, else on the one of the others
+    pub first: bool,
+    /// The place of the part in the list of its setup
+    pub index: usize,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// The preview with the boxes of the parts, for the editor of a layout: what is under the pointer
+/// in the sample is the part to edit. The template hands the boxes out, a query reads them.
+pub fn render_sample(
+    sidecars: &Sidecars,
+    dir: &Path,
+    invoice: &Invoice,
+    branding: &Branding,
+) -> Result<(Vec<String>, Vec<PartBox>)> {
+    let branding = Branding {
+        marks: true,
+        ..branding.clone()
+    };
+    stage(dir, invoice, &branding)?;
+    compile(sidecars, dir, &["--format", "svg"], "page-{0p}.svg")?;
+    let pages = read_pages(dir)?;
+
+    let mut args: Vec<OsString> = vec!["query".into()];
+    args.extend(world_args(dir));
+    args.extend(["invoice.typ", "<part-box>", "--field", "value"].map(OsString::from));
+    let boxes = serde_json::from_str(&typst(sidecars, dir, &args)?)
+        .context("the part boxes are not readable")?;
+    Ok((pages, boxes))
+}
+
+fn read_pages(dir: &Path) -> Result<Vec<String>> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .filter(|path| {
@@ -111,23 +156,6 @@ pub fn render_preview(
         .iter()
         .map(|file| std::fs::read_to_string(file).map_err(Into::into))
         .collect()
-}
-
-/// Puts the stationery next to the template, returns the names the template finds it under.
-fn stage_background(background: &Background, dir: &Path) -> Result<(String, Option<String>)> {
-    let copy = |source: &Path, name: &str| -> Result<String> {
-        std::fs::copy(source, dir.join(name))
-            .with_context(|| format!("cannot read the stationery {}", source.display()))?;
-        Ok(name.to_owned())
-    };
-    Ok((
-        copy(&background.first, "background-1.svg")?,
-        background
-            .rest
-            .as_deref()
-            .map(|rest| copy(rest, "background-2.svg"))
-            .transpose()?,
-    ))
 }
 
 fn stage_fonts(custom: &CustomLayout, dir: &Path) -> Result<()> {
@@ -147,15 +175,15 @@ fn stage_fonts(custom: &CustomLayout, dir: &Path) -> Result<()> {
     })
 }
 
-fn copy_logo(source: &Path, dir: &Path) -> Result<String> {
-    let extension = source
+/// Puts a picture of a part next to the template, returns the name it has there.
+fn stage_image(image: &ImageFile, number: usize, dir: &Path) -> Result<String> {
+    let extension = image
+        .path
         .extension()
         .and_then(|e| e.to_str())
-        .map(str::to_lowercase)
-        .filter(|e| LOGO_EXTENSIONS.contains(&e.as_str()))
-        .context("the logo must be a png, jpg or svg file")?;
-    let name = format!("logo.{extension}");
-    std::fs::copy(source, dir.join(&name))
-        .with_context(|| format!("cannot read the logo {}", source.display()))?;
+        .unwrap_or("png");
+    let name = format!("image-{number}.{extension}");
+    std::fs::copy(&image.path, dir.join(&name))
+        .with_context(|| format!("cannot read the image {}", image.path.display()))?;
     Ok(name)
 }

@@ -1,0 +1,38 @@
+:host {
+  display: block;
+}
+
+.edges,
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--wa-space-s);
+}
+
+.place {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--wa-space-m);
+}
+
+.place .stack {
+  flex: 1 1 18rem;
+}
+
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-2xs);
+}
+
+.file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wa-space-s);
+}
+
+.warning {
+  color: var(--wa-color-warning-on-quiet);
+}

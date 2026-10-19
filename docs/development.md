@@ -65,13 +65,13 @@ GOLDEN_OUT=/some/dir cargo test                                      # writes th
 ```
 src/                       frontend
   views/                   invoices (list + detail), invoice-edit, customers, templates, settings (+ root shell and routes)
-  common/                  components (one folder each: `<name>/<name>.component.{ts,css}`, styles always in the css file, `ErngElement.withStyles(styles)`), layouts (split, cards, editor: slots only, views import no styles), api.utils.ts (typed commands), format and form helpers, mock backend
+  common/                  components (one folder each: `<name>/<name>.component.{ts,css}`, styles always in the css file, `ErngElement.withStyles(styles)`), layouts (split, cards, editor: slots only, the editor has a `wa-split-panel` the user can move, views import no styles), api.utils.ts (typed commands), format and form helpers, mock backend
 src-tauri/src/
   invoice/                 profile choice, rule checks, German finding texts, CII writer, golden test set
   draft.rs                 form draft → invoice model
   store.rs, model.rs       SQLite and the stored shapes
   render/                  invoice layouts (Typst) and the presentation view of an invoice
-  layout_files.rs          own layouts: PDF stationery → SVG pages (hayro), font family from the file
+  layout_files.rs          own layouts: fonts (family from the file) and pictures (size, pixels)
   package.rs               Mustang: combine and validate, report parsing
   pipeline.rs, session.rs  produce a validated file in a work directory, the export gate
   sidecar.rs               running the bundled tools with a deadline
@@ -101,18 +101,32 @@ cannot). Names say what an icon means (`save`, `trash`), add one by importing it
 icon; only the actions inside a list (remove a position, save it as a template) are icon only, with a `title` and an
 `aria-label`.
 
-## Own layouts
+## Layouts
 
-There is one built-in layout (`render/layouts/standard.typ`). A user layout is that layout plus stationery (PDF),
-content margins and a font (table `layouts`, files in the app data directory). The default layout is a
-setting; a user layout is deleted only while no invoice uses it and it is not the default, else it is archived
-(out of the invoice's selection, kept for the invoices made with it). Typst refuses to embed a PDF in PDF/A output, so the PDF is converted to
-SVG pages when picked (page 1 = first page, page 2 = all following, a single page = all). Margins are the
-page margins; the first page may have its own on all four sides. Typst has one margin per page style, so
-then the content is laid out in two runs (`two-runs` in `prelude.typ`): units (head, table rows, totals, …) are
-measured and as many as fit go to the first page, the rest follows on pages with the other margins.
-The settings show the same 30-position sample invoice in every layout, also the built-in one (`layout_preview`), with optional guides at the margins (red lines, `Branding.guides`). An exported invoice freezes the layout like the settings.
-`cargo test -- --include-ignored` validates every golden case on stationery with an uploaded font.
+A layout is a **frame** and **parts**. The frame (`PageSetup.margins`) is where the flowing content (title, intro, the
+positions, totals, notices, payment, closing: `render/layouts/standard.typ`) stays; the parts are placed around it by
+an anchor (one of the nine points of the page) and an offset in millimetres towards the inside: information block
+(`infos`), the address, an image, a text (bold and italic as markdown, `{seller_name}`-like placeholders, a font family),
+the page number, a rule. Every page has such a setup; the first page can have one of its own (`first`) with the same
+tools. The built-in layout, *Klassisch*, is such a list (`layout::builtin()`, a window letter after DIN 5008 form B), a new
+layout starts as a copy of it, so there is no logo setting: a logo is an image part.
+
+Rust builds `PageView` for the template (`render/parts.rs`: text cut into runs, placeholders filled, images copied next to
+the template and measured, `data.json`), `prelude.typ` places the parts in the `background` of every page. Typst has one
+margin per page style, so when the first page has another frame the content is laid out in two runs (`two-runs`): units
+(head, table rows, totals, …) are measured and as many as fit go to the first page, the rest follows on pages with the
+other frame.
+
+There is no separate stationery: a letterhead is a picture part as wide as the page (210 mm, at 0 and 0), one per page setup, and pictures always lie behind the other parts. Fonts are a list of uploaded files. Images are PNG, JPG
+or SVG up to 5 MB; a raster image with fewer than 150 dpi at its placed size is flagged, the layout sample marks it with a
+warning triangle (`Branding.marks`, never in a real invoice).
+
+The sample hands out the box of every part (`<part-box>` metadata, read with `typst query`, `render_sample`), so the editor can tell what is under the pointer: pointing at a part in the form or in the sample marks it orange on both sides, a click in the sample opens it in the form. The settings show the same 30-position sample in every layout (`layout_preview`), with optional guides: red for the
+frame, cyan for the aids of a letter (address window, fold and punch marks, middle) and dotted outlines of the parts
+(`Branding.guides`). The default layout is a setting; a layout is deleted only while no invoice uses it and it is not the
+default, else it is archived. An exported invoice freezes its layout like the settings.
+`cargo test -- --include-ignored` validates every golden case in the built-in layout and with letterhead pictures, a font and
+image parts.
 
 ## Release
 

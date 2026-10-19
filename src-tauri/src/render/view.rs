@@ -6,22 +6,24 @@ use en16931::invoice::{DocumentKind, PaymentMeans, PostalAddress};
 use en16931::{Date, Invoice};
 use serde::{Deserialize, Serialize};
 
+use super::parts::PartView;
 use crate::model::{CustomLayout, Insets, InvoiceDraft, Settings};
 
 /// What the user adds to the plain invoice data: look and feel of the document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Branding {
-    /// A PNG, JPEG or SVG shown in the page header instead of the seller name.
-    pub logo: Option<std::path::PathBuf>,
     /// Free text for the page footer, e.g. managing directors or the commercial register entry.
     pub footer: Option<String>,
     /// The texts around the table: salutation and introduction, closing
     pub intro: Option<String>,
     pub closing: Option<String>,
-    /// The user's own layout when one was chosen: stationery, margins and font
+    /// The user's own layout when one was chosen, else the built-in one is used
     pub custom: Option<CustomLayout>,
-    /// Draws lines where the margins are, for looking at a layout while it is made
+    /// Draws lines where the margins are and where a letter has its window and folds, for looking
+    /// at a layout while it is made
     pub guides: bool,
+    /// Marks what is wrong with a layout (a blurry image) in the sample, never in a real invoice
+    pub marks: bool,
 }
 
 impl Branding {
@@ -46,10 +48,10 @@ impl Branding {
             .clone()
             .or_else(|| customs.iter().find(|l| l.key() == wanted).cloned());
         Self {
-            logo: settings.logo.clone(),
             footer: settings.footer.clone(),
             custom,
             guides: false,
+            marks: false,
             intro: pick(&draft.intro, &settings.intro),
             closing: pick(&draft.closing, &settings.closing),
         }
@@ -63,15 +65,14 @@ pub struct InvoiceView {
     pub issue: YearMonthDay,
     pub seller: PartyView,
     pub buyer: PartyView,
-    pub meta: Vec<Labeled>,
+    /// Facts of the invoice by key, what a part of the layout picks its rows from
+    pub infos: Vec<Info>,
     pub intro: Vec<String>,
     pub lines: Vec<LineView>,
     pub totals: Vec<Total>,
     pub vat_notes: Vec<String>,
     pub payment: Vec<String>,
     pub footer: Option<String>,
-    /// File name next to the template, set when a logo was copied there.
-    pub logo: Option<String>,
     /// The letter around the table
     pub letter: Letter,
     /// Single facts for layouts that arrange them their own way
@@ -86,37 +87,18 @@ pub struct InvoiceView {
 #[derive(Debug, Default, Serialize)]
 pub struct PageView {
     pub font: Option<String>,
-    /// Content insets for all pages, `None` keeps those of the layout
-    pub margin: Option<Insets>,
-    /// Insets of the first page when it differs from the others, e.g. for a letterhead
+    /// The frame of the content on the pages after the first, and on the first unless it differs
+    pub margin: Insets,
+    /// The frame of the first page when it differs from the others, e.g. for a letterhead
     pub first_margin: Option<Insets>,
-    pub background: Option<BackgroundView>,
-    /// Lines where the margins are
+    /// What is placed on the pages after the first
+    pub parts: Vec<PartView>,
+    /// What is placed on the first page when it has parts of its own
+    pub first_parts: Option<Vec<PartView>>,
+    /// Lines where the margins are, and the aids of a letter
     pub guides: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct BackgroundView {
-    pub first: String,
-    pub rest: Option<String>,
-}
-
-impl PageView {
-    /// `files` are the names the stationery got next to the template (first and following page).
-    pub fn of(custom: Option<&CustomLayout>, files: Option<(String, Option<String>)>) -> Self {
-        let Some(custom) = custom else {
-            return Self::default();
-        };
-        Self {
-            font: custom.fonts.first().map(|f| f.family.clone()),
-            margin: Some(custom.margins),
-            first_margin: custom
-                .first_margins
-                .filter(|first| *first != custom.margins),
-            background: files.map(|(first, rest)| BackgroundView { first, rest }),
-            guides: false,
-        }
-    }
+    /// Marks what is wrong, for the sample
+    pub marks: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -136,6 +118,16 @@ pub struct Facts {
     pub buyer_reference: Option<String>,
     pub tax_number: Option<String>,
     pub vat_id: Option<String>,
+}
+
+/// A fact of the invoice a part can show.
+#[derive(Debug, Serialize)]
+pub struct Info {
+    pub key: &'static str,
+    pub label: String,
+    pub value: String,
+    /// Dates as `18. Oktober 2026`, the same as `value` for the rest
+    pub value_long: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -207,6 +199,28 @@ fn de_trimmed(plain: &str) -> String {
         plain
     };
     de_number(trimmed)
+}
+
+fn de_date_long(date: Date) -> String {
+    const MONTHS: [&str; 12] = [
+        "Januar",
+        "Februar",
+        "März",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
+    ];
+    let month = MONTHS
+        .get(usize::from(date.month()).saturating_sub(1))
+        .copied()
+        .unwrap_or_default();
+    format!("{}. {month} {}", date.day(), date.year())
 }
 
 fn de_date(date: Date) -> String {
@@ -355,12 +369,7 @@ fn payment_lines(invoice: &Invoice, currency: &str) -> Vec<String> {
     out
 }
 
-pub fn build(
-    invoice: &Invoice,
-    branding: &Branding,
-    logo: Option<String>,
-    page: PageView,
-) -> InvoiceView {
+pub fn build(invoice: &Invoice, branding: &Branding) -> InvoiceView {
     let currency = invoice.currency.as_ref().map_or("EUR", |c| c.as_str());
     let totals = &invoice.totals;
     let credit = invoice.kind == DocumentKind::CreditNote;
@@ -368,49 +377,58 @@ pub fn build(
         .issue_date
         .unwrap_or_else(|| Date::new(1970, 1, 1).unwrap());
 
-    let mut meta = vec![Labeled {
-        label: if credit {
+    let date = |key: &'static str, label: &str, date: Date| Info {
+        key,
+        label: label.into(),
+        value: de_date(date),
+        value_long: de_date_long(date),
+    };
+    let text = |key: &'static str, label: &str, value: String| Info {
+        key,
+        label: label.into(),
+        value_long: value.clone(),
+        value,
+    };
+    let mut infos = vec![text(
+        "number",
+        if credit {
             "Gutschriftsnummer"
         } else {
             "Rechnungsnummer"
-        }
-        .into(),
-        value: invoice.number.clone().unwrap_or_default(),
-    }];
-    meta.push(Labeled {
-        label: "Datum".into(),
-        value: de_date(issue),
-    });
-    if let Some(date) = invoice.delivery.as_ref().and_then(|d| d.date) {
-        meta.push(Labeled {
-            label: "Leistungsdatum".into(),
-            value: de_date(date),
-        });
+        },
+        invoice.number.clone().unwrap_or_default(),
+    )];
+    infos.push(date("date", "Datum", issue));
+    if let Some(day) = invoice.delivery.as_ref().and_then(|d| d.date) {
+        infos.push(date("service-date", "Leistungsdatum", day));
     } else if let Some(period) = &invoice.invoicing_period {
         if let (Some(start), Some(end)) = (period.start, period.end) {
-            meta.push(Labeled {
+            infos.push(Info {
+                key: "service-date",
                 label: "Leistungszeitraum".into(),
                 value: format!("{} – {}", de_date(start), de_date(end)),
+                value_long: format!("{} – {}", de_date_long(start), de_date_long(end)),
             });
         }
     }
     if let Some(due) = invoice.due_date {
-        meta.push(Labeled {
-            label: "Fällig am".into(),
-            value: de_date(due),
-        });
+        infos.push(date("due-date", "Fällig am", due));
     }
     if let Some(reference) = &invoice.buyer_reference {
-        meta.push(Labeled {
-            label: "Käuferreferenz".into(),
-            value: reference.clone(),
-        });
+        infos.push(text("buyer-reference", "Käuferreferenz", reference.clone()));
     }
     if let Some(original) = invoice.preceding_invoices.first() {
-        meta.push(Labeled {
-            label: "Zu Rechnung".into(),
-            value: original.reference.as_str().to_owned(),
-        });
+        infos.push(text(
+            "preceding-invoice",
+            "Zu Rechnung",
+            original.reference.as_str().to_owned(),
+        ));
+    }
+    if let Some(number) = &invoice.seller.tax_registration {
+        infos.push(text("tax-number", "Steuernummer", number.clone()));
+    }
+    if let Some(id) = &invoice.seller.vat_identifier {
+        infos.push(text("vat-id", "USt-IdNr.", id.clone()));
     }
 
     let lines = invoice
@@ -533,7 +551,7 @@ pub fn build(
         },
         seller: party_view(&invoice.seller, true),
         buyer: party_view(&invoice.buyer, false),
-        meta,
+        infos,
         intro: invoice
             .notes
             .iter()
@@ -544,7 +562,6 @@ pub fn build(
         vat_notes,
         payment: payment_lines(invoice, currency),
         footer: branding.footer.clone(),
-        logo,
         letter: Letter {
             intro: branding.intro.clone(),
             closing: branding.closing.clone(),
@@ -560,7 +577,7 @@ pub fn build(
             vat_id: invoice.seller.vat_identifier.clone(),
         },
         bank: bank_lines(invoice),
-        page,
+        page: PageView::default(),
     }
 }
 
@@ -572,11 +589,8 @@ mod tests {
         CustomLayout {
             id: Some(id),
             name: "Briefpapier".into(),
-            background: None,
-            margins: Insets::default(),
-            first_margins: None,
             fonts: Vec::new(),
-            archived: false,
+            ..crate::layout::builtin()
         }
     }
 
@@ -612,30 +626,6 @@ mod tests {
             branding.custom.map(|c| c.name).as_deref(),
             Some("As exported")
         );
-    }
-
-    #[test]
-    fn the_first_page_has_its_own_margins_only_when_they_differ() {
-        let mut layout = own_layout(1);
-        layout.margins = Insets {
-            top: 20.0,
-            right: 20.0,
-            bottom: 25.0,
-            left: 25.0,
-        };
-
-        layout.first_margins = Some(layout.margins);
-        assert!(PageView::of(Some(&layout), None).first_margin.is_none());
-
-        let own = Insets {
-            top: 60.0,
-            right: 10.0,
-            bottom: 10.0,
-            left: 30.0,
-        };
-        layout.first_margins = Some(own);
-        assert_eq!(PageView::of(Some(&layout), None).first_margin, Some(own));
-        assert!(PageView::of(None, None).margin.is_none());
     }
 
     #[test]
@@ -691,7 +681,7 @@ mod tests {
             .unwrap()
             .1;
 
-        let view = build(&invoice, &Branding::default(), None, PageView::default());
+        let view = build(&invoice, &Branding::default());
 
         assert_eq!(view.vat_notes.len(), 1);
         assert!(view.vat_notes[0].contains("Steuerschuldnerschaft"));

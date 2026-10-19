@@ -51,7 +51,7 @@ this list is the index of what is still open.
 - [ ] `@enke.dev/lit-utils` is not used (the conventions below mention it as an option)
 
 **Invoice template**
-- [x] Own layouts (stationery PDF, margins, fonts), default in the settings, optional per invoice, archiving; open items in the proposal "several invoice templates" below
+- [x] Own layouts (frame and parts, fonts), default in the settings, optional per invoice, archiving; open items in the proposal "several invoice templates" below
 - [ ] EPC / GiroCode QR code for EUR credit transfers (needs a vendored QR package, no network at compile time)
 - [ ] Exact DIN 5008 window geometry and fold marks
 - [ ] English invoices (labels live in `render/view.rs`)
@@ -272,14 +272,14 @@ Suggestion, in layers (each can ship on its own):
 6. **Own templates:** a templates folder in the app data directory plus an import button; a template with an invalid manifest is listed as broken, not loaded. The final PDF always goes through the validator, so a template that breaks PDF/A or the Factur-X attachment cannot produce a file that can be saved.
 
 Built so far (2026-10-18), direction decided: **one built-in layout, the rest is the user's own**:
-- [x] One built-in layout, *Klassisch* (id `standard`, not called "Standard" so it is not mistaken for the default layout; `render/layouts/standard.typ`, shared helpers in `prelude.typ`). A first "Modern" layout and bundled Inter/Open Sans fonts were dropped again: users bring their own stationery and fonts
-- [x] **Own layouts** (`CustomLayout`, table `layouts`): the built-in design on a PDF as stationery (page 1 = first page, page 2 = all following, a single page = all; converted to SVG with `hayro-svg` because Typst refuses PDFs in PDF/A output), content margins (top/right/bottom/left, mm), insets of its own for the first page on all four sides (laid out in two runs: units are measured, what fits goes to the first page), uploaded fonts (family read with `ttf-parser`, files copied into the app data directory). With stationery the layout's own footer gives way to page numbers
+- [x] Layouts are frames and parts: a frame (margins) for the flowing content and parts placed by a 9-point anchor and an offset (infos, address, image, text with markdown and a font, page number, rule), per page setup, the first page with its own setup when it differs; the built-in layout is such a list and a new layout starts as a copy of it; no logo setting and no stationery import (a letterhead is an image part as wide as the page, pictures lie behind the other parts), images PNG/JPG/SVG up to 5 MB with a blurry-image mark in the sample, cyan DIN 5008 aids in the guides, fonts as a list. Earlier: one built-in layout, *Klassisch* (id `standard`, not called "Standard" so it is not mistaken for the default layout; `render/layouts/standard.typ`, shared helpers in `prelude.typ`). A first "Modern" layout and bundled Inter/Open Sans fonts were dropped again: users bring their own stationery and fonts
+- [x] **Own layouts** (`CustomLayout`, table `layouts`): frames and parts as above, uploaded fonts (family read with `ttf-parser`, files copied into the app data directory), pictures copied there too. An earlier PDF stationery import (converted to SVG with `hayro-svg`) was dropped for image parts
 - [x] Default layout in the settings (`Settings.layout`, set on the layout's page), optional override per invoice (`InvoiceDraft.layout`); `Branding::for_draft` picks. An exported invoice freezes its own layout (`InvoiceDraft.frozen_layout`) like the settings
 - [x] Lifecycle: a layout is deleted only while no invoice uses it and it is not the default, else archived (greyed out in the settings, gone from the invoice's selection, still resolved for invoices that use it); the Rust side enforces it
 - [x] The letter texts `intro`, `closing` (set in the settings, a new invoice starts with them filled in and can change them for itself; no signature field, the closing text carries the greeting); the view carries `letter`, `facts`, `bank` for layouts that arrange these themselves
 - [x] Every layout page (built-in too) shows the same sample invoice (30 positions, two pages) in the layout as edited, rendered by the real template (`layout_preview`, debounced), with optional margin guides; shared form-and-page layout `erng-editor` (also used by the invoice editor, the preview wraps below the form instead of hiding)
 - [x] UI layouts in `src/common/layouts/`: `split` (list left, detail right: invoices, settings) and `cards` (wide header, card grid, dialog: customers, templates); a new invoice pre-selects the default layout, no "from the settings" choice
-- [x] Tests: every golden invoice validates in the built-in layout and on stationery with an uploaded font; layout storage and usage counting
+- [x] Tests: every golden invoice validates in the built-in layout and with letterhead pictures and an uploaded font; layout storage and usage counting
 - [ ] Still open: `subject`, `notices` and `place` as data, the column mode (total-only) and totals mode (no VAT, needs the Kleinunternehmer switch), a bank name field, a second built-in design if wanted (the bank/facts data exists)
 
 ## App conventions

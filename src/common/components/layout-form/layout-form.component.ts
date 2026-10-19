@@ -1,25 +1,19 @@
-import '@awesome.me/webawesome/dist/components/button/button.js';
-import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
+import '@awesome.me/webawesome/dist/components/tab/tab.js';
+import '@awesome.me/webawesome/dist/components/tab-group/tab-group.js';
+import '@awesome.me/webawesome/dist/components/tab-panel/tab-panel.js';
+import '../font-list/font-list.component.js';
+import '../page-setup-form/page-setup-form.component.js';
 
-import { open } from '@tauri-apps/plugin-dialog';
-import { html, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import type { PropertyValues } from 'lit';
+import { html } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
 
-import type { CustomLayout, Insets } from '../../utils/api.utils.js';
-import { api } from '../../utils/api.utils.js';
+import type { CustomLayout, PageSetup } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { text } from '../../utils/form.utils.js';
-import { notifyError } from '../../utils/notify.utils.js';
 import styles from './layout-form.component.css';
-
-const EDGES: [keyof Insets, string][] = [
-  ['top', 'Oben'],
-  ['right', 'Rechts'],
-  ['bottom', 'Unten'],
-  ['left', 'Links'],
-];
 
 /** The fields of an own layout, edits the given object and fires `change` */
 @customElement('erng-layout-form')
@@ -27,77 +21,79 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
   @property({ attribute: false })
   layout!: CustomLayout;
 
-  @state() private busy = false;
-
   private changed() {
     this.requestUpdate();
     this.dispatchEvent(new CustomEvent('change', { bubbles: true, composed: true }));
   }
 
-  /** Runs a pick-and-convert step: the files are read by the app, which can fail */
-  private async importing(step: () => Promise<void>) {
-    this.busy = true;
-    try {
-      await step();
-      this.changed();
-    } catch (error) {
-      notifyError(error);
-    } finally {
-      this.busy = false;
-    }
+  /** Tells the sample what the user looks at: a page setup, and the part of it if there is one */
+  private pointAt(first: boolean, index: number | null) {
+    this.dispatchEvent(
+      new CustomEvent<{ first: boolean; index: number | null }>('part-focus', {
+        detail: { first, index },
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
 
-  private chooseBackground() {
-    return this.importing(async () => {
-      const picked = await open({
-        multiple: false,
-        directory: false,
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
-      });
-      if (typeof picked === 'string') {
-        this.layout.background = await api.layoutImportBackground(picked);
-      }
-    });
-  }
-
-  private chooseFonts() {
-    return this.importing(async () => {
-      const picked = await open({
-        multiple: true,
-        directory: false,
-        filters: [{ name: 'Schrift', extensions: ['ttf', 'otf', 'ttc', 'otc'] }],
-      });
-      if (!Array.isArray(picked) || picked.length === 0) {
-        return;
-      }
-      const fonts = await Promise.all(picked.map(path => api.layoutImportFont(path)));
-      if (fonts.some(f => f.family !== fonts[0]?.family)) {
-        throw new Error('Alle Dateien müssen zur selben Schriftfamilie gehören.');
-      }
-      this.layout.fonts = fonts;
-    });
-  }
-
-  private edge(insets: Insets, key: keyof Insets, label: string) {
-    return html`<wa-input
-      label="${label}"
-      type="number"
-      min="0"
-      step="1"
-      .value="${String(insets[key])}"
-      @input="${(e: Event) => {
-        insets[key] = Math.max(0, Number(text(e)) || 0);
-        this.changed();
+  private setup(setup: PageSetup, families: string[], first: boolean) {
+    const reveal = this.reveal?.first === first ? this.reveal : undefined;
+    return html`<erng-page-setup-form
+      .setup="${setup}"
+      .families="${families}"
+      .active="${this.active?.first === first ? this.active.index : null}"
+      .reveal="${reveal}"
+      @change="${() => this.changed()}"
+      @part-focus="${(e: CustomEvent<number | null>) => {
+        e.stopPropagation();
+        this.pointAt(first, e.detail);
       }}"
-    >
-      <span slot="end">mm</span>
-    </wa-input>`;
+      @part-open="${(e: CustomEvent<number>) => {
+        e.stopPropagation();
+        this.dispatchEvent(
+          new CustomEvent<{ first: boolean; index: number }>('part-open', {
+            detail: { first, index: e.detail },
+            bubbles: true,
+            composed: true,
+          })
+        );
+      }}"
+    ></erng-page-setup-form>`;
+  }
+
+  /** The part to mark in the form, because it is pointed at in the sample */
+  @property({ attribute: false }) active: { first: boolean; index: number } | null = null;
+
+  /** Opens a part of a page setup, the token tells a repeated request from the same one */
+  @property({ attribute: false }) reveal:
+    { first: boolean; index: number; token: number } | undefined;
+
+  /** The setup that is in front, when the first page has its own: kept in step with the sample */
+  @property() tab: 'first' | 'page' | undefined;
+
+  /** Draws the aids into the sample */
+  @property({ type: Boolean }) guides = false;
+
+  protected override updated(changed: PropertyValues<this>) {
+    if (changed.has('tab') && this.tab && this.layout.first) {
+      const tabs = this.renderRoot.querySelector('wa-tab-group');
+      if (tabs) {
+        tabs.active = this.tab;
+      }
+    }
+    if (changed.has('reveal') && this.reveal && this.layout.first) {
+      // the setup the part is on comes to the front
+      const tabs = this.renderRoot.querySelector('wa-tab-group');
+      if (tabs) {
+        tabs.active = this.reveal.first ? 'first' : 'page';
+      }
+    }
   }
 
   override render() {
     const l = this.layout;
-    const first = l.first_margins;
-    const family = l.fonts[0]?.family;
+    const families = [...new Set(l.fonts.map(f => f.family))];
     return html`
       <div class="stack">
         <wa-input
@@ -111,86 +107,50 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
         ></wa-input>
 
         <div class="stack">
-          <strong>Briefpapier</strong>
-          <div class="file">
-            <wa-button
-              appearance="outlined"
-              ?disabled="${this.busy}"
-              @click="${this.chooseBackground}"
-            >
-              PDF wählen
-            </wa-button>
-            ${
-              l.background
-                ? html`<span>${l.background.name}</span>
-                    <wa-button
-                      appearance="outlined"
-                      @click="${() => {
-                        l.background = null;
-                        this.changed();
-                      }}"
-                      >Entfernen</wa-button
-                    >`
-                : nothing
-            }
-          </div>
-          <span class="muted">
-            ${
-              l.background?.rest
-                ? 'Seite 1 liegt hinter der ersten Seite der Rechnung, Seite 2 hinter allen weiteren.'
-                : 'Die PDF-Seite liegt hinter allen Seiten der Rechnung. Mit einer zweiten PDF-Seite bekommen die Folgeseiten ein eigenes Briefpapier.'
-            }
-          </span>
-        </div>
-
-        <div class="stack">
-          <strong>Rand für den Inhalt</strong>
-          <div class="edges">${EDGES.map(([key, label]) => this.edge(l.margins, key, label))}</div>
-          <wa-checkbox
-            ?checked="${first !== null}"
-            @change="${(e: Event) => {
-              l.first_margins = (e.target as HTMLInputElement).checked ? { ...l.margins } : null;
-              this.changed();
-            }}"
-          >
-            Erste Seite weicht ab
-          </wa-checkbox>
-          ${
-            first
-              ? html`<div class="edges">
-                  ${EDGES.map(([key, label]) => this.edge(first, key, label))}
-                </div>`
-              : nothing
-          }
-        </div>
-
-        <div class="stack">
           <strong>Schrift</strong>
-          <div class="file">
-            <wa-button appearance="outlined" ?disabled="${this.busy}" @click="${this.chooseFonts}">
-              Schriftdateien wählen
-            </wa-button>
-            ${
-              family
-                ? html`<span
-                      >${family} (${l.fonts.length}
-                      ${l.fonts.length === 1 ? 'Datei' : 'Dateien'})</span
-                    >
-                    <wa-button
-                      appearance="outlined"
-                      @click="${() => {
-                        l.fonts = [];
-                        this.changed();
-                      }}"
-                      >Entfernen</wa-button
-                    >`
-                : nothing
-            }
-          </div>
-          <span class="muted">
-            TTF oder OTF. Alle Schnitte einer Familie auf einmal wählen (Regular, Bold, …).
-          </span>
+          <erng-font-list .layout="${l}" @change="${() => this.changed()}"></erng-font-list>
         </div>
+
+        <wa-checkbox
+          ?checked="${this.guides}"
+          hint="Zeichnet Linien an die Ränder des Inhalts und die Maße eines Briefs"
+          @change="${(e: Event) =>
+            this.dispatchEvent(
+              new CustomEvent<boolean>('guides-change', {
+                detail: (e.target as HTMLInputElement).checked,
+              })
+            )}"
+        >
+          Hilfslinien in der Vorschau
+        </wa-checkbox>
+
+        <wa-checkbox
+          ?checked="${l.first !== null}"
+          @change="${(e: Event) => {
+            // the first page starts as a copy of the others, with the same tools
+            l.first = (e.target as HTMLInputElement).checked ? structuredClone(l.page) : null;
+            this.pointAt(l.first !== null, null);
+            this.changed();
+          }}"
+        >
+          Erste Seite weicht ab
+        </wa-checkbox>
+
+        ${
+          l.first
+            ? html`<wa-tab-group
+                @wa-tab-show="${(e: CustomEvent<{ name: string }>) =>
+                  e.target === e.currentTarget && this.pointAt(e.detail.name === 'first', null)}"
+              >
+                <wa-tab slot="nav" panel="first">Erste Seite</wa-tab>
+                <wa-tab slot="nav" panel="page">Folgeseiten</wa-tab>
+                <wa-tab-panel name="first">${this.setup(l.first, families, true)}</wa-tab-panel>
+                <wa-tab-panel name="page">${this.setup(l.page, families, false)}</wa-tab-panel>
+              </wa-tab-group>`
+            : html`<div class="stack">
+                <strong>Alle Seiten</strong>${this.setup(l.page, families, false)}
+              </div>`
+        }
       </div>
     `;
   }

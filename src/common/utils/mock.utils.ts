@@ -40,7 +40,6 @@ const settings: Settings = {
   payment_days: 14,
   number_prefix: 'RE-',
   footer: null,
-  logo: null,
   layout: 'standard',
   intro: null,
   closing: null,
@@ -66,6 +65,42 @@ const customers: Customer[] = [
 ];
 
 const customLayouts: CustomLayout[] = [];
+
+/** A small stand-in for the built-in layout the backend hands out */
+const builtinLayout = (): CustomLayout => ({
+  id: null,
+  name: 'Klassisch',
+  page: { margins: { top: 20, right: 20, bottom: 36, left: 25 }, parts: [] },
+  first: {
+    margins: { top: 98, right: 20, bottom: 36, left: 25 },
+    parts: [
+      {
+        kind: 'address',
+        anchor: 'top-left',
+        x: 25,
+        y: 50,
+        width: 80,
+        sender_line: true,
+        size: 10,
+      },
+      {
+        kind: 'infos',
+        anchor: 'top-right',
+        x: 20,
+        y: 45,
+        width: 75,
+        fields: ['number', 'date', 'service-date', 'due-date'],
+        labels: true,
+        align: 'right',
+        long_dates: false,
+        size: 9,
+      },
+    ],
+  },
+  fonts: [],
+  font: null,
+  archived: false,
+});
 
 const templates: PositionTemplate[] = [
   { id: 1, description: 'Beratung', quantity: '1', unit: 'HUR', price: '95,00' },
@@ -197,10 +232,8 @@ export function installMocks() {
             1
           );
           return null;
-        case 'layout_import_background':
-          return { name: String(args['path']).split('/').pop(), first: '/mock/1.svg', rest: null };
         case 'layout_import_font':
-          return { family: 'Mock Sans', path: String(args['path']) };
+          return { family: 'Mock Sans', style: 'Regular', path: String(args['path']) };
         case 'layouts_list':
           return [
             {
@@ -226,6 +259,22 @@ export function installMocks() {
                 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297"><text x="20" y="40" font-size="12">Beispiel Seite ${n}</text></svg>`
             ),
             problems: [],
+            // where the parts are, so the pointer can find them in the sample
+            parts: [
+              { page: 1, first: true, index: 0, x: 25, y: 50, w: 80, h: 22 },
+              { page: 1, first: true, index: 1, x: 115, y: 50, w: 75, h: 22 },
+              { page: 2, first: false, index: 0, x: 25, y: 20, w: 60, h: 10 },
+            ],
+          };
+        case 'layout_builtin':
+          return builtinLayout();
+        case 'layout_import_image':
+          return {
+            name: String(args['path']).split('/').pop(),
+            path: String(args['path']),
+            width_px: 300,
+            height_px: 200,
+            vector: false,
           };
         case 'layout_usage':
           return [];
@@ -269,6 +318,7 @@ export function installMocks() {
                <g fill="#222" font-family="serif">${lines.join('')}</g></svg>`,
             ],
             problems: [],
+            parts: [],
           };
         }
         case 'invoices_list':

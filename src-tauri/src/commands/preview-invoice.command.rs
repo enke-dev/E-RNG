@@ -14,6 +14,8 @@ pub struct Preview {
     pub pages: Vec<String>,
     /// Set instead of pages when even a half filled form cannot be shown
     pub problems: Vec<InputProblem>,
+    /// Where the parts of the layout are on the pages, only for the editor of a layout
+    pub parts: Vec<crate::render::PartBox>,
 }
 
 /// The invoice as it will look, rendered by the real template for the form's current state.
@@ -54,6 +56,7 @@ pub async fn preview_invoice(
             return Ok(Preview {
                 pages: Vec::new(),
                 problems,
+                parts: Vec::new(),
             })
         }
     };
@@ -71,5 +74,6 @@ pub async fn preview_invoice(
     Ok(Preview {
         pages,
         problems: Vec::new(),
+        parts: Vec::new(),
     })
 }

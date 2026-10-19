@@ -102,7 +102,6 @@ mod tests {
 
     fn branding() -> Branding {
         Branding {
-            logo: None,
             footer: Some("Geschäftsführer: Max Muster · AG Köln HRB 12345".into()),
             ..Branding::default()
         }
@@ -321,39 +320,93 @@ mod tests {
         format!("{}{}{}", &xml[..content_start], value, &xml[content_end..])
     }
 
-    /// Stationery from a PDF (as SVG, Typst cannot embed it in PDF/A) and an uploaded font:
-    /// the result must still validate. `RENDER_OUT` keeps the PDFs.
+    /// The built-in layout with a full page picture as letterhead on every page (a different one
+    /// on the first), an uploaded font, and a frame and parts of its own on the first page.
+    fn own_layout(
+        letterheads: [&crate::layout::ImageFile; 2],
+        font: &crate::layout::FontFile,
+    ) -> crate::layout::CustomLayout {
+        use crate::layout::{builtin, Anchor, Insets, Part, PartContent};
+        let full_page = |image: &crate::layout::ImageFile| Part {
+            anchor: Anchor::TopLeft,
+            x: 0.0,
+            y: 0.0,
+            width: Some(210.0),
+            content: PartContent::Image {
+                image: Some(image.clone()),
+            },
+        };
+        let mut layout = crate::layout::CustomLayout {
+            id: Some(1),
+            name: "Briefpapier".into(),
+            fonts: vec![font.clone()],
+            ..builtin()
+        };
+        layout.page.margins = Insets {
+            top: 30.0,
+            right: 20.0,
+            bottom: 40.0,
+            left: 25.0,
+        };
+        layout.page.parts.push(full_page(letterheads[1]));
+        if let Some(first) = layout.first.as_mut() {
+            first.margins = Insets {
+                top: 90.0,
+                right: 35.0,
+                bottom: 40.0,
+                left: 40.0,
+            };
+            first.parts.push(full_page(letterheads[0]));
+        }
+        layout
+    }
+
+    /// Letterheads as full page pictures (SVG, made with Typst) and an uploaded font: the result
+    /// must still validate. `RENDER_OUT` keeps the PDFs.
     #[test]
     #[ignore = "needs the sidecars: bun run generate:sidecars"]
-    fn an_own_layout_with_stationery_and_font_is_a_valid_pdf() {
-        use crate::model::{CustomLayout, Insets};
+    fn an_own_layout_with_letterheads_and_font_is_a_valid_pdf() {
         let sidecars = Sidecars::in_repo();
         let work = tempfile::tempdir().unwrap();
         let files = tempfile::tempdir().unwrap();
 
-        // a two page letterhead: a blue band on the first page, a thin line on the next
-        std::fs::write(
-            work.path().join("paper.typ"),
-            "#set page(paper: \"a4\", margin: 0pt)\n\
-             #place(top, rect(width: 100%, height: 4cm, fill: rgb(\"#1d4ed8\")))\n\
-             #place(bottom, rect(width: 100%, height: 1.5cm, fill: luma(225)))\n\
-             #pagebreak()\n\
-             #place(top, rect(width: 100%, height: 1cm, fill: luma(225)))",
-        )
-        .unwrap();
-        let out = crate::sidecar::run(
-            &sidecars.typst(),
-            &["compile".into(), "paper.typ".into(), "paper.pdf".into()],
-            work.path(),
-            std::time::Duration::from_secs(60),
-        )
-        .unwrap();
-        assert_eq!(out.code, Some(0), "{}", out.stderr);
-
-        let background =
-            crate::layout_files::import_background(&work.path().join("paper.pdf"), files.path())
-                .unwrap();
-        assert!(background.rest.is_some());
+        // two letterheads: a blue band and a grey footer strip, and a thin line for the other pages
+        let letterhead = |name: &str, content: &str| {
+            std::fs::write(
+                work.path().join(format!("{name}.typ")),
+                format!("#set page(paper: \"a4\", margin: 0pt)\n{content}"),
+            )
+            .unwrap();
+            let out = crate::sidecar::run(
+                &sidecars.typst(),
+                &[
+                    "compile".into(),
+                    "--format".into(),
+                    "svg".into(),
+                    format!("{name}.typ").into(),
+                    format!("{name}.svg").into(),
+                ],
+                work.path(),
+                std::time::Duration::from_secs(60),
+            )
+            .unwrap();
+            assert_eq!(out.code, Some(0), "{}", out.stderr);
+            crate::layout_files::import_image(
+                &work.path().join(format!("{name}.svg")),
+                files.path(),
+            )
+            .unwrap()
+        };
+        let first = letterhead(
+            "first",
+            "#place(top, rect(width: 100%, height: 4cm, fill: rgb(\"#1d4ed8\")))\n\
+             #place(bottom, rect(width: 100%, height: 1.5cm, fill: luma(225)))",
+        );
+        let rest = letterhead(
+            "rest",
+            "#place(top, rect(width: 100%, height: 1cm, fill: luma(225)))",
+        );
+        assert!(first.vector && rest.vector);
         let font = crate::layout_files::import_font(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/OpenSans.ttf"),
             &files.path().join("fonts"),
@@ -366,25 +419,7 @@ mod tests {
             for (name, invoice, profile) in crate::invoice::golden::cases() {
                 let dir = tempfile::tempdir().unwrap();
                 let branding = Branding {
-                    custom: Some(CustomLayout {
-                        id: Some(1),
-                        name: "Briefpapier".into(),
-                        background: Some(background.clone()),
-                        margins: Insets {
-                            top: 30.0,
-                            right: 20.0,
-                            bottom: 30.0,
-                            left: 25.0,
-                        },
-                        first_margins: Some(Insets {
-                            top: 70.0,
-                            right: 35.0,
-                            bottom: 40.0,
-                            left: 40.0,
-                        }),
-                        fonts: vec![font.clone()],
-                        archived: false,
-                    }),
+                    custom: Some(own_layout([&first, &rest], &font)),
                     ..with_letter()
                 };
                 let produced =
@@ -407,5 +442,86 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A picture part (too few pixels for its size, so the sample marks it), guides and marks in the
+    /// preview, and the invoice with that layout still validates. `RENDER_OUT` keeps the pages.
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn an_image_part_is_placed_marked_when_blurry_and_valid_in_the_pdf() {
+        use crate::layout::{builtin, Anchor, ImageFile, Part, PartContent};
+        let sidecars = Sidecars::in_repo();
+        let dir = tempfile::tempdir().unwrap();
+        // a one pixel png: far too few pixels for 40 mm
+        let bytes = base64_decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+        );
+        let path = dir.path().join("pixel.png");
+        std::fs::write(&path, bytes).unwrap();
+
+        let mut layout = builtin();
+        layout.first.as_mut().unwrap().parts.push(Part {
+            anchor: Anchor::TopLeft,
+            x: 25.0,
+            y: 12.0,
+            width: Some(40.0),
+            content: PartContent::Image {
+                image: Some(ImageFile {
+                    name: "pixel.png".into(),
+                    path,
+                    width_px: 1,
+                    height_px: 1,
+                    vector: false,
+                }),
+            },
+        });
+        let branding = Branding {
+            custom: Some(layout),
+            ..with_letter()
+        };
+        let (_, invoice, profile) = crate::invoice::golden::cases().remove(0);
+
+        let produced = produce(&sidecars, dir.path(), &invoice, profile, &branding).unwrap();
+        assert!(
+            produced.report.valid,
+            "{:#?}",
+            produced.report.errors().collect::<Vec<_>>()
+        );
+
+        let sample = Branding {
+            guides: true,
+            marks: true,
+            ..branding
+        };
+        let (pages, boxes) =
+            render::render_sample(&sidecars, dir.path(), &invoice, &sample).unwrap();
+        // every part of the first page is somewhere on page 1, the infos end at the right margin
+        let first_page: Vec<_> = boxes.iter().filter(|b| b.page == 1 && b.first).collect();
+        assert!(first_page.len() >= 8, "{boxes:#?}");
+        assert!(first_page.iter().all(|b| b.w > 0.0));
+        let infos = first_page.iter().find(|b| b.index == 8).unwrap();
+        assert!((infos.x + infos.w - 190.0).abs() < 0.5, "{infos:?}");
+        assert!((infos.y - 50.0).abs() < 0.5, "{infos:?}");
+        if let Ok(keep) = std::env::var("RENDER_OUT") {
+            std::fs::create_dir_all(&keep).unwrap();
+            std::fs::write(format!("{keep}/image-part.svg"), &pages[0]).unwrap();
+        }
+    }
+
+    /// Enough of base64 for a fixture.
+    fn base64_decode(text: &str) -> Vec<u8> {
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = Vec::new();
+        let (mut buffer, mut bits) = (0u32, 0);
+        for c in text.bytes().filter(|c| *c != b'=') {
+            buffer = buffer << 6
+                | u32::try_from(ALPHABET.iter().position(|a| *a == c).unwrap()).unwrap();
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push(u8::try_from(buffer >> bits & 0xff).unwrap());
+            }
+        }
+        out
     }
 }

@@ -1,6 +1,7 @@
 mod commands;
 mod draft;
 mod invoice;
+mod layout;
 mod layout_files;
 mod model;
 mod package;
@@ -54,8 +55,9 @@ pub fn run() {
             commands::invoices_command::invoice_set_paid,
             commands::invoices_command::invoices_list,
             commands::layouts_command::layout_delete,
-            commands::layouts_command::layout_import_background,
+            commands::layouts_command::layout_builtin,
             commands::layouts_command::layout_import_font,
+            commands::layouts_command::layout_import_image,
             commands::layouts_command::layout_preview,
             commands::layouts_command::layout_save,
             commands::layouts_command::layout_usage,

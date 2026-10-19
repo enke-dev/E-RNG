@@ -1,0 +1,30 @@
+:host {
+  display: block;
+}
+
+.fonts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-2xs);
+}
+
+.font {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wa-space-s);
+  padding: var(--wa-space-2xs) var(--wa-space-s);
+  border: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+  border-radius: var(--wa-border-radius-s);
+}
+
+.name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--wa-space-2xs) var(--wa-space-s);
+}
+
+.name .muted:last-child {
+  flex-basis: 100%;
+}

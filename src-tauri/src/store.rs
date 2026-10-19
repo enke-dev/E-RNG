@@ -663,11 +663,8 @@ mod tests {
         CustomLayout {
             id: None,
             name: name.into(),
-            background: None,
-            margins: Default::default(),
-            first_margins: None,
             fonts: Vec::new(),
-            archived: false,
+            ..crate::layout::builtin()
         }
     }
 

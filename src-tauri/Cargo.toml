@@ -31,10 +31,8 @@ rust_decimal = "1"
 anyhow = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-hayro-svg = { version = "0.8", features = ["embed-fonts"] }
-hayro-syntax = "0.8"
-hayro-interpret = "0.8"
 ttf-parser = "0.25.1"
+imagesize = "0.15.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

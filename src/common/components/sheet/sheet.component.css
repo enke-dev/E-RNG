@@ -1,14 +1,13 @@
 :host {
   /* what the surroundings take away from the height of the pane that scrolls (a sticky footer) */
   --reserve: 0px;
-  /* room for the pager under the page, only when there is one */
-  --pager: 0rem;
-
   position: sticky;
   top: 0;
   box-sizing: border-box;
-  /* never taller than the visible part of the pane: page and pager stay in reach */
+  /* the page is as wide as its column and so as tall as that makes it: where it is taller than the
+     visible part of the pane it scrolls on its own, the pager stays in reach */
   max-height: calc(100cqb - var(--reserve));
+  overflow-y: auto;
   align-self: start;
   display: flex;
   flex-direction: column;
@@ -18,21 +17,14 @@
   padding-block: var(--wa-space-m);
 }
 
-:host([paged]) {
-  --pager: 3rem;
-}
-
 .page {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   aspect-ratio: 210 / 297;
-  min-width: 5rem;
-  /* as wide as the column allows and as tall as the pane allows (A4, portrait) */
-  width: min(
-    100%,
-    calc((100cqb - var(--reserve) - 2 * var(--wa-space-m) - var(--pager)) * 210 / 297)
-  );
+  width: 100%;
+  flex: none;
   background: #fff;
   box-shadow: var(--wa-shadow-m);
 
@@ -47,4 +39,29 @@
     text-align: center;
     color: #777;
   }
+}
+
+wa-button-group {
+  position: sticky;
+  bottom: 0;
+  flex: none;
+}
+
+wa-button-group {
+  background: var(--wa-color-surface-default);
+  border-radius: var(--wa-border-radius-m);
+}
+
+/* what is under the pointer is a part of the layout, the same mark as in the form */
+.region {
+  all: unset;
+  position: absolute;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.region:hover,
+.region.active {
+  border: 2px solid var(--erng-highlight);
+  background: color-mix(in srgb, var(--erng-highlight) 25%, transparent);
 }

@@ -1,0 +1,31 @@
+:host {
+  display: block;
+}
+
+.edges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: var(--wa-space-s);
+}
+
+wa-details {
+  --spacing: var(--wa-space-s);
+}
+
+.remove {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.muted {
+  color: var(--wa-color-text-quiet);
+  font-weight: normal;
+}
+
+/* the part that is pointed at, here or in the sample, the same mark in both */
+wa-details:hover::part(base),
+wa-details[open]::part(base),
+wa-details[data-active]::part(base) {
+  border-color: var(--erng-highlight);
+  box-shadow: 0 0 0 1px var(--erng-highlight);
+}
