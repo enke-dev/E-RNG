@@ -9,6 +9,7 @@ import { customElement, eventOptions } from 'lit/decorators.js';
 import { when } from 'lit/directives/when.js';
 
 import { ErngElement } from '../common/utils/base.utils.js';
+import { followOpenedFiles } from '../common/utils/opened.utils.js';
 import { registerRouter } from '../common/utils/routing.utils.js';
 import { errors, isErrored, isLoading } from '../state.js';
 import { routes } from './root.routes.js';
@@ -39,6 +40,7 @@ export class RootView extends ErngElement.withStyles(styles) {
     super.connectedCallback();
     // the overlay title bar puts the traffic lights on top of the header
     this.toggleAttribute('macos', platform() === 'macos');
+    void followOpenedFiles();
   }
 
   protected override async firstUpdated() {

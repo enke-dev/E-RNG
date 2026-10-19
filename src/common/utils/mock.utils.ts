@@ -69,6 +69,8 @@ const customLayouts: CustomLayout[] = [];
 /** A small stand-in for the built-in layout the backend hands out */
 const builtinLayout = (): CustomLayout => ({
   id: null,
+  uid: '',
+  updated_at: '',
   name: 'Klassisch',
   page: { margins: { top: 20, right: 20, bottom: 36, left: 25 }, parts: [] },
   first: {
@@ -232,7 +234,12 @@ export function installMocks() {
         case 'layout_save': {
           const layout = args['layout'] as CustomLayout;
           if (layout.id === null) {
-            customLayouts.push({ ...layout, id: customLayouts.length + 1 });
+            customLayouts.push({
+              ...layout,
+              id: customLayouts.length + 1,
+              uid: `mock-${customLayouts.length + 1}`,
+              updated_at: new Date().toISOString(),
+            });
             return customLayouts.at(-1);
           }
           customLayouts[customLayouts.findIndex(l => l.id === layout.id)] = layout;
@@ -278,6 +285,18 @@ export function installMocks() {
               { page: 2, first: false, index: 0, x: 25, y: 20, w: 60, h: 10 },
             ],
           };
+        case 'layout_export':
+          return null;
+        case 'layout_import': {
+          const layout = {
+            ...builtinLayout(),
+            id: customLayouts.length + 1,
+            uid: `mock-${customLayouts.length + 1}`,
+            name: 'Importiert',
+          };
+          customLayouts.push(layout);
+          return { kind: 'done', layout, missing_fonts: ['Mock Sans'] };
+        }
         case 'layout_builtin':
           return builtinLayout();
         case 'layout_import_image':
@@ -414,6 +433,8 @@ export function installMocks() {
           stored.draft.frozen = settings;
           return stored;
         }
+        case 'opened_files':
+          return [];
         case 'discard_work_dir':
           return null;
         case 'plugin:dialog|save':

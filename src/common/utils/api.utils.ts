@@ -146,6 +146,30 @@ export interface FontFile {
   path: string;
 }
 
+/** The answers the user gave while a layout file was being imported */
+export interface ImportChoice {
+  /** Replace the stored copy of the same layout */
+  replace?: boolean;
+  /** The name to store it under instead of the one in the file */
+  name?: string;
+}
+
+/** What importing a layout file came to: done, or a question for the user */
+export type ImportOutcome =
+  | {
+      kind: 'done';
+      layout: CustomLayout;
+      /** Fonts the file asked for but did not bring */
+      missing_fonts: string[];
+    }
+  | {
+      kind: 'replace';
+      existing: { name: string; updated_at: string; uses: number; is_default: boolean };
+      incoming_name: string;
+      incoming_updated_at: string;
+    }
+  | { kind: 'name-taken'; name: string; suggested: string };
+
 /** An invoice made with an own layout, what keeps the layout from being deleted */
 export interface LayoutUsage {
   invoice_id: number;
@@ -245,6 +269,10 @@ export interface Format {
 /** A layout the user made, it starts as the built-in one */
 export interface CustomLayout {
   id: number | null;
+  /** Stays with the layout through renaming, export and import; empty until it is stored */
+  uid: string;
+  /** When it was last saved (UTC, ISO), empty until it is stored */
+  updated_at: string;
   name: string;
   /** The pages after the first, and the first unless it has its own */
   page: PageSetup;
@@ -335,6 +363,10 @@ export const api = {
   layoutSave: (layout: CustomLayout) => invoke<CustomLayout>('layout_save', { layout }),
   layoutPreview: (layout: CustomLayout | null, guides: boolean) =>
     invoke<Preview>('layout_preview', { layout, guides }),
+  layoutExport: (layout: CustomLayout, withFonts: boolean, path: string) =>
+    invoke<null>('layout_export', { layout, withFonts, path }),
+  layoutImport: (path: string, choice: ImportChoice) =>
+    invoke<ImportOutcome>('layout_import', { path, choice }),
   layoutBuiltin: () => invoke<CustomLayout>('layout_builtin'),
   layoutImportImage: (path: string) => invoke<ImageFile>('layout_import_image', { path }),
   layoutUsage: (id: number) => invoke<LayoutUsage[]>('layout_usage', { id }),
@@ -373,5 +405,6 @@ export const api = {
       pdfTarget,
       xmlTarget,
     }),
+  openedFiles: () => invoke<string[]>('opened_files'),
   discardWorkDir: (workDir: string) => invoke<null>('discard_work_dir', { workDir }),
 };

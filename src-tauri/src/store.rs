@@ -66,6 +66,39 @@ fn migrate(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn new_uid() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// UTC, in a form that sorts like time does
+fn now() -> String {
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Inserts or updates a layout row, returns its id
+fn put(conn: &Connection, layout: &CustomLayout) -> Result<i64> {
+    let json = serde_json::to_string(&CustomLayout {
+        id: None,
+        ..layout.clone()
+    })?;
+    match layout.id {
+        Some(id) => {
+            let changed = conn.execute(
+                "UPDATE layouts SET json = ?1 WHERE id = ?2",
+                params![json, id],
+            )?;
+            if changed == 0 {
+                bail!("unknown layout");
+            }
+            Ok(id)
+        }
+        None => {
+            conn.execute("INSERT INTO layouts (json) VALUES (?1)", [json])?;
+            Ok(conn.last_insert_rowid())
+        }
+    }
+}
+
 fn stored(row: &Row) -> rusqlite::Result<(StoredInvoice, String)> {
     let draft: String = row.get("draft")?;
     let status: String = row.get("status")?;
@@ -252,6 +285,7 @@ impl Store {
 
     // own layouts
 
+    /// Own layouts by name. One that has no `uid` yet (made before there were any) gets it here, once.
     pub fn custom_layouts(&self) -> Result<Vec<CustomLayout>> {
         let conn = self.conn();
         let mut statement = conn.prepare("SELECT id, json FROM layouts")?;
@@ -265,35 +299,44 @@ impl Store {
                 Ok(layout)
             })
             .collect::<Result<Vec<_>>>()?;
+        drop(statement);
+        for layout in layouts.iter_mut().filter(|l| l.uid.is_empty()) {
+            layout.uid = new_uid();
+            layout.updated_at = now();
+            put(&conn, layout)?;
+        }
         layouts.sort_by_key(|l| l.name.to_lowercase());
         Ok(layouts)
     }
 
+    /// Stores an own layout the user edited: a new one gets its `uid`, the time of saving is noted.
     pub fn save_custom_layout(&self, layout: &CustomLayout) -> Result<CustomLayout> {
-        let conn = self.conn();
-        let json = serde_json::to_string(&CustomLayout {
-            id: None,
-            ..layout.clone()
-        })?;
-        let id = match layout.id {
-            Some(id) => {
-                let changed = conn.execute(
-                    "UPDATE layouts SET json = ?1 WHERE id = ?2",
-                    params![json, id],
-                )?;
-                if changed == 0 {
-                    bail!("unknown layout");
-                }
-                id
-            }
-            None => {
-                conn.execute("INSERT INTO layouts (json) VALUES (?1)", [json])?;
-                conn.last_insert_rowid()
-            }
-        };
+        let mut layout = layout.clone();
+        if layout.uid.is_empty() {
+            layout.uid = new_uid();
+        }
+        layout.updated_at = now();
+        self.store_layout(layout)
+    }
+
+    /// Stores a layout that came from a file as it is: its `uid` and time stay, so the copies can be
+    /// compared later. A file that has none (the built-in layout) gets them like a new layout.
+    pub fn store_imported_layout(&self, layout: &CustomLayout) -> Result<CustomLayout> {
+        let mut layout = layout.clone();
+        if layout.uid.is_empty() {
+            layout.uid = new_uid();
+        }
+        if layout.updated_at.is_empty() {
+            layout.updated_at = now();
+        }
+        self.store_layout(layout)
+    }
+
+    fn store_layout(&self, layout: CustomLayout) -> Result<CustomLayout> {
+        let id = put(&self.conn(), &layout)?;
         Ok(CustomLayout {
             id: Some(id),
-            ..layout.clone()
+            ..layout
         })
     }
 
@@ -666,6 +709,59 @@ mod tests {
             fonts: Vec::new(),
             ..crate::layout::builtin()
         }
+    }
+
+    #[test]
+    fn a_layout_keeps_its_uid_and_notes_when_it_was_saved() {
+        let store = Store::in_memory().unwrap();
+        let first = store.save_custom_layout(&own_layout("A")).unwrap();
+        assert!(!first.uid.is_empty() && first.updated_at.ends_with('Z'));
+
+        // renaming keeps what tells it from other layouts
+        let renamed = store
+            .save_custom_layout(&CustomLayout {
+                name: "B".into(),
+                ..first.clone()
+            })
+            .unwrap();
+        assert_eq!(renamed.uid, first.uid);
+
+        // an imported one keeps both, one without them gets them
+        let imported = CustomLayout {
+            uid: "u-1".into(),
+            updated_at: "2020-01-01T00:00:00Z".into(),
+            ..own_layout("C")
+        };
+        let stored = store.store_imported_layout(&imported).unwrap();
+        assert_eq!(
+            (stored.uid.as_str(), stored.updated_at.as_str()),
+            ("u-1", "2020-01-01T00:00:00Z")
+        );
+        let plain = store.store_imported_layout(&own_layout("D")).unwrap();
+        assert!(!plain.uid.is_empty() && !plain.updated_at.is_empty());
+
+        // what is read back is what was stored, an old row without a uid gets one for good
+        let conn = store.conn();
+        conn.execute(
+            "INSERT INTO layouts (json) VALUES (?1)",
+            [serde_json::to_string(&own_layout("Old"))
+                .unwrap()
+                .replace("\"uid\":\"\",", "")],
+        )
+        .unwrap();
+        drop(conn);
+        let uid = |store: &Store| {
+            store
+                .custom_layouts()
+                .unwrap()
+                .into_iter()
+                .find(|l| l.name == "Old")
+                .unwrap()
+                .uid
+        };
+        let once = uid(&store);
+        assert!(!once.is_empty());
+        assert_eq!(uid(&store), once);
     }
 
     #[test]

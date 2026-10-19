@@ -38,6 +38,20 @@
       "icons/icon.ico"
     ],
     "createUpdaterArtifacts": true,
+    "fileAssociations": [
+      {
+        "ext": ["erng-layout"],
+        "name": "E-RNG-Layout",
+        "description": "E-RNG-Layout",
+        "mimeType": "application/json",
+        "role": "Editor",
+        "exportedType": {
+          "identifier": "dev.enke.e-rng.layout",
+          "conformsTo": ["public.json"]
+        },
+        "rank": "Owner"
+      }
+    ],
     "resources": {
       "sidecars/": "sidecars/"
     },

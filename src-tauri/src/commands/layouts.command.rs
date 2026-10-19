@@ -1,11 +1,13 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use super::preview_invoice_command::Preview;
 use crate::draft::{build_invoice, for_preview};
 
 use crate::layout::ImageFile;
+use crate::layout_bundle;
 use crate::layout_files;
 use crate::model::{CustomLayout, Customer, FontFile, InvoiceDraft, LayoutUsage, Position};
 use crate::render::{self, Branding};
@@ -79,6 +81,175 @@ pub fn layout_builtin() -> CustomLayout {
 #[tauri::command]
 pub fn layout_import_font(app: AppHandle, path: PathBuf) -> Result<FontFile, String> {
     layout_files::import_font(&path, &files_dir(&app)?.join("fonts")).map_err(message)
+}
+
+/// Writes a layout, as it is in the form, with its files into a file the user picked.
+#[tauri::command]
+pub fn layout_export(
+    app: AppHandle,
+    layout: CustomLayout,
+    with_fonts: bool,
+    path: PathBuf,
+) -> Result<(), String> {
+    let text = layout_bundle::export(&layout, with_fonts, &files_dir(&app)?).map_err(message)?;
+    std::fs::write(path, text).map_err(message)
+}
+
+/// What the user decided about an import, the answers to what it asked for so far
+#[derive(Debug, Default, Deserialize)]
+pub struct ImportChoice {
+    /// Replace the stored copy of the same layout
+    #[serde(default)]
+    pub replace: bool,
+    /// The name to store it under, instead of the one in the file
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// The stored copy of a layout that a file brings again
+#[derive(Debug, Serialize)]
+pub struct Stored {
+    pub name: String,
+    pub updated_at: String,
+    /// Invoices and drafts that were made with it
+    pub uses: usize,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ImportOutcome {
+    /// Stored, with the fonts the file asked for but did not bring
+    Done {
+        layout: Box<CustomLayout>,
+        missing_fonts: Vec<String>,
+    },
+    /// The layout is stored already: replace it or not, the user decides
+    Replace {
+        existing: Stored,
+        incoming_name: String,
+        incoming_updated_at: String,
+    },
+    /// Another layout has the name: the user names this one
+    NameTaken { name: String, suggested: String },
+}
+
+/// What an import does with a file, given the layouts there are
+#[derive(Debug, PartialEq, Eq)]
+enum Plan {
+    Create(String),
+    /// The id of the layout that is replaced, and the name afterwards
+    Replace(i64, String),
+    AskReplace(i64),
+    AskName(String),
+}
+
+fn same_name(a: &str, b: &str) -> bool {
+    a.trim().to_lowercase() == b.trim().to_lowercase()
+}
+
+/// The same `uid` is the same layout, replacing it needs a yes. Every name is for one layout only,
+/// whatever the `uid`s say.
+fn plan(layouts: &[CustomLayout], uid: &str, file_name: &str, choice: &ImportChoice) -> Plan {
+    let same = Some(uid)
+        .filter(|uid| !uid.is_empty())
+        .and_then(|uid| layouts.iter().find(|l| l.uid == uid));
+    if let Some(existing) = same.filter(|_| !choice.replace) {
+        return Plan::AskReplace(existing.id.unwrap_or_default());
+    }
+    let name = choice
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| file_name.trim())
+        .to_string();
+    let target = same.and_then(|l| l.id);
+    if layouts
+        .iter()
+        .any(|l| l.id != target && same_name(&l.name, &name))
+    {
+        return Plan::AskName(name);
+    }
+    match target {
+        Some(id) => Plan::Replace(id, name),
+        None => Plan::Create(name),
+    }
+}
+
+/// A name that is free and says where the layout came from, not that it follows another one
+fn suggest(layouts: &[CustomLayout], name: &str) -> String {
+    let now = chrono::Local::now();
+    let free = |candidate: &str| !layouts.iter().any(|l| same_name(&l.name, candidate));
+    let dated = format!("{name} (Import {})", now.format("%d.%m.%Y"));
+    if free(&dated) {
+        return dated;
+    }
+    format!("{name} (Import {})", now.format("%d.%m.%Y %H:%M"))
+}
+
+/// Reads a layout file. A layout that is not stored yet is stored right away; one that is stored
+/// (same `uid`) is replaced only when the user said so, and a name another layout has is never
+/// taken. Until the answers are in nothing is copied or changed, the call comes back asking.
+#[tauri::command]
+pub fn layout_import(
+    app: AppHandle,
+    store: State<'_, Store>,
+    path: PathBuf,
+    choice: Option<ImportChoice>,
+) -> Result<ImportOutcome, String> {
+    let size = std::fs::metadata(&path).map_err(message)?.len();
+    if size > layout_bundle::MAX_BUNDLE_BYTES {
+        return Err("Die Datei ist zu groß für ein Layout.".into());
+    }
+    let parsed =
+        layout_bundle::parse(&std::fs::read_to_string(&path).map_err(message)?).map_err(message)?;
+    let layouts = store.custom_layouts().map_err(message)?;
+    let find = |id: i64| layouts.iter().find(|l| l.id == Some(id));
+
+    let (name, replacing) = match plan(
+        &layouts,
+        parsed.uid(),
+        parsed.name(),
+        &choice.unwrap_or_default(),
+    ) {
+        Plan::AskReplace(id) => {
+            let existing = find(id).ok_or("Das Layout gibt es nicht mehr.")?;
+            let uses = store.layout_usages(id).map_err(message)?.len();
+            let is_default = store.settings().map_err(message)?.layout == existing.key();
+            return Ok(ImportOutcome::Replace {
+                existing: Stored {
+                    name: existing.name.clone(),
+                    updated_at: existing.updated_at.clone(),
+                    uses,
+                    is_default,
+                },
+                incoming_name: parsed.name().to_string(),
+                incoming_updated_at: parsed.updated_at().to_string(),
+            });
+        }
+        Plan::AskName(name) => {
+            return Ok(ImportOutcome::NameTaken {
+                suggested: suggest(&layouts, &name),
+                name,
+            })
+        }
+        Plan::Create(name) => (name, None),
+        Plan::Replace(id, name) => (name, find(id)),
+    };
+
+    let imported =
+        layout_bundle::install(parsed, Some(&name), &files_dir(&app)?).map_err(message)?;
+    let mut layout = imported.layout;
+    if let Some(existing) = replacing {
+        // the same layout, so what points at it keeps doing so
+        layout.id = existing.id;
+        layout.archived = existing.archived;
+    }
+    Ok(ImportOutcome::Done {
+        layout: Box::new(store.store_imported_layout(&layout).map_err(message)?),
+        missing_fonts: imported.missing_fonts,
+    })
 }
 
 /// A sample invoice long enough for a second page, the same for every layout so they can be compared
@@ -169,6 +340,67 @@ mod tests {
             fonts: Vec::new(),
             ..crate::layout::builtin()
         }
+    }
+
+    fn stored(id: i64, uid: &str, name: &str) -> CustomLayout {
+        CustomLayout {
+            id: Some(id),
+            uid: uid.into(),
+            name: name.into(),
+            ..layout()
+        }
+    }
+
+    #[test]
+    fn an_import_asks_before_it_replaces_or_takes_a_name() {
+        let layouts = [stored(1, "a", "Rechnung"), stored(2, "b", "Anna")];
+        let choice = |replace, name: Option<&str>| ImportChoice {
+            replace,
+            name: name.map(Into::into),
+        };
+
+        // new layout, free name
+        assert_eq!(
+            plan(&layouts, "c", "Neu", &choice(false, None)),
+            Plan::Create("Neu".into())
+        );
+        // no uid (the built-in layout) is always a new one
+        assert_eq!(
+            plan(&layouts, "", "Neu", &choice(false, None)),
+            Plan::Create("Neu".into())
+        );
+        // another layout that has the name, whatever the case, however renamed
+        assert_eq!(
+            plan(&layouts, "c", " anna ", &choice(false, None)),
+            Plan::AskName("anna".into())
+        );
+        assert_eq!(
+            plan(&layouts, "c", "Anna", &choice(false, Some("Anna 2"))),
+            Plan::Create("Anna 2".into())
+        );
+        // the same layout again: asks, then replaces, under its own name
+        assert_eq!(
+            plan(&layouts, "a", "Rechnung", &choice(false, None)),
+            Plan::AskReplace(1)
+        );
+        assert_eq!(
+            plan(&layouts, "a", "Rechnung", &choice(true, None)),
+            Plan::Replace(1, "Rechnung".into())
+        );
+        // renamed in the file to a name of another layout: that is asked as well
+        assert_eq!(
+            plan(&layouts, "a", "Anna", &choice(true, None)),
+            Plan::AskName("Anna".into())
+        );
+        assert_eq!(
+            plan(&layouts, "a", "Anna", &choice(true, Some("Rechnung neu"))),
+            Plan::Replace(1, "Rechnung neu".into())
+        );
+
+        // the suggestion is free and does not look like a successor
+        let suggested = suggest(&layouts, "Anna");
+        assert!(suggested.starts_with("Anna (Import "));
+        assert!(!layouts.iter().any(|l| same_name(&l.name, &suggested)));
     }
 
     #[test]

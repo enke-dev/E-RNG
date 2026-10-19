@@ -27,28 +27,43 @@ fn fingerprint(bytes: &[u8]) -> String {
 
 /// Copies a picture for a part and reads how many pixels it has.
 pub fn import_image(source: &Path, dir: &Path) -> Result<ImageFile> {
-    let extension = source
+    let size = std::fs::metadata(source)
+        .with_context(|| format!("cannot read the file {}", source.display()))?
+        .len();
+    // refuse before reading it all
+    if size > MAX_IMAGE_BYTES {
+        bail!(too_big(size));
+    }
+    let name = source
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    store_image(&name, &std::fs::read(source)?, dir)
+}
+
+fn too_big(size: u64) -> String {
+    format!(
+        "the image has {} MB, up to {} MB are accepted",
+        size / (1024 * 1024) + 1,
+        MAX_IMAGE_BYTES / (1024 * 1024)
+    )
+}
+
+/// Keeps picture data under a name that changes with the content, the name says the type.
+pub fn store_image(name: &str, bytes: &[u8], dir: &Path) -> Result<ImageFile> {
+    let extension = Path::new(name)
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_lowercase)
         .filter(|e| IMAGE_EXTENSIONS.contains(&e.as_str()))
         .context("an image must be a png, jpg or svg file")?;
-    let size = std::fs::metadata(source)
-        .with_context(|| format!("cannot read the file {}", source.display()))?
-        .len();
-    if size > MAX_IMAGE_BYTES {
-        bail!(
-            "the image has {} MB, up to {} MB are accepted",
-            size / (1024 * 1024) + 1,
-            MAX_IMAGE_BYTES / (1024 * 1024)
-        );
+    if bytes.len() as u64 > MAX_IMAGE_BYTES {
+        bail!(too_big(bytes.len() as u64));
     }
-    let bytes = std::fs::read(source)?;
     let vector = extension == "svg";
     let (width_px, height_px) = if vector {
         (0, 0)
     } else {
-        let dimensions = imagesize::blob_size(&bytes).context("this file is not a usable image")?;
+        let dimensions = imagesize::blob_size(bytes).context("this file is not a usable image")?;
         (
             u32::try_from(dimensions.width).unwrap_or(u32::MAX),
             u32::try_from(dimensions.height).unwrap_or(u32::MAX),
@@ -56,12 +71,10 @@ pub fn import_image(source: &Path, dir: &Path) -> Result<ImageFile> {
     };
 
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("image-{}.{extension}", fingerprint(&bytes)));
-    std::fs::write(&path, &bytes)?;
+    let path = dir.join(format!("image-{}.{extension}", fingerprint(bytes)));
+    std::fs::write(&path, bytes)?;
     Ok(ImageFile {
-        name: source
-            .file_name()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+        name: name.to_string(),
         path,
         width_px,
         height_px,
@@ -71,20 +84,25 @@ pub fn import_image(source: &Path, dir: &Path) -> Result<ImageFile> {
 
 /// Copies the font and reads the family name Typst will know it by.
 pub fn import_font(source: &Path, dir: &Path) -> Result<FontFile> {
-    let extension = source
+    let bytes = std::fs::read(source)
+        .with_context(|| format!("cannot read the file {}", source.display()))?;
+    store_font(&source.to_string_lossy(), &bytes, dir)
+}
+
+/// Keeps font data under a name that changes with the content; `name` only tells the type.
+pub fn store_font(name: &str, bytes: &[u8], dir: &Path) -> Result<FontFile> {
+    let extension = Path::new(name)
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_lowercase)
         .filter(|e| FONT_EXTENSIONS.contains(&e.as_str()))
         .context("a font must be a ttf, otf, ttc or otc file")?;
-    let bytes = std::fs::read(source)
-        .with_context(|| format!("cannot read the file {}", source.display()))?;
-    let family = family_name(&bytes).context("this file is not a usable font")?;
-    let style = style_name(&bytes).unwrap_or_default();
+    let family = family_name(bytes).context("this file is not a usable font")?;
+    let style = style_name(bytes).unwrap_or_default();
 
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}.{extension}", fingerprint(&bytes)));
-    std::fs::write(&path, &bytes)?;
+    let path = dir.join(format!("{}.{extension}", fingerprint(bytes)));
+    std::fs::write(&path, bytes)?;
     Ok(FontFile {
         family,
         style,

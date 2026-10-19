@@ -204,6 +204,13 @@ impl Default for Format {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CustomLayout {
     pub id: Option<i64>,
+    /// Stays with the layout through renaming, export and import: tells copies of one layout from
+    /// layouts that only share a name. Made when the layout is first stored.
+    #[serde(default)]
+    pub uid: String,
+    /// When it was last saved (UTC, `2026-10-20T08:15:00Z`), the store sets it
+    #[serde(default)]
+    pub updated_at: String,
     pub name: String,
     /// The pages after the first, and the first unless it has its own
     #[serde(default)]
@@ -362,6 +369,8 @@ pub fn builtin() -> CustomLayout {
     ]);
     CustomLayout {
         id: None,
+        uid: String::new(),
+        updated_at: String::new(),
         name: "Klassisch".into(),
         page: PageSetup {
             margins: margins(20.0),

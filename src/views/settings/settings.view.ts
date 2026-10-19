@@ -1,6 +1,7 @@
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
+import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '@awesome.me/webawesome/dist/components/tooltip/tooltip.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
@@ -14,6 +15,7 @@ import '../../common/layouts/editor/editor.layout.js';
 import '../../common/layouts/split/split.layout.js';
 
 import WaInput from '@awesome.me/webawesome/dist/components/input/input.js';
+import { ask, open, save } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -21,6 +23,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { regionKey } from '../../common/components/sheet/sheet.component.js';
 import type {
   CustomLayout,
+  ImportChoice,
+  ImportOutcome,
   LayoutInfo,
   LayoutUsage,
   Preview,
@@ -30,6 +34,7 @@ import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
+import { takeOpenedLayouts } from '../../common/utils/opened.utils.js';
 import { goto } from '../../common/utils/routing.utils.js';
 import styles from './settings.view.css';
 
@@ -42,6 +47,9 @@ const SECTIONS = [
 ] as const;
 
 const LAYOUT = 'layout-';
+
+/** The ending of a layout file */
+const LAYOUT_EXTENSION = 'erng-layout';
 
 /** The setup and the place of a part in it, from what `regionKey` made */
 const parseKey = (key: string): { first: boolean; index: number } => {
@@ -83,6 +91,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   #saved = '';
   /** The own layout as it is stored */
   #layoutSaved = '';
+
+  /** What an import asks the user, and how the answer gets back to it */
+  @state() private importQuestion:
+    | {
+        question: Exclude<ImportOutcome, { kind: 'done' }>;
+        name: string;
+        resolve: (answer: ImportChoice | undefined) => void;
+      }
+    | undefined;
   #sampleTimer: ReturnType<typeof setTimeout> | undefined;
   #sampleRequest = 0;
 
@@ -115,8 +132,14 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     return this.settings?.layout ?? 'standard';
   }
 
+  #stopOpened: (() => void) | undefined;
+
   override connectedCallback() {
     super.connectedCallback();
+    // files the system opened with the app come here, to be imported like picked ones
+    this.#stopOpened = takeOpenedLayouts(path =>
+      this.layoutAction(async () => this.importFrom(path, {}))
+    );
     void this.loadLayouts();
     api.settingsGet().then(
       settings => {
@@ -125,6 +148,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       },
       (error: unknown) => notifyError(error)
     );
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.#stopOpened?.();
   }
 
   protected override updated(changed: PropertyValues<this>) {
@@ -270,6 +298,170 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     }
   }
 
+  /** Reads a layout file: the layout is stored right away, removing it takes a delete */
+  private importLayout() {
+    return this.layoutAction(async () => {
+      const path = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: 'Layout', extensions: [LAYOUT_EXTENSION] }],
+      });
+      if (path) {
+        await this.importFrom(path, {});
+      }
+    });
+  }
+
+  /** Asks to import; where the file needs an answer from the user it is asked, then tried again */
+  private async importFrom(path: string, choice: ImportChoice): Promise<void> {
+    const outcome = await api.layoutImport(path, choice);
+    if (outcome.kind === 'done') {
+      await this.loadLayouts();
+      goto(`/settings/${LAYOUT}${outcome.layout.id}`);
+      const missing = outcome.missing_fonts;
+      notify(
+        missing.length > 0
+          ? `Layout importiert, es kam ohne Schrift: ${missing.join(', ')}. Bitte unter „Schrift“ ergänzen.`
+          : 'Layout importiert.',
+        missing.length > 0 ? 'warning' : 'success'
+      );
+      return;
+    }
+    const answer = await this.askAboutImport(outcome);
+    if (answer) {
+      await this.importFrom(path, { ...choice, ...answer });
+    }
+  }
+
+  /** Shows the question of an import, resolves with the answer or nothing if it was dismissed */
+  private askAboutImport(question: Exclude<ImportOutcome, { kind: 'done' }>) {
+    return new Promise<ImportChoice | undefined>(resolve => {
+      this.importQuestion = {
+        question,
+        name: question.kind === 'name-taken' ? question.suggested : '',
+        resolve,
+      };
+    });
+  }
+
+  private answerImport(answer?: ImportChoice) {
+    const pending = this.importQuestion;
+    this.importQuestion = undefined;
+    pending?.resolve(answer);
+  }
+
+  /** When the layout was saved, for a person */
+  private when(iso: string) {
+    return iso
+      ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })
+      : 'unbekannt';
+  }
+
+  private importDialog() {
+    const pending = this.importQuestion;
+    const question = pending?.question;
+    return html`<wa-dialog
+      ?open="${pending !== undefined}"
+      label="${question?.kind === 'replace' ? 'Layout ersetzen?' : 'Name vergeben'}"
+      @wa-after-hide="${(e: Event) => e.target === e.currentTarget && this.answerImport()}"
+    >
+      ${
+        question?.kind === 'replace'
+          ? html`<div class="stack">
+              <span>
+                „${question.existing.name}“ gibt es schon (gespeichert
+                ${this.when(question.existing.updated_at)}). Die Datei
+                ${
+                  question.incoming_updated_at > question.existing.updated_at
+                    ? 'ist neuer'
+                    : question.incoming_updated_at < question.existing.updated_at
+                      ? 'ist älter'
+                      : 'hat denselben Stand'
+                }
+                (${this.when(question.incoming_updated_at)}).
+              </span>
+              ${
+                question.existing.uses > 0 || question.existing.is_default
+                  ? html`<span class="muted">
+                      ${question.existing.is_default ? 'Es ist das Standard-Layout. ' : ''}
+                      ${
+                        question.existing.uses > 0
+                          ? `${question.existing.uses} Rechnungen und Entwürfe verwenden es, bereits exportierte behalten ihr Aussehen.`
+                          : ''
+                      }
+                    </span>`
+                  : nothing
+              }
+            </div>`
+          : question?.kind === 'name-taken'
+            ? html`<div class="stack">
+                <span>
+                  Ein anderes Layout heißt schon „${question.name}“. Unter welchem Namen soll das
+                  importierte gespeichert werden?
+                </span>
+                <wa-input
+                  label="Name"
+                  required
+                  .value="${pending?.name ?? ''}"
+                  @input="${(e: Event) => {
+                    if (this.importQuestion) {
+                      this.importQuestion = { ...this.importQuestion, name: text(e) };
+                    }
+                  }}"
+                ></wa-input>
+              </div>`
+            : nothing
+      }
+      <wa-button slot="footer" appearance="outlined" @click="${() => this.answerImport()}">
+        Abbrechen
+      </wa-button>
+      ${
+        question?.kind === 'replace'
+          ? html`<wa-button
+              slot="footer"
+              variant="${question.incoming_updated_at < question.existing.updated_at ? 'danger' : 'brand'}"
+              @click="${() => this.answerImport({ replace: true })}"
+            >
+              Ersetzen
+            </wa-button>`
+          : html`<wa-button
+              slot="footer"
+              variant="brand"
+              ?disabled="${(pending?.name ?? '').trim() === ''}"
+              @click="${() => this.answerImport({ name: pending?.name })}"
+            >
+              Importieren
+            </wa-button>`
+      }
+    </wa-dialog>`;
+  }
+
+  /** Writes a layout, as it is in the form, to a file; fonts only if the user wants to hand them out */
+  private exportLayout(layout: CustomLayout) {
+    return this.layoutAction(async () => {
+      // closing the question counts as "no": fonts have licences, they leave only on purpose
+      const withFonts =
+        layout.fonts.length > 0 &&
+        (await ask(
+          'Sollen die Schriften mit exportiert werden? Prüfe, ob ihre Lizenz das erlaubt.',
+          {
+            title: 'Layout exportieren',
+            okLabel: 'Mit Schriften',
+            cancelLabel: 'Ohne Schriften',
+          }
+        ));
+      const path = await save({
+        defaultPath: `${layout.name.trim() || 'Layout'}.${LAYOUT_EXTENSION}`,
+        filters: [{ name: 'Layout', extensions: [LAYOUT_EXTENSION] }],
+      });
+      if (!path) {
+        return;
+      }
+      await api.layoutExport(layout, withFonts, path);
+      notify('Layout exportiert.');
+    });
+  }
+
   private saveLayout() {
     return this.layoutAction(async () => {
       const layout = this.editing;
@@ -355,15 +547,24 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       <erng-list slot="list">
         ${SECTIONS.map(([key, label]) => this.item(key, label, ''))}
         <erng-list-group heading="Layouts">
-          <wa-button
-            slot="action"
-            size="s"
-            appearance="outlined"
-            ?disabled="${this.section === `${LAYOUT}new`}"
-            @click="${() => goto(`/settings/${LAYOUT}new`)}"
-          >
-            Neu
-          </wa-button>
+          <span slot="action" class="row">
+            <wa-button
+              size="s"
+              appearance="outlined"
+              ?disabled="${this.section === `${LAYOUT}new`}"
+              @click="${this.importLayout}"
+            >
+              Import
+            </wa-button>
+            <wa-button
+              size="s"
+              appearance="outlined"
+              ?disabled="${this.section === `${LAYOUT}new`}"
+              @click="${() => goto(`/settings/${LAYOUT}new`)}"
+            >
+              Neu
+            </wa-button>
+          </span>
           ${this.item(`${LAYOUT}standard`, this.builtInName, 'Eingebaut', isDefault('standard'))}
           ${this.customs.map(c =>
             this.item(
@@ -549,6 +750,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           </div>
           ${this.guidesToggle()} ${this.sampleSheet()}
         </erng-editor>
+        <wa-button slot="actions" appearance="outlined" @click="${this.exportBuiltIn}">
+          Exportieren
+        </wa-button>
         ${
           this.defaultLayout === 'standard'
             ? html`<span slot="actions" class="muted">Dieses Layout ist das Standard-Layout.</span>`
@@ -562,6 +766,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         }
       </erng-page>
     `;
+  }
+
+  /** The built-in layout as a file, a starting point to change elsewhere */
+  private async exportBuiltIn() {
+    await this.exportLayout({ ...(await api.layoutBuiltin()), name: this.builtInName });
   }
 
   /** What keeps a layout from being deleted, one line each; none means it can go */
@@ -599,6 +808,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
             </wa-tooltip>`
           : nothing
       }
+      <wa-button slot="actions" appearance="outlined" @click="${() => this.exportLayout(layout)}">
+        Exportieren
+      </wa-button>
       <wa-button
         slot="actions"
         appearance="outlined"
@@ -693,7 +905,8 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     if (!settings) {
       return nothing;
     }
-    return html`<erng-split>${this.renderList()} ${this.renderDetail(settings)}</erng-split>`;
+    return html`<erng-split>${this.renderList()} ${this.renderDetail(settings)}</erng-split>
+      ${this.importDialog()}`;
   }
 }
 

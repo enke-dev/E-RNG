@@ -10,6 +10,8 @@ pub mod export_invoice_command;
 pub mod invoices_command;
 #[path = "layouts.command.rs"]
 pub mod layouts_command;
+#[path = "opened-files.command.rs"]
+pub mod opened_files_command;
 #[path = "preview-invoice.command.rs"]
 pub mod preview_invoice_command;
 #[path = "produce-invoice.command.rs"]

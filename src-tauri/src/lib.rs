@@ -2,6 +2,7 @@ mod commands;
 mod draft;
 mod invoice;
 mod layout;
+mod layout_bundle;
 mod layout_files;
 mod model;
 mod package;
@@ -40,6 +41,7 @@ pub fn run() {
             Ok(())
         })
         .manage(session::Sessions::default())
+        .manage(commands::opened_files_command::OpenedFiles::default())
         .invoke_handler(tauri::generate_handler![
             commands::check_invoice_command::check_invoice,
             commands::customers_command::customer_delete,
@@ -56,6 +58,8 @@ pub fn run() {
             commands::invoices_command::invoices_list,
             commands::layouts_command::layout_delete,
             commands::layouts_command::layout_builtin,
+            commands::layouts_command::layout_export,
+            commands::layouts_command::layout_import,
             commands::layouts_command::layout_import_font,
             commands::layouts_command::layout_import_image,
             commands::layouts_command::layout_preview,
@@ -63,6 +67,7 @@ pub fn run() {
             commands::layouts_command::layout_usage,
             commands::layouts_command::layouts_custom,
             commands::layouts_command::layouts_list,
+            commands::opened_files_command::opened_files,
             commands::preview_invoice_command::preview_invoice,
             commands::produce_invoice_command::produce_invoice,
             commands::settings_command::settings_get,
@@ -75,8 +80,14 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             // work directories hold unsaved invoices, none of them outlives the app
-            if let tauri::RunEvent::Exit = event {
-                app.state::<session::Sessions>().discard_all();
+            match event {
+                tauri::RunEvent::Exit => app.state::<session::Sessions>().discard_all(),
+                // a layout file was opened with the app (macOS says so with an event)
+                #[cfg(any(target_os = "macos", target_os = "ios"))]
+                tauri::RunEvent::Opened { urls } => {
+                    commands::opened_files_command::offer(app, &urls);
+                }
+                _ => {}
             }
         });
 }

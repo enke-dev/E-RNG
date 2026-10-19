@@ -72,6 +72,7 @@ src-tauri/src/
   store.rs, model.rs       SQLite and the stored shapes
   render/                  invoice layouts (Typst) and the presentation view of an invoice
   layout_files.rs          own layouts: fonts (family from the file) and pictures (size, pixels)
+  layout_bundle.rs         a layout as a file (`.erng-layout`): export, import with its fonts and pictures
   package.rs               Mustang: combine and validate, report parsing
   pipeline.rs, session.rs  produce a validated file in a work directory, the export gate
   sidecar.rs               running the bundled tools with a deadline
@@ -122,6 +123,10 @@ or SVG up to 5 MB; a raster image with fewer than 150 dpi at its placed size is 
 warning triangle (`Branding.marks`, never in a real invoice).
 
 How numbers, money and dates are written is the layout's `Format` (`render/format.rs`: decimal and thousands separators, currency as symbol or code, before or after, with a space or not, `19 %` or `19%`, the minus sign, IBAN in groups, dates by a dayjs-like pattern with German month names). The default is the German way.
+
+A layout is exported to one JSON file (`layout_bundle.rs`, the form's state, not a stored one) with fonts and pictures as base64 under made-up names, so no path of the user leaks. Fonts go along only if the user says so (they have licences); without them the importer is told which families are missing. Every stored layout has a `uid` (made when it is first stored, kept through renaming, export and import) and an `updated_at` (UTC, set on each save). An import (`layout_import`, `plan` in `layouts.command.rs`) reads the file first and copies nothing until the questions are answered: the same `uid` as a stored layout is the same layout, and replacing it needs a yes (the dialog shows both times and what uses it; the row and its `id` stay, so the default and drafts keep pointing at it); a name another layout has (any case, archived too) is never taken, the user names the import instead (suggested: `Name (Import <date>)`, which does not look like a successor); anything else is stored right away, so it takes an explicit delete to remove it. The file is untrusted, fonts and pictures pass the same intake as picked ones (`store_font`, `store_image`), and a damaged or foreign file is refused as a whole. The built-in layout can be exported too, as a starting point.
+
+`.erng-layout` is a file association of the app (`bundle.fileAssociations`, with an exported type `dev.enke.e-rng.layout` so Finder knows its kind). macOS hands a double-clicked file to the running app, or to a starting one, as `RunEvent::Opened`; `opened-files.command.rs` keeps the paths until the window asks (`opened_files`, also on the `layout-file-opened` event), the root view asks the user to confirm (`opened.utils.ts`), goes to the settings, and the settings import it like a picked file, with the same replace and name questions. It only works in a built app, not in `tauri dev`; Windows and Linux (the path comes as an argument) are not wired.
 
 The sample hands out the box of every part (`<part-box>` metadata, read with `typst query`, `render_sample`), so the editor can tell what is under the pointer: pointing at a part in the form or in the sample marks it orange on both sides, a click in the sample opens it in the form. The settings show the same 30-position sample in every layout (`layout_preview`), with optional guides: red for the
 frame, cyan for the aids of a letter (address window, fold and punch marks, middle) and dotted outlines of the parts
