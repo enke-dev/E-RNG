@@ -99,6 +99,18 @@ const builtinLayout = (): CustomLayout => ({
   },
   fonts: [],
   font: null,
+  format: {
+    decimal: ',',
+    thousands: '.',
+    currency_symbol: true,
+    currency_after: true,
+    currency_space: true,
+    percent_space: true,
+    true_minus: false,
+    iban_groups: false,
+    date: 'DD.MM.YYYY',
+    date_long: 'D. MMMM YYYY',
+  },
   archived: false,
 });
 

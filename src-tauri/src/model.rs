@@ -80,7 +80,7 @@ impl Default for Settings {
     }
 }
 
-pub use crate::layout::{CustomLayout, FontFile, Insets, LayoutUsage};
+pub use crate::layout::{CustomLayout, FontFile, Format, Insets, LayoutUsage};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Customer {

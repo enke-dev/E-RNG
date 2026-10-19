@@ -1,6 +1,7 @@
 //! Renders the invoice with Typst: a PDF/A-3b for the document, SVG pages for the live preview. The ZUGFeRD parts (XML attachment, Factur-X XMP)
 //! are not added here, that is what the packaging step does with the result.
 
+mod format;
 mod layouts;
 mod parts;
 mod view;
@@ -29,7 +30,7 @@ fn stage(dir: &Path, invoice: &Invoice, branding: &Branding) -> Result<()> {
     let layout = branding.custom.clone().unwrap_or_else(layout::builtin);
     stage_fonts(&layout, dir)?;
 
-    let mut data = view::build(invoice, branding);
+    let mut data = view::build(invoice, branding, &layout.format);
     let mut staged = 0;
     data.page = view::PageView {
         guides: branding.guides,

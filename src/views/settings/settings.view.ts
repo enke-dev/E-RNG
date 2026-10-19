@@ -280,10 +280,16 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         throw new Error('Bitte dem Layout einen Namen geben.');
       }
       const saved = await api.layoutSave(layout);
-      this.#layoutSaved = '';
+      this.keep(saved);
       await this.loadLayouts();
       goto(`/settings/${LAYOUT}${saved.id}`);
     });
+  }
+
+  /** What was stored is what the form shows now, so there is nothing left to save */
+  private keep(saved: CustomLayout) {
+    this.editing = structuredClone(saved);
+    this.#layoutSaved = JSON.stringify(this.editing);
   }
 
   private archiveLayout(archived: boolean) {
@@ -292,8 +298,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       if (!layout) {
         return;
       }
-      await api.layoutSave({ ...layout, archived });
-      this.#layoutSaved = '';
+      this.keep(await api.layoutSave({ ...layout, archived }));
       await this.loadLayouts();
     });
   }
@@ -621,7 +626,6 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     return html`
       <erng-page frameless slot="detail">
         <erng-editor>
-          <h2 slot="form">${isNew ? 'Neues Layout' : layout.name || 'Layout'}</h2>
           ${
             layout.archived
               ? html`
@@ -663,7 +667,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         <wa-button
           slot="primary"
           variant="brand"
-          ?disabled="${!isNew && !this.layoutChanged}"
+          ?disabled="${isNew ? layout.name.trim() === '' : !this.layoutChanged}"
           @click="${this.saveLayout}"
         >
           Speichern

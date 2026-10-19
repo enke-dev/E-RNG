@@ -157,6 +157,49 @@ pub struct PageSetup {
     pub parts: Vec<Part>,
 }
 
+/// How numbers, money and dates are written, the German way unless the layout says otherwise.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Format {
+    /// Between the whole and the fractional part: `,` or `.`
+    pub decimal: String,
+    /// Between groups of three digits, none for no grouping
+    pub thousands: String,
+    /// `€` instead of `EUR` where there is a well known symbol
+    pub currency_symbol: bool,
+    /// `1,00 €` instead of `€ 1,00`
+    pub currency_after: bool,
+    /// A (non-breaking) space between amount and currency
+    pub currency_space: bool,
+    /// `19 %` instead of `19%`
+    pub percent_space: bool,
+    /// `−` instead of `-` for deductions
+    pub true_minus: bool,
+    /// `DE02 1203 …` instead of `DE021203…`
+    pub iban_groups: bool,
+    /// A pattern like dayjs has them: `DD.MM.YYYY`
+    pub date: String,
+    /// The same for the written out date (infos part): `D. MMMM YYYY`
+    pub date_long: String,
+}
+
+impl Default for Format {
+    fn default() -> Self {
+        Self {
+            decimal: ",".into(),
+            thousands: ".".into(),
+            currency_symbol: true,
+            currency_after: true,
+            currency_space: true,
+            percent_space: true,
+            true_minus: false,
+            iban_groups: false,
+            date: "DD.MM.YYYY".into(),
+            date_long: "D. MMMM YYYY".into(),
+        }
+    }
+}
+
 /// A layout the user made. It starts as the built-in one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CustomLayout {
@@ -172,6 +215,9 @@ pub struct CustomLayout {
     pub fonts: Vec<FontFile>,
     #[serde(default)]
     pub font: Option<String>,
+    /// How numbers, money and dates are written
+    #[serde(default)]
+    pub format: Format,
     /// Out of the selection, kept for the invoices that were made with it
     #[serde(default)]
     pub archived: bool,
@@ -327,6 +373,7 @@ pub fn builtin() -> CustomLayout {
         }),
         fonts: Vec::new(),
         font: None,
+        format: Format::default(),
         archived: false,
     }
 }

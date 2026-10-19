@@ -1,9 +1,11 @@
+import '@awesome.me/webawesome/dist/components/card/card.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/tab/tab.js';
 import '@awesome.me/webawesome/dist/components/tab-group/tab-group.js';
 import '@awesome.me/webawesome/dist/components/tab-panel/tab-panel.js';
 import '../font-list/font-list.component.js';
+import '../format-form/format-form.component.js';
 import '../page-setup-form/page-setup-form.component.js';
 
 import type { PropertyValues } from 'lit';
@@ -95,62 +97,79 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
     const l = this.layout;
     const families = [...new Set(l.fonts.map(f => f.family))];
     return html`
-      <div class="stack">
-        <wa-input
-          label="Name"
-          required
-          .value="${l.name}"
-          @input="${(e: Event) => {
-            l.name = text(e);
-            this.changed();
-          }}"
-        ></wa-input>
+      <div class="cards">
+        <wa-card>
+          <div slot="header">${l.id === null ? 'Neues Layout' : 'Layout'}</div>
+          <div class="stack">
+            <wa-input
+              label="Name"
+              placeholder="Name des Layouts"
+              required
+              .value="${l.name}"
+              @input="${(e: Event) => {
+                l.name = text(e);
+                this.changed();
+              }}"
+            ></wa-input>
+            <wa-checkbox
+              ?checked="${this.guides}"
+              hint="Zeichnet Linien an die Ränder des Inhalts und die Maße eines Briefs"
+              @change="${(e: Event) =>
+                this.dispatchEvent(
+                  new CustomEvent<boolean>('guides-change', {
+                    detail: (e.target as HTMLInputElement).checked,
+                  })
+                )}"
+            >
+              Hilfslinien in der Vorschau
+            </wa-checkbox>
+          </div>
+        </wa-card>
 
-        <div class="stack">
-          <strong>Schrift</strong>
+        <wa-card>
+          <div slot="header">Schrift</div>
           <erng-font-list .layout="${l}" @change="${() => this.changed()}"></erng-font-list>
-        </div>
+        </wa-card>
 
-        <wa-checkbox
-          ?checked="${this.guides}"
-          hint="Zeichnet Linien an die Ränder des Inhalts und die Maße eines Briefs"
-          @change="${(e: Event) =>
-            this.dispatchEvent(
-              new CustomEvent<boolean>('guides-change', {
-                detail: (e.target as HTMLInputElement).checked,
-              })
-            )}"
-        >
-          Hilfslinien in der Vorschau
-        </wa-checkbox>
+        <wa-card>
+          <div slot="header">Formate</div>
+          <erng-format-form
+            .format="${l.format}"
+            @change="${() => this.changed()}"
+          ></erng-format-form>
+        </wa-card>
 
-        <wa-checkbox
-          ?checked="${l.first !== null}"
-          @change="${(e: Event) => {
-            // the first page starts as a copy of the others, with the same tools
-            l.first = (e.target as HTMLInputElement).checked ? structuredClone(l.page) : null;
-            this.pointAt(l.first !== null, null);
-            this.changed();
-          }}"
-        >
-          Erste Seite weicht ab
-        </wa-checkbox>
+        <wa-card>
+          <div slot="header">Seiten</div>
+          <div class="stack">
+            <wa-checkbox
+              ?checked="${l.first !== null}"
+              @change="${(e: Event) => {
+                // the first page starts as a copy of the others, with the same tools
+                l.first = (e.target as HTMLInputElement).checked ? structuredClone(l.page) : null;
+                this.pointAt(l.first !== null, null);
+                this.changed();
+              }}"
+            >
+              Erste Seite weicht ab
+            </wa-checkbox>
 
-        ${
-          l.first
-            ? html`<wa-tab-group
-                @wa-tab-show="${(e: CustomEvent<{ name: string }>) =>
-                  e.target === e.currentTarget && this.pointAt(e.detail.name === 'first', null)}"
-              >
-                <wa-tab slot="nav" panel="first">Erste Seite</wa-tab>
-                <wa-tab slot="nav" panel="page">Folgeseiten</wa-tab>
-                <wa-tab-panel name="first">${this.setup(l.first, families, true)}</wa-tab-panel>
-                <wa-tab-panel name="page">${this.setup(l.page, families, false)}</wa-tab-panel>
-              </wa-tab-group>`
-            : html`<div class="stack">
-                <strong>Alle Seiten</strong>${this.setup(l.page, families, false)}
-              </div>`
-        }
+            ${
+              l.first
+                ? html`<wa-tab-group
+                    @wa-tab-show="${(e: CustomEvent<{ name: string }>) =>
+                      e.target === e.currentTarget &&
+                      this.pointAt(e.detail.name === 'first', null)}"
+                  >
+                    <wa-tab slot="nav" panel="first">Erste Seite</wa-tab>
+                    <wa-tab slot="nav" panel="page">Folgeseiten</wa-tab>
+                    <wa-tab-panel name="first">${this.setup(l.first, families, true)}</wa-tab-panel>
+                    <wa-tab-panel name="page">${this.setup(l.page, families, false)}</wa-tab-panel>
+                  </wa-tab-group>`
+                : this.setup(l.page, families, false)
+            }
+          </div>
+        </wa-card>
       </div>
     `;
   }

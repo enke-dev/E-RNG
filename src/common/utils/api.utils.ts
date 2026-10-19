@@ -218,6 +218,30 @@ export interface PageSetup {
   parts: Part[];
 }
 
+/** How numbers, money and dates are written */
+export interface Format {
+  /** Between the whole and the fractional part */
+  decimal: string;
+  /** Between groups of three digits, empty for none */
+  thousands: string;
+  /** `€` instead of `EUR` */
+  currency_symbol: boolean;
+  /** `1,00 €` instead of `€ 1,00` */
+  currency_after: boolean;
+  /** A space between amount and currency */
+  currency_space: boolean;
+  /** `19 %` instead of `19%` */
+  percent_space: boolean;
+  /** `−` instead of `-` for deductions */
+  true_minus: boolean;
+  /** `DE02 1203 …` instead of `DE021203…` */
+  iban_groups: boolean;
+  /** A pattern like dayjs has them: `DD.MM.YYYY` */
+  date: string;
+  /** The same for the written out date: `D. MMMM YYYY` */
+  date_long: string;
+}
+
 /** A layout the user made, it starts as the built-in one */
 export interface CustomLayout {
   id: number | null;
@@ -229,6 +253,7 @@ export interface CustomLayout {
   fonts: FontFile[];
   /** The family the content is set in, null is the first font */
   font: string | null;
+  format: Format;
   archived: boolean;
 }
 

@@ -363,7 +363,11 @@ mod tests {
     fn the_builtin_layout_becomes_a_frame_and_parts_for_the_template() {
         let invoice =
             crate::invoice::golden::standard_invoice(crate::invoice::ProfileKind::En16931);
-        let view = super::super::view::build(&invoice, &super::super::view::Branding::default());
+        let view = super::super::view::build(
+            &invoice,
+            &super::super::view::Branding::default(),
+            &crate::layout::Format::default(),
+        );
         let layout = crate::layout::builtin();
 
         let page = page_view(&layout, &view, &mut |_| Ok(String::new())).unwrap();
@@ -396,7 +400,11 @@ mod tests {
     fn a_blurry_image_is_flagged_and_a_missing_one_is_left_out() {
         let invoice =
             crate::invoice::golden::standard_invoice(crate::invoice::ProfileKind::En16931);
-        let view = super::super::view::build(&invoice, &super::super::view::Branding::default());
+        let view = super::super::view::build(
+            &invoice,
+            &super::super::view::Branding::default(),
+            &crate::layout::Format::default(),
+        );
         let image = |px| ImageFile {
             name: "logo.png".into(),
             path: "logo.png".into(),
@@ -431,7 +439,11 @@ mod tests {
     fn pictures_lie_behind_the_other_parts() {
         let invoice =
             crate::invoice::golden::standard_invoice(crate::invoice::ProfileKind::En16931);
-        let view = super::super::view::build(&invoice, &super::super::view::Branding::default());
+        let view = super::super::view::build(
+            &invoice,
+            &super::super::view::Branding::default(),
+            &crate::layout::Format::default(),
+        );
         let at = |content| Part {
             anchor: Anchor::TopLeft,
             x: 0.0,

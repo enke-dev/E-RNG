@@ -121,6 +121,8 @@ There is no separate stationery: a letterhead is a picture part as wide as the p
 or SVG up to 5 MB; a raster image with fewer than 150 dpi at its placed size is flagged, the layout sample marks it with a
 warning triangle (`Branding.marks`, never in a real invoice).
 
+How numbers, money and dates are written is the layout's `Format` (`render/format.rs`: decimal and thousands separators, currency as symbol or code, before or after, with a space or not, `19 %` or `19%`, the minus sign, IBAN in groups, dates by a dayjs-like pattern with German month names). The default is the German way.
+
 The sample hands out the box of every part (`<part-box>` metadata, read with `typst query`, `render_sample`), so the editor can tell what is under the pointer: pointing at a part in the form or in the sample marks it orange on both sides, a click in the sample opens it in the form. The settings show the same 30-position sample in every layout (`layout_preview`), with optional guides: red for the
 frame, cyan for the aids of a letter (address window, fold and punch marks, middle) and dotted outlines of the parts
 (`Branding.guides`). The default layout is a setting; a layout is deleted only while no invoice uses it and it is not the

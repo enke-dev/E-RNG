@@ -6,8 +6,9 @@ use en16931::invoice::{DocumentKind, PaymentMeans, PostalAddress};
 use en16931::{Date, Invoice};
 use serde::{Deserialize, Serialize};
 
+use super::format::Formatter;
 use super::parts::PartView;
-use crate::model::{CustomLayout, Insets, InvoiceDraft, Settings};
+use crate::model::{CustomLayout, Format, Insets, InvoiceDraft, Settings};
 
 /// What the user adds to the plain invoice data: look and feel of the document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -171,73 +172,6 @@ pub struct Total {
     pub strong: bool,
 }
 
-/// `1234.5` → `1.234,5`, the sign stays in front.
-pub(crate) fn de_number(plain: &str) -> String {
-    let (sign, digits) = plain
-        .strip_prefix('-')
-        .map_or(("", plain), |rest| ("-", rest));
-    let (int, frac) = digits.split_once('.').unwrap_or((digits, ""));
-    let mut grouped = String::new();
-    for (i, c) in int.chars().enumerate() {
-        if i > 0 && (int.len() - i) % 3 == 0 {
-            grouped.push('.');
-        }
-        grouped.push(c);
-    }
-    if frac.is_empty() {
-        format!("{sign}{grouped}")
-    } else {
-        format!("{sign}{grouped},{frac}")
-    }
-}
-
-/// A quantity or rate without trailing zeros: `10.000` → `10`, `2.50` → `2,5`.
-fn de_trimmed(plain: &str) -> String {
-    let trimmed = if plain.contains('.') {
-        plain.trim_end_matches('0').trim_end_matches('.')
-    } else {
-        plain
-    };
-    de_number(trimmed)
-}
-
-fn de_date_long(date: Date) -> String {
-    const MONTHS: [&str; 12] = [
-        "Januar",
-        "Februar",
-        "März",
-        "April",
-        "Mai",
-        "Juni",
-        "Juli",
-        "August",
-        "September",
-        "Oktober",
-        "November",
-        "Dezember",
-    ];
-    let month = MONTHS
-        .get(usize::from(date.month()).saturating_sub(1))
-        .copied()
-        .unwrap_or_default();
-    format!("{}. {month} {}", date.day(), date.year())
-}
-
-fn de_date(date: Date) -> String {
-    format!("{:02}.{:02}.{}", date.day(), date.month(), date.year())
-}
-
-/// `5` → `5.00`, `0.5` → `0.50`: prices show cents even where the model drops trailing zeros.
-fn two_decimals(plain: &str) -> String {
-    let (int, frac) = plain.split_once('.').unwrap_or((plain, ""));
-    format!("{int}.{frac:0<2}")
-}
-
-fn money(amount: impl std::fmt::Display, currency: &str) -> String {
-    let symbol = if currency == "EUR" { "€" } else { currency };
-    format!("{} {symbol}", de_number(&two_decimals(&amount.to_string())))
-}
-
 fn unit_name(code: &str) -> String {
     match code {
         "C62" | "H87" => "Stk.",
@@ -315,7 +249,7 @@ fn party_view(party: &en16931::invoice::Party, seller: bool) -> PartyView {
     }
 }
 
-fn bank_lines(invoice: &Invoice) -> Vec<Labeled> {
+fn bank_lines(invoice: &Invoice, fmt: &Formatter) -> Vec<Labeled> {
     let Some(PaymentMeans::CreditTransfer(transfers)) =
         invoice.payment.as_ref().and_then(|p| p.means.as_ref())
     else {
@@ -326,7 +260,7 @@ fn bank_lines(invoice: &Invoice) -> Vec<Labeled> {
         .flat_map(|t| {
             [
                 ("Kontoinhaber", t.account_name.clone()),
-                ("IBAN", t.account_identifier.clone()),
+                ("IBAN", t.account_identifier.as_deref().map(|i| fmt.iban(i))),
                 ("BIC", t.provider_identifier.clone()),
             ]
         })
@@ -339,7 +273,7 @@ fn bank_lines(invoice: &Invoice) -> Vec<Labeled> {
         .collect()
 }
 
-fn payment_lines(invoice: &Invoice, currency: &str) -> Vec<String> {
+fn payment_lines(invoice: &Invoice, currency: &str, fmt: &Formatter) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(terms) = &invoice.payment_terms {
         out.push(terms.clone());
@@ -347,8 +281,8 @@ fn payment_lines(invoice: &Invoice, currency: &str) -> Vec<String> {
     if let Some(due) = invoice.due_date {
         out.push(format!(
             "Zahlbar bis {}, Betrag {}",
-            de_date(due),
-            money(invoice.totals.due, currency)
+            fmt.date(due),
+            fmt.money(invoice.totals.due, currency)
         ));
     }
     if let Some(payment) = &invoice.payment {
@@ -356,7 +290,9 @@ fn payment_lines(invoice: &Invoice, currency: &str) -> Vec<String> {
             for t in transfers {
                 let parts = [
                     t.account_name.as_ref().map(|n| format!("Kontoinhaber {n}")),
-                    t.account_identifier.as_ref().map(|i| format!("IBAN {i}")),
+                    t.account_identifier
+                        .as_ref()
+                        .map(|i| format!("IBAN {}", fmt.iban(i))),
                     t.provider_identifier.as_ref().map(|b| format!("BIC {b}")),
                 ];
                 out.push(parts.into_iter().flatten().collect::<Vec<_>>().join(" · "));
@@ -369,7 +305,8 @@ fn payment_lines(invoice: &Invoice, currency: &str) -> Vec<String> {
     out
 }
 
-pub fn build(invoice: &Invoice, branding: &Branding) -> InvoiceView {
+pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> InvoiceView {
+    let fmt = &Formatter::new(format);
     let currency = invoice.currency.as_ref().map_or("EUR", |c| c.as_str());
     let totals = &invoice.totals;
     let credit = invoice.kind == DocumentKind::CreditNote;
@@ -380,8 +317,8 @@ pub fn build(invoice: &Invoice, branding: &Branding) -> InvoiceView {
     let date = |key: &'static str, label: &str, date: Date| Info {
         key,
         label: label.into(),
-        value: de_date(date),
-        value_long: de_date_long(date),
+        value: fmt.date(date),
+        value_long: fmt.date_long(date),
     };
     let text = |key: &'static str, label: &str, value: String| Info {
         key,
@@ -406,8 +343,8 @@ pub fn build(invoice: &Invoice, branding: &Branding) -> InvoiceView {
             infos.push(Info {
                 key: "service-date",
                 label: "Leistungszeitraum".into(),
-                value: format!("{} – {}", de_date(start), de_date(end)),
-                value_long: format!("{} – {}", de_date_long(start), de_date_long(end)),
+                value: format!("{} – {}", fmt.date(start), fmt.date(end)),
+                value_long: format!("{} – {}", fmt.date_long(start), fmt.date_long(end)),
             });
         }
     }
@@ -437,16 +374,16 @@ pub fn build(invoice: &Invoice, branding: &Branding) -> InvoiceView {
         .map(|l| {
             let rate = l.vat.rate.map_or_else(
                 || "USt. frei".to_owned(),
-                |r| format!("{} % USt.", de_trimmed(&r.to_string())),
+                |r| format!("{} USt.", fmt.percent(&r.to_string())),
             );
             let adjustments = l
                 .allowances
                 .iter()
-                .map(|a| (a, "Nachlass", "-"))
+                .map(|a| (a, "Nachlass", fmt.minus()))
                 .chain(l.charges.iter().map(|c| (c, "Zuschlag", "+")))
                 .map(|(a, name, sign)| {
                     let reason = a.reason.as_deref().unwrap_or(name);
-                    format!("{reason}: {sign}{}", money(a.amount, currency))
+                    format!("{reason}: {sign}{}", fmt.money(a.amount, currency))
                 })
                 .collect();
             LineView {
@@ -454,68 +391,66 @@ pub fn build(invoice: &Invoice, branding: &Branding) -> InvoiceView {
                 name: l.item.name.clone().unwrap_or_default(),
                 description: l.item.description.clone(),
                 adjustments,
-                quantity: de_trimmed(&l.quantity.to_string()),
+                quantity: fmt.trimmed(&l.quantity.to_string()),
                 unit: unit_name(l.unit_code.as_str()),
-                unit_price: money(l.price.net_price, currency),
+                unit_price: fmt.money(l.price.net_price, currency),
                 vat_rate: rate,
-                net: money(l.net_amount, currency),
+                net: fmt.money(l.net_amount, currency),
             }
         })
         .collect();
 
     let mut rows = vec![Total {
         label: "Summe der Positionen".into(),
-        value: money(totals.line_total, currency),
+        value: fmt.money(totals.line_total, currency),
         strong: false,
     }];
     if let Some(a) = totals.allowance_total.filter(|a| !a.is_zero()) {
         rows.push(Total {
             label: "Nachlässe".into(),
-            value: format!("-{}", money(a, currency)),
+            value: format!("{}{}", fmt.minus(), fmt.money(a, currency)),
             strong: false,
         });
     }
     if let Some(c) = totals.charge_total.filter(|c| !c.is_zero()) {
         rows.push(Total {
             label: "Zuschläge".into(),
-            value: format!("+{}", money(c, currency)),
+            value: format!("+{}", fmt.money(c, currency)),
             strong: false,
         });
     }
     rows.push(Total {
         label: "Nettobetrag".into(),
-        value: money(totals.taxable_total, currency),
+        value: fmt.money(totals.taxable_total, currency),
         strong: false,
     });
     for entry in &invoice.vat_breakdown {
-        let rate = entry
-            .rate
-            .map_or_else(|| "0".to_owned(), |r| de_trimmed(&r.to_string()));
+        let rate = fmt.percent(&entry.rate.map_or_else(|| "0".to_owned(), |r| r.to_string()));
         rows.push(Total {
             label: format!(
-                "Umsatzsteuer {rate} % auf {}",
-                money(entry.taxable_amount, currency)
+                "Umsatzsteuer {rate} auf {}",
+                fmt.money(entry.taxable_amount, currency)
             ),
-            value: money(entry.tax_amount, currency),
+            value: fmt.money(entry.tax_amount, currency),
             strong: false,
         });
     }
     rows.push(Total {
         label: "Gesamtbetrag".into(),
-        value: money(totals.gross_total, currency),
+        value: fmt.money(totals.gross_total, currency),
         strong: true,
     });
     if let Some(paid) = totals.paid.filter(|p| !p.is_zero()) {
         rows.push(Total {
             label: "Bereits bezahlt".into(),
-            value: format!("-{}", money(paid, currency)),
+            value: format!("{}{}", fmt.minus(), fmt.money(paid, currency)),
             strong: false,
         });
     }
     if let Some(rounding) = totals.rounding.filter(|r| !r.is_zero()) {
         rows.push(Total {
             label: "Rundung".into(),
-            value: money(rounding, currency),
+            value: fmt.money(rounding, currency),
             strong: false,
         });
     }
@@ -526,7 +461,7 @@ pub fn build(invoice: &Invoice, branding: &Branding) -> InvoiceView {
             "Zahlbetrag"
         }
         .into(),
-        value: money(totals.due, currency),
+        value: fmt.money(totals.due, currency),
         strong: true,
     });
 
@@ -560,7 +495,7 @@ pub fn build(invoice: &Invoice, branding: &Branding) -> InvoiceView {
         lines,
         totals: rows,
         vat_notes,
-        payment: payment_lines(invoice, currency),
+        payment: payment_lines(invoice, currency, fmt),
         footer: branding.footer.clone(),
         letter: Letter {
             intro: branding.intro.clone(),
@@ -568,15 +503,19 @@ pub fn build(invoice: &Invoice, branding: &Branding) -> InvoiceView {
         },
         facts: Facts {
             number: invoice.number.clone().unwrap_or_default(),
-            date: de_date(issue),
-            service_date: invoice.delivery.as_ref().and_then(|d| d.date).map(de_date),
+            date: fmt.date(issue),
+            service_date: invoice
+                .delivery
+                .as_ref()
+                .and_then(|d| d.date)
+                .map(|d| fmt.date(d)),
             same_day: invoice.delivery.as_ref().and_then(|d| d.date) == Some(issue),
-            due_date: invoice.due_date.map(de_date),
+            due_date: invoice.due_date.map(|d| fmt.date(d)),
             buyer_reference: invoice.buyer_reference.clone(),
             tax_number: invoice.seller.tax_registration.clone(),
             vat_id: invoice.seller.vat_identifier.clone(),
         },
-        bank: bank_lines(invoice),
+        bank: bank_lines(invoice, fmt),
         page: PageView::default(),
     }
 }
@@ -659,21 +598,6 @@ mod tests {
     }
 
     #[test]
-    fn german_numbers_group_thousands_and_use_a_comma() {
-        assert_eq!(de_number("1234567.89"), "1.234.567,89");
-        assert_eq!(de_number("999.5"), "999,5");
-        assert_eq!(de_number("-1000.00"), "-1.000,00");
-        assert_eq!(de_number("12"), "12");
-    }
-
-    #[test]
-    fn quantities_lose_trailing_zeros() {
-        assert_eq!(de_trimmed("10.000"), "10");
-        assert_eq!(de_trimmed("2.50"), "2,5");
-        assert_eq!(de_trimmed("19"), "19");
-    }
-
-    #[test]
     fn a_reverse_charge_invoice_states_it() {
         let invoice = crate::invoice::golden::cases()
             .into_iter()
@@ -681,7 +605,7 @@ mod tests {
             .unwrap()
             .1;
 
-        let view = build(&invoice, &Branding::default());
+        let view = build(&invoice, &Branding::default(), &Format::default());
 
         assert_eq!(view.vat_notes.len(), 1);
         assert!(view.vat_notes[0].contains("Steuerschuldnerschaft"));
@@ -696,15 +620,31 @@ mod tests {
     }
 
     #[test]
-    fn money_always_shows_cents() {
-        assert_eq!(money("1000", "EUR"), "1.000,00 €");
-        assert_eq!(money("0.5", "EUR"), "0,50 €");
-        assert_eq!(money("19.999", "EUR"), "19,999 €");
-    }
+    fn the_format_of_the_layout_reaches_every_figure_of_the_view() {
+        let invoice =
+            crate::invoice::golden::standard_invoice(crate::invoice::ProfileKind::En16931);
+        let format = Format {
+            currency_symbol: false,
+            currency_after: false,
+            currency_space: false,
+            percent_space: false,
+            decimal: ".".into(),
+            thousands: ",".into(),
+            date: "YYYY-MM-DD".into(),
+            ..Format::default()
+        };
 
-    #[test]
-    fn money_uses_the_euro_sign() {
-        assert_eq!(money("1234.50", "EUR"), "1.234,50 €");
-        assert_eq!(money("5.00", "CHF"), "5,00 CHF");
+        let view = build(&invoice, &Branding::default(), &format);
+
+        let total = view.totals.last().unwrap();
+        assert!(total.value.starts_with("EUR"), "{}", total.value);
+        assert!(
+            total.value.contains('.') && !total.value.contains(' '),
+            "{}",
+            total.value
+        );
+        assert!(view.totals.iter().any(|t| t.label.contains("19%")));
+        assert!(view.lines[0].vat_rate.starts_with("19%"));
+        assert!(view.facts.date.starts_with("2026-"), "{}", view.facts.date);
     }
 }
