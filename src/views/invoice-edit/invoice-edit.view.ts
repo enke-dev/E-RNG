@@ -453,7 +453,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   private async saveAsTemplate(position: Position) {
     if (position.description.trim() === '') {
-      notify('Eine Vorlage braucht eine Beschreibung.', 'danger');
+      notify('Eine gespeicherte Position braucht eine Beschreibung.', 'danger');
       return;
     }
     try {
@@ -461,9 +461,9 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       const saved = await api.templateSave({ ...position, id: null });
       // the same one is not saved twice, the saved one comes back
       if (before.some(t => t.id === saved.id)) {
-        notify(`„${position.description}“ gibt es schon als Vorlage.`, 'neutral');
+        notify(`„${position.description}“ gibt es schon unter Positionen.`, 'neutral');
       } else {
-        notify(`„${position.description}“ ist jetzt eine Vorlage.`);
+        notify(`„${position.description}“ ist jetzt unter Positionen gespeichert.`);
       }
     } catch (error) {
       notifyError(error);
@@ -628,8 +628,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 <wa-button
                   size="m"
                   appearance="outlined"
-                  title="Als Vorlage speichern"
-                  aria-label="Als Vorlage speichern"
+                  title="Position für später speichern"
+                  aria-label="Position für später speichern"
                   @click="${() => void this.saveAsTemplate(p)}"
                 >
                   <wa-icon name="save"></wa-icon>
@@ -662,7 +662,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                   Position hinzufügen
                 </wa-button>
                 <wa-button @click="${() => void this.openTemplates()}" appearance="outlined">
-                  Aus Vorlage
+                  Gespeicherte Position
                 </wa-button>
               </wa-button-group>
             `
@@ -675,18 +675,18 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     const shown = (this.templates ?? []).filter(t => t.description.toLowerCase().includes(query));
     const empty =
       this.templates?.length === 0
-        ? 'Noch keine Vorlagen. Unter „Vorlagen“ oder mit „Als Vorlage“ anlegen.'
+        ? 'Noch keine gespeicherten Positionen. Unter „Positionen“ oder mit „Position für später speichern“ anlegen.'
         : 'Keine Treffer.';
     return html`
       <wa-dialog
         ?open="${this.templates !== undefined}"
-        label="Position aus Vorlage"
+        label="Gespeicherte Position einfügen"
         @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.templates = undefined)}"
       >
         <div class="stack">
           <erng-filter-bar
             .query="${this.templateQuery}"
-            placeholder="Vorlagen durchsuchen"
+            placeholder="Positionen durchsuchen"
             @query-change="${(e: CustomEvent<string>) => (this.templateQuery = e.detail)}"
           ></erng-filter-bar>
           ${

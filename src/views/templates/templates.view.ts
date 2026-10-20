@@ -111,7 +111,7 @@ export class TemplatesView extends ErngElement {
         <erng-filter-bar
           slot="header"
           .query="${this.query}"
-          placeholder="Vorlagen suchen"
+          placeholder="Positionen suchen"
           @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
         >
           <wa-select
@@ -124,7 +124,7 @@ export class TemplatesView extends ErngElement {
             ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
           </wa-select>
           <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
-            Neue Vorlage
+            Neue Position
           </wa-button>
         </erng-filter-bar>
         ${
@@ -133,7 +133,7 @@ export class TemplatesView extends ErngElement {
                 <wa-callout slot="notice" variant="neutral">
                   ${
                     this.templates.length === 0
-                      ? 'Noch keine Vorlagen. Hier oder im Rechnungsformular mit „Als Vorlage“ anlegen.'
+                      ? 'Noch keine gespeicherten Positionen. Hier oder im Rechnungsformular mit „Position für später speichern“ anlegen.'
                       : 'Keine Treffer.'
                   }
                 </wa-callout>
@@ -155,7 +155,7 @@ export class TemplatesView extends ErngElement {
         <wa-dialog
           slot="dialog"
           ?open="${editing !== undefined}"
-          label="${editing?.id == null ? 'Neue Vorlage' : 'Vorlage bearbeiten'}"
+          label="${editing?.id == null ? 'Neue Position' : 'Position bearbeiten'}"
           @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.editing = undefined)}"
         >
           ${

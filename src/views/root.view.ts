@@ -19,7 +19,7 @@ import styles from './root.view.css';
 const NAV = [
   ['/', 'Rechnungen'],
   ['/customers', 'Kunden'],
-  ['/templates', 'Vorlagen'],
+  ['/templates', 'Positionen'],
   ['/settings', 'Einstellungen'],
 ] as const;
 
