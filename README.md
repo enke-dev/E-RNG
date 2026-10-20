@@ -7,12 +7,14 @@
 macOS app for e-invoices: fill in an invoice, get a **ZUGFeRD / Factur-X PDF** (or an **XRechnung**
 XML) that was checked before it can be saved.
 
-&nbsp;
+## Usage
 
-**Use** – download the dmg from the [latest release](https://github.com/enke-dev/e-rng/releases/latest)
+Download the disc image from the [latest release](https://github.com/enke-dev/e-rng/releases/latest)
 (Apple silicon; not signed yet, so open it via right click).
 
-**Develop** – needs [Bun](https://bun.sh) and Rust:
+## Development
+
+Needs [Bun](https://bun.sh/docs/installation) and [Rust](https://rust-lang.org/tools/install/):
 
 ```sh
 bun install

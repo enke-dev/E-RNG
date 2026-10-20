@@ -1,4 +1,5 @@
-//! SQLite storage: settings, customers and invoices. One file in the app data directory.
+//! SQLite storage: contexts (issuers with their settings), customers, position templates, layouts and
+//! invoices. One file in the app data directory.
 //!
 //! Invoice numbers are assigned when an invoice is exported, never for drafts, and an exported
 //! invoice cannot be changed or deleted any more (it can be duplicated).
@@ -6,10 +7,11 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use en16931::Date;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
+use crate::context::{Context, ContextUsage, Disposition, BRANDS};
 use crate::model::{
     CustomLayout, Customer, InvoiceDraft, LayoutUsage, ListEntry, PositionTemplate, Settings,
     Status, StoredInvoice,
@@ -18,7 +20,7 @@ use crate::numbering::Pattern;
 
 pub struct Store(Mutex<Connection>);
 
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -65,6 +67,105 @@ fn migrate(conn: &Connection) -> Result<()> {
         }
         conn.execute_batch("PRAGMA user_version = 4;")?;
     }
+    if version < 5 {
+        migrate_to_contexts(conn)?;
+    }
+    Ok(())
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name = ?2",
+        [table, column],
+        |r| r.get(0),
+    )?)
+}
+
+/// What a context keeps in its `json` column, the rest of it has columns
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ContextBody {
+    brand: String,
+    settings: Settings,
+}
+
+/// The one settings row becomes the first context, every invoice belongs to it. Invoice numbers are
+/// unique per context from here on, which SQLite can only change by building the table again.
+fn migrate_to_contexts(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS contexts (
+             id INTEGER PRIMARY KEY, json TEXT NOT NULL, archived_at TEXT
+         );",
+    )?;
+    let has_settings = tx.query_row(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'settings'",
+        [],
+        |r| r.get::<_, bool>(0),
+    )?;
+    let settings_json: Option<String> = if has_settings {
+        tx.query_row("SELECT json FROM settings WHERE id = 1", [], |r| r.get(0))
+            .optional()?
+    } else {
+        None
+    };
+    let has_data = tx.query_row(
+        "SELECT (SELECT COUNT(*) FROM invoices) + (SELECT COUNT(*) FROM customers) > 0",
+        [],
+        |r| r.get::<_, bool>(0),
+    )?;
+    // a fresh database has no context, the app asks for one
+    if settings_json.is_some() || has_data {
+        let settings = match settings_json {
+            Some(json) => serde_json::from_str::<Settings>(&json)?.normalized(),
+            None => Settings::default(),
+        };
+        let body = ContextBody {
+            brand: BRANDS[0].into(),
+            settings,
+        };
+        tx.execute(
+            "INSERT OR IGNORE INTO contexts (id, json) VALUES (1, ?1)",
+            [serde_json::to_string(&body)?],
+        )?;
+    }
+    tx.execute_batch("DROP TABLE IF EXISTS settings;")?;
+
+    if !has_column(&tx, "invoices", "context_id")? {
+        let archived = if has_column(&tx, "invoices", "archived_at")? {
+            "archived_at"
+        } else {
+            "NULL"
+        };
+        tx.execute_batch(&format!(
+            "CREATE TABLE invoices_new (
+                 id INTEGER PRIMARY KEY,
+                 context_id INTEGER NOT NULL,
+                 number TEXT,
+                 status TEXT NOT NULL,
+                 draft TEXT NOT NULL,
+                 total TEXT,
+                 exported_at TEXT,
+                 paid_at TEXT,
+                 updated_at TEXT NOT NULL,
+                 archived_at TEXT,
+                 UNIQUE (context_id, number)
+             );
+             INSERT INTO invoices_new
+                 SELECT id, 1, number, status, draft, total, exported_at, paid_at, updated_at, {archived}
+                 FROM invoices;
+             DROP TABLE invoices;
+             ALTER TABLE invoices_new RENAME TO invoices;"
+        ))?;
+    }
+    for table in ["customers", "templates", "layouts"] {
+        if !has_column(&tx, table, "context_id")? {
+            tx.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN context_id INTEGER;"
+            ))?;
+        }
+    }
+    tx.execute_batch("PRAGMA user_version = 5;")?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -81,13 +182,14 @@ fn now() -> String {
 fn put(conn: &Connection, layout: &CustomLayout) -> Result<i64> {
     let json = serde_json::to_string(&CustomLayout {
         id: None,
+        context_id: None,
         ..layout.clone()
     })?;
     match layout.id {
         Some(id) => {
             let changed = conn.execute(
-                "UPDATE layouts SET json = ?1 WHERE id = ?2",
-                params![json, id],
+                "UPDATE layouts SET json = ?1, context_id = ?2 WHERE id = ?3",
+                params![json, layout.context_id, id],
             )?;
             if changed == 0 {
                 bail!("unknown layout");
@@ -95,7 +197,10 @@ fn put(conn: &Connection, layout: &CustomLayout) -> Result<i64> {
             Ok(id)
         }
         None => {
-            conn.execute("INSERT INTO layouts (json) VALUES (?1)", [json])?;
+            conn.execute(
+                "INSERT INTO layouts (json, context_id) VALUES (?1, ?2)",
+                params![json, layout.context_id],
+            )?;
             Ok(conn.last_insert_rowid())
         }
     }
@@ -107,6 +212,7 @@ fn stored(row: &Row) -> rusqlite::Result<(StoredInvoice, String)> {
     Ok((
         StoredInvoice {
             id: row.get("id")?,
+            context_id: row.get("context_id")?,
             number: row.get("number")?,
             status: if status == "exported" {
                 Status::Exported
@@ -146,41 +252,225 @@ impl Store {
         self.0.lock().expect("database lock")
     }
 
-    // settings
+    // contexts
 
-    pub fn settings(&self) -> Result<Settings> {
-        let json: Option<String> = self
-            .conn()
-            .query_row("SELECT json FROM settings WHERE id = 1", [], |r| r.get(0))
-            .optional()?;
-        Ok(json
-            .map(|j| serde_json::from_str::<Settings>(&j))
-            .transpose()?
-            .unwrap_or_default()
-            .normalized())
+    fn read_context(row: &Row) -> rusqlite::Result<(i64, String, Option<String>)> {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
     }
 
-    pub fn save_settings(&self, settings: &Settings) -> Result<()> {
-        self.conn().execute(
-            "INSERT INTO settings (id, json) VALUES (1, ?1)
-             ON CONFLICT(id) DO UPDATE SET json = excluded.json",
-            [serde_json::to_string(settings)?],
+    fn to_context((id, json, archived_at): (i64, String, Option<String>)) -> Result<Context> {
+        let body: ContextBody = serde_json::from_str(&json)?;
+        Ok(Context {
+            id: Some(id),
+            brand: body.brand,
+            archived_at,
+            settings: body.settings.normalized(),
+            missing: Vec::new(),
+            missing_for_xrechnung: Vec::new(),
+        }
+        .checked())
+    }
+
+    /// Every context, archived ones included, in the order they were made
+    pub fn contexts(&self) -> Result<Vec<Context>> {
+        let conn = self.conn();
+        let mut statement =
+            conn.prepare("SELECT id, json, archived_at FROM contexts ORDER BY id")?;
+        let rows = statement.query_map([], Self::read_context)?;
+        rows.map(|row| Self::to_context(row?)).collect()
+    }
+
+    pub fn context(&self, id: i64) -> Result<Context> {
+        let row = self
+            .conn()
+            .query_row(
+                "SELECT id, json, archived_at FROM contexts WHERE id = ?1",
+                [id],
+                Self::read_context,
+            )
+            .optional()?
+            .ok_or_else(|| anyhow!("unknown context"))?;
+        Self::to_context(row)
+    }
+
+    /// The settings of a context, those an invoice made under it is made with
+    pub fn settings(&self, context_id: i64) -> Result<Settings> {
+        Ok(self.context(context_id)?.settings)
+    }
+
+    /// Creates a context (`id` is `None`) or updates one. A new one without a brand gets the default
+    /// for the first, a random one that is not in use for the others. Archiving is its own step.
+    pub fn save_context(&self, context: &Context) -> Result<Context> {
+        let id = match context.id {
+            Some(id) => {
+                let brand = if context.brand.is_empty() {
+                    BRANDS[0].to_owned()
+                } else {
+                    context.brand.clone()
+                };
+                let json = serde_json::to_string(&ContextBody {
+                    brand,
+                    settings: context.settings.clone(),
+                })?;
+                let changed = self.conn().execute(
+                    "UPDATE contexts SET json = ?1 WHERE id = ?2",
+                    params![json, id],
+                )?;
+                if changed == 0 {
+                    bail!("unknown context");
+                }
+                id
+            }
+            None => {
+                let brand = if context.brand.is_empty() {
+                    self.fresh_brand()?
+                } else {
+                    context.brand.clone()
+                };
+                let json = serde_json::to_string(&ContextBody {
+                    brand,
+                    settings: context.settings.clone(),
+                })?;
+                let conn = self.conn();
+                conn.execute("INSERT INTO contexts (json) VALUES (?1)", [json])?;
+                conn.last_insert_rowid()
+            }
+        };
+        self.context(id)
+    }
+
+    /// The default for the first context, a random one that no other context shows for the next
+    fn fresh_brand(&self) -> Result<String> {
+        let used: Vec<String> = self.contexts()?.into_iter().map(|c| c.brand).collect();
+        if used.is_empty() {
+            return Ok(BRANDS[0].into());
+        }
+        let free: Vec<&str> = BRANDS
+            .iter()
+            .copied()
+            .filter(|b| !used.iter().any(|u| u == b))
+            .collect();
+        let pool: Vec<&str> = if free.is_empty() {
+            BRANDS.to_vec()
+        } else {
+            free
+        };
+        let pick = usize::from(uuid::Uuid::new_v4().as_bytes()[0]) % pool.len();
+        Ok(pool[pick].into())
+    }
+
+    /// Hides a context from the switch, nothing of it is lost
+    pub fn archive_context(&self, id: i64) -> Result<Context> {
+        let changed = self.conn().execute(
+            "UPDATE contexts SET archived_at = ?1 WHERE id = ?2 AND archived_at IS NULL",
+            params![now(), id],
         )?;
+        if changed == 0 {
+            bail!("unknown or already archived context");
+        }
+        self.context(id)
+    }
+
+    /// Whether the layout is the default of any context that is in use
+    pub fn is_default_layout(&self, key: &str) -> Result<bool> {
+        Ok(self
+            .contexts()?
+            .iter()
+            .any(|c| c.archived_at.is_none() && c.settings.layout == key))
+    }
+
+    /// What belongs to a context
+    pub fn context_usage(&self, id: i64) -> Result<ContextUsage> {
+        let conn = self.conn();
+        let count = |sql: &str| -> Result<usize> {
+            Ok(conn.query_row(sql, [id], |r| r.get::<_, i64>(0))? as usize)
+        };
+        Ok(ContextUsage {
+            drafts: count(
+                "SELECT COUNT(*) FROM invoices WHERE context_id = ?1 AND status = 'draft'",
+            )?,
+            exported: count(
+                "SELECT COUNT(*) FROM invoices WHERE context_id = ?1 AND status = 'exported'",
+            )?,
+            customers: count("SELECT COUNT(*) FROM customers WHERE context_id = ?1")?,
+            templates: count("SELECT COUNT(*) FROM templates WHERE context_id = ?1")?,
+            layouts: count("SELECT COUNT(*) FROM layouts WHERE context_id = ?1")?,
+        })
+    }
+
+    /// Removes a context that has no invoices (one that has is archived instead) and settles what is
+    /// scoped to it: shared, moved to another context, or removed with it.
+    pub fn remove_context(&self, id: i64, what: Disposition) -> Result<()> {
+        self.context(id)?;
+        let usage = self.context_usage(id)?;
+        if usage.drafts + usage.exported > 0 {
+            bail!("a context with invoices cannot be removed, archive it instead");
+        }
+        if let Disposition::Move { to } = what {
+            let target = self.context(to)?;
+            if to == id || target.archived_at.is_some() {
+                bail!("the things cannot move to that context");
+            }
+        }
+        if what == Disposition::Delete {
+            let layouts = self.scoped_layout_ids(id)?;
+            if layouts
+                .iter()
+                .any(|layout| self.layout_usages(*layout).map_or(true, |u| !u.is_empty()))
+            {
+                bail!("a layout of the context is still used, it cannot be removed");
+            }
+        }
+        let tx = self.conn();
+        for table in ["customers", "templates", "layouts"] {
+            match what {
+                Disposition::Share => tx.execute(
+                    &format!("UPDATE {table} SET context_id = NULL WHERE context_id = ?1"),
+                    [id],
+                )?,
+                Disposition::Move { to } => tx.execute(
+                    &format!("UPDATE {table} SET context_id = ?2 WHERE context_id = ?1"),
+                    params![id, to],
+                )?,
+                Disposition::Delete => {
+                    tx.execute(&format!("DELETE FROM {table} WHERE context_id = ?1"), [id])?
+                }
+            };
+        }
+        tx.execute("DELETE FROM contexts WHERE id = ?1", [id])?;
         Ok(())
+    }
+
+    fn scoped_layout_ids(&self, context: i64) -> Result<Vec<i64>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare("SELECT id FROM layouts WHERE context_id = ?1")?;
+        let ids = statement
+            .query_map([context], |r| r.get::<_, i64>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ids)
     }
 
     // customers
 
-    pub fn customers(&self) -> Result<Vec<Customer>> {
+    /// The customers of a context: the shared ones and those that belong to it
+    pub fn customers(&self, context: i64) -> Result<Vec<Customer>> {
         let conn = self.conn();
-        let mut statement = conn.prepare("SELECT id, json FROM customers")?;
-        let rows =
-            statement.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut statement = conn.prepare(
+            "SELECT id, json, context_id FROM customers WHERE context_id IS NULL OR context_id = ?1",
+        )?;
+        let rows = statement.query_map([context], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })?;
         let mut customers = rows
             .map(|row| {
-                let (id, json) = row?;
+                let (id, json, context_id) = row?;
                 let mut customer: Customer = serde_json::from_str(&json)?;
                 customer.id = Some(id);
+                customer.context_id = context_id;
                 Ok(customer)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -192,13 +482,14 @@ impl Store {
         let conn = self.conn();
         let json = serde_json::to_string(&Customer {
             id: None,
+            context_id: None,
             ..customer.clone()
         })?;
         let id = match customer.id {
             Some(id) => {
                 let changed = conn.execute(
-                    "UPDATE customers SET json = ?1 WHERE id = ?2",
-                    params![json, id],
+                    "UPDATE customers SET json = ?1, context_id = ?2 WHERE id = ?3",
+                    params![json, customer.context_id, id],
                 )?;
                 if changed == 0 {
                     bail!("unknown customer");
@@ -206,7 +497,10 @@ impl Store {
                 id
             }
             None => {
-                conn.execute("INSERT INTO customers (json) VALUES (?1)", [json])?;
+                conn.execute(
+                    "INSERT INTO customers (json, context_id) VALUES (?1, ?2)",
+                    params![json, customer.context_id],
+                )?;
                 conn.last_insert_rowid()
             }
         };
@@ -224,16 +518,25 @@ impl Store {
 
     // position templates
 
-    pub fn templates(&self) -> Result<Vec<PositionTemplate>> {
+    /// The templates of a context: the shared ones and those that belong to it
+    pub fn templates(&self, context: i64) -> Result<Vec<PositionTemplate>> {
         let conn = self.conn();
-        let mut statement = conn.prepare("SELECT id, json FROM templates")?;
-        let rows =
-            statement.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut statement = conn.prepare(
+            "SELECT id, json, context_id FROM templates WHERE context_id IS NULL OR context_id = ?1",
+        )?;
+        let rows = statement.query_map([context], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })?;
         let mut templates = rows
             .map(|row| {
-                let (id, json) = row?;
+                let (id, json, context_id) = row?;
                 let mut template: PositionTemplate = serde_json::from_str(&json)?;
                 template.id = Some(id);
+                template.context_id = context_id;
                 Ok(template)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -241,13 +544,19 @@ impl Store {
         Ok(templates)
     }
 
-    /// Saves a template. A new one that is the same as a saved one is not saved twice, the saved
-    /// one comes back instead.
+    /// Saves a template. A new one that is the same as a saved one of its scope is not saved twice,
+    /// the saved one comes back instead.
     pub fn save_template(&self, template: &PositionTemplate) -> Result<PositionTemplate> {
         if template.id.is_none() {
-            if let Some(same) = self
-                .templates()?
+            let same_scope = |t: &PositionTemplate| t.context_id == template.context_id;
+            // a shared template is compared with all of them, a scoped one with what its context sees
+            let visible = match template.context_id {
+                Some(context) => self.templates(context)?,
+                None => self.all_templates()?,
+            };
+            if let Some(same) = visible
                 .into_iter()
+                .filter(same_scope)
                 .find(|t| t.position.same_as(&template.position))
             {
                 return Ok(same);
@@ -256,13 +565,14 @@ impl Store {
         let conn = self.conn();
         let json = serde_json::to_string(&PositionTemplate {
             id: None,
+            context_id: None,
             ..template.clone()
         })?;
         let id = match template.id {
             Some(id) => {
                 let changed = conn.execute(
-                    "UPDATE templates SET json = ?1 WHERE id = ?2",
-                    params![json, id],
+                    "UPDATE templates SET json = ?1, context_id = ?2 WHERE id = ?3",
+                    params![json, template.context_id, id],
                 )?;
                 if changed == 0 {
                     bail!("unknown template");
@@ -270,7 +580,10 @@ impl Store {
                 id
             }
             None => {
-                conn.execute("INSERT INTO templates (json) VALUES (?1)", [json])?;
+                conn.execute(
+                    "INSERT INTO templates (json, context_id) VALUES (?1, ?2)",
+                    params![json, template.context_id],
+                )?;
                 conn.last_insert_rowid()
             }
         };
@@ -278,6 +591,26 @@ impl Store {
             id: Some(id),
             ..template.clone()
         })
+    }
+
+    fn all_templates(&self) -> Result<Vec<PositionTemplate>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare("SELECT id, json, context_id FROM templates")?;
+        let rows = statement.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (id, json, context_id) = row?;
+            let mut template: PositionTemplate = serde_json::from_str(&json)?;
+            template.id = Some(id);
+            template.context_id = context_id;
+            Ok(template)
+        })
+        .collect()
     }
 
     pub fn delete_template(&self, id: i64) -> Result<()> {
@@ -288,17 +621,33 @@ impl Store {
 
     // own layouts
 
-    /// Own layouts by name. One that has no `uid` yet (made before there were any) gets it here, once.
-    pub fn custom_layouts(&self) -> Result<Vec<CustomLayout>> {
+    /// The own layouts a context can choose from: the shared ones and those that belong to it
+    pub fn custom_layouts(&self, context: i64) -> Result<Vec<CustomLayout>> {
+        Ok(self
+            .all_custom_layouts()?
+            .into_iter()
+            .filter(|l| l.context_id.is_none_or(|c| c == context))
+            .collect())
+    }
+
+    /// Own layouts of every context, by name: what rendering looks a layout up in. One that has no
+    /// `uid` yet (made before there were any) gets it here, once.
+    pub fn all_custom_layouts(&self) -> Result<Vec<CustomLayout>> {
         let conn = self.conn();
-        let mut statement = conn.prepare("SELECT id, json FROM layouts")?;
-        let rows =
-            statement.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut statement = conn.prepare("SELECT id, json, context_id FROM layouts")?;
+        let rows = statement.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })?;
         let mut layouts = rows
             .map(|row| {
-                let (id, json) = row?;
+                let (id, json, context_id) = row?;
                 let mut layout: CustomLayout = serde_json::from_str(&json)?;
                 layout.id = Some(id);
+                layout.context_id = context_id;
                 Ok(layout)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -346,7 +695,7 @@ impl Store {
     /// Every own layout something still points at: the layouts themselves and the copies frozen into
     /// exported invoices.
     pub fn layouts_in_use(&self) -> Result<Vec<CustomLayout>> {
-        let mut layouts = self.custom_layouts()?;
+        let mut layouts = self.all_custom_layouts()?;
         let conn = self.conn();
         let mut statement = conn.prepare("SELECT draft FROM invoices")?;
         for json in statement.query_map([], |r| r.get::<_, String>(0))? {
@@ -394,18 +743,34 @@ impl Store {
 
     // invoices
 
-    pub fn invoices(&self) -> Result<Vec<ListEntry>> {
+    /// The invoices of a context, or of all (`None`), newest first. Archived ones are left out.
+    pub fn invoices(&self, context: Option<i64>) -> Result<Vec<ListEntry>> {
+        let sellers: std::collections::HashMap<i64, String> = self
+            .contexts()?
+            .into_iter()
+            .filter_map(|c| Some((c.id?, c.settings.seller.name)))
+            .collect();
         let conn = self.conn();
         let mut statement = conn.prepare(
-            "SELECT id, number, status, draft, total, exported_at, paid_at, updated_at FROM invoices
+            "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at
+             FROM invoices WHERE archived_at IS NULL AND (?1 IS NULL OR context_id = ?1)
              ORDER BY updated_at DESC, id DESC",
         )?;
-        let rows = statement.query_map([], stored)?;
+        let rows = statement.query_map([context], stored)?;
         rows.map(|row| {
             let (invoice, draft) = row?;
             let draft: InvoiceDraft = serde_json::from_str(&draft)?;
+            // an exported invoice shows the seller it was made with
+            let seller_name = draft
+                .frozen
+                .as_ref()
+                .map(|f| f.seller.name.clone())
+                .or_else(|| sellers.get(&invoice.context_id).cloned())
+                .unwrap_or_default();
             Ok(ListEntry {
                 id: invoice.id,
+                context_id: invoice.context_id,
+                seller_name,
                 number: invoice.number,
                 status: invoice.status,
                 customer_name: draft.customer.name,
@@ -422,7 +787,7 @@ impl Store {
         let conn = self.conn();
         let (mut invoice, draft) = conn
             .query_row(
-                "SELECT id, number, status, draft, total, exported_at, paid_at, updated_at FROM invoices WHERE id = ?1",
+                "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at FROM invoices WHERE id = ?1",
                 [id],
                 stored,
             )
@@ -448,10 +813,12 @@ impl Store {
         self.invoice(id)
     }
 
-    /// Creates a draft (`id` is `None`) or updates one, exported invoices are refused.
+    /// Creates a draft under a context (`id` is `None`) or updates one, which stays under the context
+    /// it was made under. Exported invoices are refused.
     pub fn save_draft(
         &self,
         id: Option<i64>,
+        context_id: i64,
         draft: &InvoiceDraft,
         total: Option<&str>,
     ) -> Result<StoredInvoice> {
@@ -472,9 +839,9 @@ impl Store {
                 }
                 None => {
                     conn.execute(
-                        "INSERT INTO invoices (status, draft, total, updated_at)
-                         VALUES ('draft', ?1, ?2, datetime('now'))",
-                        params![json, total],
+                        "INSERT INTO invoices (context_id, status, draft, total, updated_at)
+                         VALUES (?1, 'draft', ?2, ?3, datetime('now'))",
+                        params![context_id, json, total],
                     )?;
                     conn.last_insert_rowid()
                 }
@@ -495,22 +862,39 @@ impl Store {
         Ok(())
     }
 
-    /// A new draft with the content of an existing invoice, dated `today`.
+    /// A new draft with the content of an existing invoice, dated `today`, in the same context.
     pub fn duplicate(&self, id: i64, today: &str) -> Result<StoredInvoice> {
-        let mut draft = self.invoice(id)?.draft;
+        let source = self.invoice(id)?;
+        let mut draft = source.draft;
         draft.issue_date = today.into();
         draft.delivery_date = today.into();
         draft.frozen = None;
-        self.save_draft(None, &draft, None)
+        draft.frozen_layout = None;
+        self.save_draft(None, source.context_id, &draft, None)
     }
 
-    /// The next free number for an invoice of that day, by the pattern (see `numbering`).
-    pub fn next_number(&self, pattern: &str, date: Date) -> Result<String> {
+    /// Takes an exported invoice out of the list, it stays as it is (and counts for its numbers).
+    /// Drafts are deleted instead.
+    pub fn archive_invoice(&self, id: i64) -> Result<()> {
+        let changed = self.conn().execute(
+            "UPDATE invoices SET archived_at = ?1 WHERE id = ?2 AND status = 'exported'
+                 AND archived_at IS NULL",
+            params![now(), id],
+        )?;
+        if changed == 0 {
+            bail!("only an exported invoice can be archived");
+        }
+        Ok(())
+    }
+
+    /// The next free number of a context for an invoice of that day, by the pattern (see `numbering`).
+    pub fn next_number(&self, context_id: i64, pattern: &str, date: Date) -> Result<String> {
         let pattern = Pattern::parse(pattern)?;
         let conn = self.conn();
-        let mut statement = conn.prepare("SELECT number FROM invoices WHERE number IS NOT NULL")?;
+        let mut statement = conn
+            .prepare("SELECT number FROM invoices WHERE number IS NOT NULL AND context_id = ?1")?;
         let existing = statement
-            .query_map([], |r| r.get::<_, String>(0))?
+            .query_map([context_id], |r| r.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(pattern.next(date, existing.iter().map(String::as_str)))
     }
