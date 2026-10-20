@@ -27,8 +27,8 @@ export interface Settings {
   seller: Seller;
   tax_rate: string;
   payment_days: number;
-  number_prefix: string;
-  footer: string | null;
+  /** How invoice numbers are made: date tokens like in layouts, N for the counter (NNN: three digits) */
+  number_pattern: string;
   /** The layout of the invoice document, invoices may choose another */
   layout: string;
   /** Texts of the letter, used unless an invoice has its own */
@@ -352,6 +352,7 @@ export function errorText(error: unknown): string {
 
 export const api = {
   settingsGet: () => invoke<Settings>('settings_get'),
+  numberExample: (pattern: string) => invoke<string>('number_example', { pattern }),
   settingsSave: (settings: Settings) => invoke<null>('settings_save', { settings }),
 
   customersList: () => invoke<Customer[]>('customers_list'),

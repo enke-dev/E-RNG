@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::model::Settings;
+use crate::numbering::Pattern;
 use crate::store::Store;
 use crate::utils::message;
 
@@ -19,5 +20,17 @@ pub fn settings_save(store: State<'_, Store>, settings: Settings) -> Result<(), 
     if archived {
         return Err("Ein archiviertes Layout kann nicht das Standard-Layout sein.".into());
     }
+    // a pattern that cannot count would stop every export
+    Pattern::parse(&settings.number_pattern).map_err(message)?;
     store.save_settings(&settings).map_err(message)
+}
+
+/// What the next invoice would be called by a pattern that is being typed, an invoice of today and
+/// the first of its kind; the problem if the pattern is none.
+#[tauri::command]
+pub fn number_example(pattern: String) -> Result<String, String> {
+    let today = crate::utils::issue_day(&crate::utils::today());
+    Pattern::parse(&pattern)
+        .map(|p| p.next(today, []))
+        .map_err(message)
 }

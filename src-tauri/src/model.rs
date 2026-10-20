@@ -55,8 +55,14 @@ pub struct Settings {
     /// VAT rate in percent, one for the whole app
     pub tax_rate: String,
     pub payment_days: u32,
-    /// Invoice numbers are `<prefix><year>-<sequence>`
-    pub number_prefix: String,
+    /// How invoice numbers are made, see `numbering`
+    pub number_pattern: String,
+    /// From before there was a pattern, only read: `normalized` turns it into one
+    #[serde(skip_serializing)]
+    pub number_prefix: Option<String>,
+    /// From before the legal information was part of the seller, only read: `normalized` moves it,
+    /// an exported invoice that froze it keeps showing it
+    #[serde(skip_serializing)]
     pub footer: Option<String>,
     /// The layout of the invoice document (see `render::layouts`), invoices may choose another
     pub layout: String,
@@ -71,12 +77,35 @@ impl Default for Settings {
             seller: Seller::default(),
             tax_rate: "19".into(),
             payment_days: 14,
-            number_prefix: "RE-".into(),
+            number_pattern: crate::numbering::DEFAULT_PATTERN.into(),
+            number_prefix: None,
             footer: None,
             layout: "standard".into(),
             intro: None,
             closing: None,
         }
+    }
+}
+
+impl Settings {
+    /// Settings of an older version have a prefix and no pattern: the numbers stay what they were.
+    pub fn normalized(mut self) -> Self {
+        if let Some(prefix) = self.number_prefix.take() {
+            // brackets cannot be written inside brackets
+            let prefix = prefix.replace(['[', ']'], "");
+            self.number_pattern = if prefix.is_empty() {
+                "YYYY-NNN".into()
+            } else {
+                format!("[{prefix}]YYYY-NNN")
+            };
+        }
+        if let Some(footer) = self.footer.take() {
+            let empty = |text: &Option<String>| text.as_deref().is_none_or(|t| t.trim().is_empty());
+            if empty(&self.seller.legal_info) {
+                self.seller.legal_info = Some(footer).filter(|f| !f.trim().is_empty());
+            }
+        }
+        self
     }
 }
 
@@ -238,6 +267,48 @@ mod tests {
         assert_eq!(settings.seller.name, "A");
         assert_eq!(settings.layout, "standard");
         assert_eq!(settings.intro, None);
+    }
+
+    #[test]
+    fn a_prefix_from_an_older_version_becomes_a_pattern() {
+        let stored = |prefix: &str| Settings {
+            number_prefix: Some(prefix.into()),
+            ..Settings::default()
+        };
+
+        assert_eq!(stored("RE-").normalized().number_pattern, "[RE-]YYYY-NNN");
+        assert_eq!(stored("R[1]").normalized().number_pattern, "[R1]YYYY-NNN");
+        assert_eq!(stored("").normalized().number_pattern, "YYYY-NNN");
+        // what has a pattern is left alone, and the prefix is not written again
+        let new = Settings::default().normalized();
+        assert_eq!(new.number_pattern, crate::numbering::DEFAULT_PATTERN);
+        assert!(!serde_json::to_string(&stored("RE-"))
+            .unwrap()
+            .contains("number_prefix"));
+    }
+
+    #[test]
+    fn a_footer_from_an_older_version_becomes_the_legal_information() {
+        let with = |footer: &str, legal: Option<&str>| {
+            let mut settings = Settings {
+                footer: Some(footer.into()),
+                ..Settings::default()
+            };
+            settings.seller.legal_info = legal.map(Into::into);
+            settings.normalized()
+        };
+        let legal = |settings: &Settings| settings.seller.legal_info.clone();
+
+        assert_eq!(
+            legal(&with("AG Köln HRB 1", None)).as_deref(),
+            Some("AG Köln HRB 1")
+        );
+        // what is there stays, an empty footer is nothing
+        assert_eq!(legal(&with("alt", Some("neu"))).as_deref(), Some("neu"));
+        assert_eq!(legal(&with("  ", None)), None);
+        assert!(!serde_json::to_string(&with("x", None))
+            .unwrap()
+            .contains("\"footer\""));
     }
 
     #[test]

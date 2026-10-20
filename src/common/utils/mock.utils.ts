@@ -38,8 +38,7 @@ const settings: Settings = {
   },
   tax_rate: '19',
   payment_days: 14,
-  number_prefix: 'RE-',
-  footer: null,
+  number_pattern: '[RE-]YYYY-NNN',
   layout: 'standard',
   intro: null,
   closing: null,
@@ -213,6 +212,25 @@ export function installMocks() {
     (command, payload) => {
       const args = (payload ?? {}) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
       switch (command) {
+        case 'number_example': {
+          // a rough stand-in for the real pattern, enough to see the hint
+          const pattern = String(args['pattern']);
+          if (!/N/.test(pattern.replace(/\[[^\]]*\]/g, ''))) {
+            throw 'Das Muster braucht einen Zähler: N, NNN für drei Stellen mit führenden Nullen.';
+          }
+          return pattern.replace(
+            /\[([^\]]*)\]|YYYY|MM|DD|N+/g,
+            (m, text?: string) =>
+              text ??
+              (m === 'YYYY'
+                ? '2026'
+                : m === 'MM'
+                  ? '03'
+                  : m === 'DD'
+                    ? '07'
+                    : '1'.padStart(m.length, '0'))
+          );
+        }
         case 'settings_get':
           return settings;
         case 'settings_save':

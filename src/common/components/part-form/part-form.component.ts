@@ -41,7 +41,7 @@ export const BUILTIN_FAMILIES = ['Libertinus Serif', 'New Computer Modern', 'Dej
 
 /** The placeholders a text can use, for the hint under it */
 const PLACEHOLDERS =
-  '{seller_name} {seller_address} {seller_contact} {seller_registration} {footer} {bank}';
+  '{seller_name} {seller_address} {seller_contact} {seller_registration} {legal} {bank}';
 
 const MIN_DPI = 150;
 

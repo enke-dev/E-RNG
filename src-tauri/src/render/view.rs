@@ -13,8 +13,8 @@ use crate::model::{CustomLayout, Format, Insets, InvoiceDraft, Settings};
 /// What the user adds to the plain invoice data: look and feel of the document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Branding {
-    /// Free text for the page footer, e.g. managing directors or the commercial register entry.
-    pub footer: Option<String>,
+    /// The legal information of the seller (managing directors, register entry), for `{legal}`
+    pub legal: Option<String>,
     /// The texts around the table: salutation and introduction, closing
     pub intro: Option<String>,
     pub closing: Option<String>,
@@ -49,7 +49,12 @@ impl Branding {
             .clone()
             .or_else(|| customs.iter().find(|l| l.key() == wanted).cloned());
         Self {
-            footer: settings.footer.clone(),
+            // what an invoice froze before the legal information was the seller's is its footer
+            legal: settings
+                .seller
+                .legal_info
+                .clone()
+                .or_else(|| settings.footer.clone()),
             custom,
             guides: false,
             marks: false,
@@ -73,7 +78,7 @@ pub struct InvoiceView {
     pub totals: Vec<Total>,
     pub vat_notes: Vec<String>,
     pub payment: Vec<String>,
-    pub footer: Option<String>,
+    pub legal: Option<String>,
     /// The letter around the table
     pub letter: Letter,
     /// Single facts for layouts that arrange them their own way
@@ -239,7 +244,6 @@ fn party_view(party: &en16931::invoice::Party, seller: bool) -> PartyView {
             .as_ref()
             .filter(|_| seller)
             .map(|t| format!("Steuernr. {t}")),
-        party.additional_legal_information.clone(),
     ];
     PartyView {
         name: party.name.clone().unwrap_or_default(),
@@ -496,7 +500,7 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         totals: rows,
         vat_notes,
         payment: payment_lines(invoice, currency, fmt),
-        footer: branding.footer.clone(),
+        legal: branding.legal.clone(),
         letter: Letter {
             intro: branding.intro.clone(),
             closing: branding.closing.clone(),

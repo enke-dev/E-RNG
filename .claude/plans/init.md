@@ -55,7 +55,7 @@ this list is the index of what is still open.
 - [ ] EPC / GiroCode QR code for EUR credit transfers (needs a vendored QR package, no network at compile time)
 - [ ] Exact DIN 5008 window geometry and fold marks
 - [ ] English invoices (labels live in `render/view.rs`)
-- [ ] Seller register entry and managing directors as proper fields instead of free footer text
+- [x] Seller register entry and managing directors: one multi-line field "Rechtliche Angaben" (`seller.legal_info`, in the XML as BT-33 and in the layouts as `{legal}`); no separate mandatory fields, what is required depends on the legal form. An optional register number for BT-30 could follow
 
 **Manual checks that only the real app can answer** (`bunx tauri dev`)
 - [ ] The whole flow with the real backend: settings, customer, invoice, create and check, save as PDF, open the PDF and its embedded XML in a ZUGFeRD viewer
@@ -162,7 +162,7 @@ Open:
 - EPC/GiroCode QR code for EUR credit transfers (needs a vendored QR package, no network at compile time)
 - Exact DIN 5008 window geometry and fold marks
 - English (and other) invoice language: labels live in the view, a language switch would go there
-- Seller registration extras (commercial register, managing directors) come only from the footer text today
+- Seller registration extras (commercial register, managing directors) are the free text "Rechtliche Angaben"
 
 ## Phase 4 – Validation (in-app gate and tests)
 
@@ -199,7 +199,7 @@ Decisions (from the owner): one global tax rate (default 19 %, no 0 % / Kleinunt
 - [x] CD: `.github/workflows/check.yml` + `release.yml`, `.release-it.json`, version sync hook: the first real run published v0.0.1 (all jobs green, about 14 minutes)
 - [x] Storage: SQLite (`rusqlite`, bundled) in the app data directory, schema versioned by `user_version`, WAL; settings, customers and invoices (`src-tauri/src/store.rs`, 8 tests)
 - [x] Draft → invoice mapping in one place (`draft.rs`): positions → lines via `line_from_unit_price`, seller/customer → parties, SEPA credit transfer, due date from the payment days, XRechnung business process; bad input is reported per field (`InputProblem`), rule violations as findings
-- [x] Numbers: `<prefix><year>-<seq>`, e.g. `RE-2026-001`, assigned only when an invoice is exported (cancelled or invalid attempts never use one), unique in the database
+- [x] Numbers: by a pattern (`[RE-]YYYY-NNN` by default, see `numbering.rs`), e.g. `RE-2026-001`, assigned only when an invoice is exported (cancelled or invalid attempts never use one), unique in the database
 - [x] Export flow: `produce_invoice(id)` (work dir + validated files) → UI shows the report → save dialogs → `export_invoice` copies the files, **then** finalizes the invoice (number, frozen settings, locked); a failed finalize deletes the copies; re-exporting a locked invoice reuses its number and frozen settings
 - [x] Commands: `settings_get/save`, `customers_list`, `customer_save/delete`, `invoices_list`, `templates_list`, `template_save/delete`, `invoice_get/blank/save/duplicate/delete`, `check_invoice` (live totals, input problems and rule findings), `produce_invoice`, `export_invoice`, `discard_work_dir`
 - [x] UI (German, Web Awesome): invoices as list and detail (see the next round), invoice editor (customer select + inline new customer, dates, XRechnung switch with Leitweg-ID, positions, note, live totals, problems/findings, export dialog with report and file choice), customers (cards + dialog), settings (company, bank, tax rate, payment days, number prefix, footer, logo)

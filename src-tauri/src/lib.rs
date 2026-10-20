@@ -5,6 +5,7 @@ mod layout;
 mod layout_bundle;
 mod layout_files;
 mod model;
+mod numbering;
 mod package;
 mod pipeline;
 mod render;
@@ -72,6 +73,7 @@ pub fn run() {
             commands::opened_files_command::opened_files,
             commands::preview_invoice_command::preview_invoice,
             commands::produce_invoice_command::produce_invoice,
+            commands::settings_command::number_example,
             commands::settings_command::settings_get,
             commands::settings_command::settings_save,
             commands::templates_command::template_delete,

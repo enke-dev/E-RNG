@@ -20,6 +20,11 @@ pub fn data_dir(app: &AppHandle) -> tauri::Result<PathBuf> {
 }
 
 /// The date the UI starts new and duplicated invoices with.
+/// The day an invoice is issued, for numbering; a date that is none is reported elsewhere.
+pub fn issue_day(issue_date: &str) -> en16931::Date {
+    en16931::Date::parse(issue_date).unwrap_or_else(|_| en16931::Date::new(1970, 1, 1).unwrap())
+}
+
 pub fn today() -> String {
     chrono::Local::now()
         .date_naive()

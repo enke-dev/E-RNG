@@ -18,7 +18,7 @@ form ─► draft ─► invoice model (en16931) ─► CII XML
   minimal Java runtime for Mustang. The app never hands out a file that did not pass.
 - **Frontend**: Lit, Web Awesome, signals, German UI. Dark mode follows the system.
 - Exported invoices are locked and keep the number, tax rate and seller details they were made with,
-  corrections go through "duplicate". Numbers (`RE-2026-001`) are assigned on export only.
+  corrections go through "duplicate". Numbers are assigned on export only, by a pattern in the settings (`numbering.rs`: date tokens like in layouts, `N` for the counter, `NNN` fills with zeros to three digits, `[text]` stays; the default `[RE-]YYYY-NNN` gives `RE-2026-001`). The counter starts again when anything the pattern writes around it changes, and counts from the highest number the pattern could have made that day. A stored prefix of an older version becomes `[prefix]YYYY-NNN` when settings are read. The seller's legal information (`legal_info`, one free text: what the legal form requires on business letters) goes into the XML (BT-33) and, as `{legal}`, into the layouts (older layouts and exported invoices say `{footer}`, it still works); the footer text of older versions moves there when settings are read (an exported invoice that froze it keeps its footer).
 
 More: [`.claude/plans/init.md`](../.claude/plans/init.md) (plan, decisions, open items) and
 [`.claude/plans/phase1-results.md`](../.claude/plans/phase1-results.md) (what the validators accept and reject).

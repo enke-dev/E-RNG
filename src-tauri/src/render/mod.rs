@@ -1,7 +1,7 @@
 //! Renders the invoice with Typst: a PDF/A-3b for the document, SVG pages for the live preview. The ZUGFeRD parts (XML attachment, Factur-X XMP)
 //! are not added here, that is what the packaging step does with the result.
 
-mod format;
+pub(crate) mod format;
 mod layouts;
 mod parts;
 mod view;

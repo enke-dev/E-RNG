@@ -6,7 +6,7 @@ use crate::model::InvoiceDraft;
 use crate::render::{self, Branding};
 use crate::sidecar::Sidecars;
 use crate::store::Store;
-use crate::utils::message;
+use crate::utils::{issue_day, message};
 
 #[derive(Debug, Serialize)]
 pub struct Preview {
@@ -38,16 +38,9 @@ pub async fn preview_invoice(
         .and_then(|invoice| invoice.number);
     let number = match stored_number {
         Some(number) => number,
-        None => {
-            let year = draft
-                .issue_date
-                .get(..4)
-                .and_then(|y| y.parse().ok())
-                .unwrap_or(1970);
-            store
-                .next_number(&settings.number_prefix, year)
-                .map_err(message)?
-        }
+        None => store
+            .next_number(&current.number_pattern, issue_day(&draft.issue_date))
+            .map_err(message)?,
     };
 
     let invoice = match build_invoice(&for_preview(&draft), &current, &number) {

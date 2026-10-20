@@ -261,21 +261,22 @@ fn text(anchor: Anchor, x: f64, y: f64, width: f64, text: &str, size: f64, align
 
 /// The footer every page of the built-in layout has: a rule, three columns of company data and a
 /// free text under it, and the page number. They hang from the top so the columns start on the
-/// same line (the paper is A4).
+/// same line (the paper is A4). The text under the columns has room for four lines inside the area a
+/// desktop printer prints (5 mm from the edge).
 fn footer() -> Vec<Part> {
     use Anchor::{TopLeft, TopRight};
     vec![
         Part {
             anchor: TopLeft,
             x: 25.0,
-            y: 269.0,
+            y: 263.0,
             width: Some(165.0),
             content: PartContent::Line { thickness: 0.5 },
         },
         text(
             TopLeft,
             25.0,
-            272.0,
+            266.0,
             53.0,
             "**{seller_name}**\n{seller_address}",
             7.5,
@@ -284,7 +285,7 @@ fn footer() -> Vec<Part> {
         text(
             TopLeft,
             81.0,
-            272.0,
+            266.0,
             53.0,
             "{seller_contact}",
             7.5,
@@ -293,17 +294,19 @@ fn footer() -> Vec<Part> {
         text(
             TopLeft,
             137.0,
-            272.0,
+            266.0,
             53.0,
             "{seller_registration}",
             7.5,
             Align::Left,
         ),
-        text(TopLeft, 25.0, 285.0, 165.0, "{footer}", 7.5, Align::Left),
+        // room for four lines inside the printable area, narrower than the rule so the page number
+        // stays clear
+        text(TopLeft, 25.0, 278.0, 140.0, "{legal}", 7.5, Align::Left),
         Part {
             anchor: TopRight,
             x: 20.0,
-            y: 285.0,
+            y: 278.0,
             width: Some(60.0),
             content: PartContent::PageNumber {
                 text: "Seite {page} von {pages}".into(),

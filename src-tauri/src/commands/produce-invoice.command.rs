@@ -39,22 +39,18 @@ pub async fn produce_invoice(
     let sidecars = Sidecars::locate(&app).map_err(failed)?;
     let stored = store.invoice(id).map_err(failed)?;
     let current = store.settings().map_err(failed)?;
+    let numbered_by = current.number_pattern.clone();
     let settings = stored.draft.frozen.clone().unwrap_or(current);
 
     // exported invoices keep their number, drafts get the next free one (taken on export only)
     let number = match &stored.number {
         Some(number) => number.clone(),
-        None => {
-            let year = stored
-                .draft
-                .issue_date
-                .get(..4)
-                .and_then(|y| y.parse().ok())
-                .unwrap_or(1970);
-            store
-                .next_number(&settings.number_prefix, year)
-                .map_err(failed)?
-        }
+        None => store
+            .next_number(
+                &numbered_by,
+                crate::utils::issue_day(&stored.draft.issue_date),
+            )
+            .map_err(failed)?,
     };
     let invoice = build_invoice(&stored.draft, &settings, &number)
         .map_err(|problems| ProduceError::Input { problems })?;

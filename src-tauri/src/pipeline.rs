@@ -102,7 +102,7 @@ mod tests {
 
     fn branding() -> Branding {
         Branding {
-            footer: Some("Geschäftsführer: Max Muster · AG Köln HRB 12345".into()),
+            legal: Some("Geschäftsführer: Max Muster · AG Köln HRB 12345".into()),
             ..Branding::default()
         }
     }

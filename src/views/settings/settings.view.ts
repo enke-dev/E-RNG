@@ -43,10 +43,12 @@ const SECTIONS = [
   ['company', 'Unternehmen'],
   ['bank', 'Bankverbindung'],
   ['invoices', 'Rechnungen'],
-  ['texts', 'Texte der Rechnung'],
 ] as const;
 
 const LAYOUT = 'layout-';
+
+/** The lines of legal information the footer of the built-in layout has room for */
+const LEGAL_LINES = 4;
 
 /** The ending of a layout file */
 const LAYOUT_EXTENSION = 'erng-layout';
@@ -58,7 +60,7 @@ const parseKey = (key: string): { first: boolean; index: number } => {
 };
 
 /**
- * Settings: the pages on the left (company, bank, invoices, texts, then the layouts), the selected
+ * Settings: the pages on the left (company, bank, invoices, then the layouts), the selected
  * one on the right. The company pages share one Save button, a layout is saved on its own.
  */
 @customElement('erng-settings')
@@ -67,6 +69,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   @property() selected = '';
 
   @state() private settings: Settings | undefined;
+
+  /** What the next number would look like by the pattern in the form, or what is wrong with it */
+  @state() private numberHint = '';
   @state() private layouts: LayoutInfo[] = [];
   @state() private customs: CustomLayout[] = [];
   /** A copy of the selected own layout, what its form edits */
@@ -145,6 +150,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       settings => {
         this.#saved = JSON.stringify(settings);
         this.settings = settings;
+        void this.showNumberExample();
       },
       (error: unknown) => notifyError(error)
     );
@@ -266,6 +272,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       .value="${settings.seller[key] ?? ''}"
       @input="${(e: Event) => this.edit(s => (s.seller[key] = nullable(text(e))))}"
     ></wa-input>`;
+  }
+
+  private async showNumberExample() {
+    const pattern = this.settings?.number_pattern ?? '';
+    try {
+      this.numberHint = `Die nächste Nummer sähe so aus: ${await api.numberExample(pattern)}`;
+    } catch (error) {
+      this.numberHint = errorText(error);
+    }
   }
 
   private async save() {
@@ -594,11 +609,23 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         ${this.seller('contact_name', 'Ansprechpartner')} ${this.seller('phone', 'Telefon', 'tel')}
         ${this.seller('email', 'E-Mail', 'email')}
       </div>
+      <span class="muted">
+        Name, Telefon und E-Mail sind für XRechnung Pflicht, bei ZUGFeRD freiwillig.
+      </span>
       <wa-textarea
-        label="Zusatzangaben im Fuß (Handelsregister, Geschäftsführer, …)"
-        rows="2"
-        .value="${settings.footer ?? ''}"
-        @input="${(e: Event) => this.edit(s => (s.footer = nullable(text(e))))}"
+        label="Rechtliche Angaben"
+        hint="Für Geschäftsbriefe, auch Rechnungen, je nach Rechtsform: z. B. bei einer GmbH Registergericht, HRB-Nummer und alle Geschäftsführer, bei einem e. K. Registergericht und HRA-Nummer. Leer lassen, wenn nichts eingetragen ist. Steht im Fuß der Rechnung und in der XML-Datei; im eingebauten Layout ist Platz für ${LEGAL_LINES} Zeilen."
+        rows="${LEGAL_LINES}"
+        .value="${settings.seller.legal_info ?? ''}"
+        @input="${(e: Event) => {
+          // more lines would run off the page in the built-in layout
+          const field = e.target as HTMLTextAreaElement;
+          const lines = field.value.split('\n');
+          if (lines.length > LEGAL_LINES) {
+            field.value = lines.slice(0, LEGAL_LINES).join('\n');
+          }
+          this.edit(s => (s.seller.legal_info = nullable(field.value)));
+        }}"
       ></wa-textarea>
     `;
   }
@@ -628,22 +655,22 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           .value="${String(settings.payment_days)}"
           @input="${(e: Event) => this.edit(s => (s.payment_days = Math.max(0, Number(text(e)) || 0)))}"
         ></wa-input>
-        <wa-input
-          label="Präfix der Rechnungsnummer"
-          hint="z. B. RE- ergibt RE-2026-001"
-          .value="${settings.number_prefix}"
-          @input="${(e: Event) => this.edit(s => (s.number_prefix = text(e)))}"
-        ></wa-input>
       </div>
+      <wa-input
+        label="Muster der Rechnungsnummer"
+        hint="${this.numberHint}"
+        .value="${settings.number_pattern}"
+        @input="${(e: Event) => {
+          this.edit(s => (s.number_pattern = text(e)));
+          void this.showNumberExample();
+        }}"
+      ></wa-input>
       <span class="muted">
-        Das Layout der Rechnungen wählst du unter Layouts, dort legst du auch das Standard-Layout
-        fest.
+        Jahr YYYY (2026) oder YY, Monat MM (03) oder M, Tag DD (07) oder D, Zähler N: NNN füllt mit
+        Nullen auf drei Stellen auf (007), N gar nicht. Text in [eckigen Klammern] bleibt, wie er
+        ist. Der Zähler beginnt neu, sobald sich ein Teil des Musters ändert, bei
+        <code>[RE-]YYYY-NNN</code> mit jedem Jahr.
       </span>
-    `;
-  }
-
-  private textsPage(settings: Settings) {
-    return html`
       <wa-textarea
         label="Einleitung"
         hint="Vor der Positionstabelle, z. B. Anrede und Anlass. Jede Rechnung kann einen eigenen Text haben."
@@ -658,6 +685,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         .value="${settings.closing ?? ''}"
         @input="${(e: Event) => this.edit(s => (s.closing = nullable(text(e))))}"
       ></wa-textarea>
+      <span class="muted">
+        Das Layout der Rechnungen wählst du unter Layouts, dort legst du auch das Standard-Layout
+        fest.
+      </span>
     `;
   }
 
@@ -666,7 +697,6 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       company: ['Unternehmen', () => this.companyPage(settings)],
       bank: ['Bankverbindung', () => this.bankPage()],
       invoices: ['Rechnungen', () => this.invoicesPage(settings)],
-      texts: ['Texte der Rechnung', () => this.textsPage(settings)],
     } satisfies Record<string, [string, () => unknown]>;
     const key = (this.section in pages ? this.section : 'company') as keyof typeof pages;
     const [heading, content] = pages[key];

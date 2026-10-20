@@ -270,7 +270,8 @@ fn placeholder(view: &InvoiceView, name: &str) -> Option<String> {
         "seller_address" => Some(view.seller.address.join("\n")),
         "seller_contact" => Some(view.seller.contact.join("\n")),
         "seller_registration" => Some(view.seller.registration.join("\n")),
-        "footer" => Some(view.footer.clone().unwrap_or_default()),
+        // layouts of older versions say `{footer}` for it
+        "legal" | "footer" => Some(view.legal.clone().unwrap_or_default()),
         "bank" => Some(
             view.bank
                 .iter()
@@ -337,6 +338,25 @@ mod tests {
         assert_eq!(texts(&lines), ["Muster GmbH", "ein Satz"]);
         assert!(lines[0][0].bold && !lines[0][1].bold);
         assert!(lines[1][1].italic && !lines[1][0].italic);
+    }
+
+    #[test]
+    fn the_legal_information_is_legal_and_footer_for_layouts_of_older_versions() {
+        use crate::draft::{build_invoice, fixtures};
+        use crate::render::view::{build, Branding};
+
+        let mut settings = fixtures::settings();
+        settings.seller.legal_info = Some("HRB 1".into());
+        let draft = fixtures::draft();
+        let invoice = build_invoice(&draft, &settings, "RE-1").unwrap();
+        let view = build(
+            &invoice,
+            &Branding::for_draft(&draft, &settings, &[]),
+            &crate::model::Format::default(),
+        );
+
+        assert_eq!(placeholder(&view, "legal").as_deref(), Some("HRB 1"));
+        assert_eq!(placeholder(&view, "footer").as_deref(), Some("HRB 1"));
     }
 
     #[test]

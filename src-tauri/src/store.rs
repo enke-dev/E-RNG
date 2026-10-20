@@ -7,12 +7,14 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::{anyhow, bail, Context, Result};
+use en16931::Date;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::model::{
     CustomLayout, Customer, InvoiceDraft, LayoutUsage, ListEntry, PositionTemplate, Settings,
     Status, StoredInvoice,
 };
+use crate::numbering::Pattern;
 
 pub struct Store(Mutex<Connection>);
 
@@ -152,9 +154,10 @@ impl Store {
             .query_row("SELECT json FROM settings WHERE id = 1", [], |r| r.get(0))
             .optional()?;
         Ok(json
-            .map(|j| serde_json::from_str(&j))
+            .map(|j| serde_json::from_str::<Settings>(&j))
             .transpose()?
-            .unwrap_or_default())
+            .unwrap_or_default()
+            .normalized())
     }
 
     pub fn save_settings(&self, settings: &Settings) -> Result<()> {
@@ -501,18 +504,15 @@ impl Store {
         self.save_draft(None, &draft, None)
     }
 
-    /// The next free number for the year, e.g. `RE-2026-004`.
-    pub fn next_number(&self, prefix: &str, year: i32) -> Result<String> {
-        let start = format!("{prefix}{year}-");
+    /// The next free number for an invoice of that day, by the pattern (see `numbering`).
+    pub fn next_number(&self, pattern: &str, date: Date) -> Result<String> {
+        let pattern = Pattern::parse(pattern)?;
         let conn = self.conn();
         let mut statement = conn.prepare("SELECT number FROM invoices WHERE number IS NOT NULL")?;
-        let highest = statement
+        let existing = statement
             .query_map([], |r| r.get::<_, String>(0))?
-            .filter_map(Result::ok)
-            .filter_map(|n| n.strip_prefix(&start).and_then(|s| s.parse::<u32>().ok()))
-            .max()
-            .unwrap_or(0);
-        Ok(format!("{start}{:03}", highest + 1))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(pattern.next(date, existing.iter().map(String::as_str)))
     }
 
     /// Makes a draft final: it gets its number, freezes the settings and can no longer change.
@@ -871,9 +871,14 @@ mod tests {
     }
 
     #[test]
-    fn numbers_count_up_per_year_and_prefix() {
+    fn numbers_count_up_by_the_pattern() {
+        let day = |y, m, d| Date::new(y, m, d).unwrap();
         let store = Store::in_memory().unwrap();
-        assert_eq!(store.next_number("RE-", 2026).unwrap(), "RE-2026-001");
+        let pattern = crate::numbering::DEFAULT_PATTERN;
+        assert_eq!(
+            store.next_number(pattern, day(2026, 3, 7)).unwrap(),
+            "RE-2026-001"
+        );
 
         let id = store.save_draft(None, &draft(), None).unwrap().id;
         store
@@ -884,9 +889,23 @@ mod tests {
             .finalize(id, "RE-2026-007", &settings(), None, "1.00")
             .unwrap();
 
-        assert_eq!(store.next_number("RE-", 2026).unwrap(), "RE-2026-008");
-        assert_eq!(store.next_number("RE-", 2027).unwrap(), "RE-2027-001");
-        assert_eq!(store.next_number("R-", 2026).unwrap(), "R-2026-001");
+        assert_eq!(
+            store.next_number(pattern, day(2026, 3, 7)).unwrap(),
+            "RE-2026-008"
+        );
+        assert_eq!(
+            store.next_number(pattern, day(2027, 1, 1)).unwrap(),
+            "RE-2027-001"
+        );
+        assert_eq!(
+            store.next_number("[R-]YYYY-NNN", day(2026, 1, 1)).unwrap(),
+            "R-2026-001"
+        );
+        assert_eq!(
+            store.next_number("[X-]YYYY-NNN", day(2026, 1, 1)).unwrap(),
+            "X-2026-001"
+        );
+        assert!(store.next_number("YYYY", day(2026, 1, 1)).is_err());
     }
 
     #[test]
