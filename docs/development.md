@@ -65,7 +65,7 @@ GOLDEN_OUT=/some/dir cargo test                                      # writes th
 ```
 src/                       frontend
   views/                   invoices (list + detail), invoice-edit, customers, templates, settings (+ root shell and routes)
-  common/                  components (one folder each: `<name>/<name>.component.{ts,css}`, styles always in the css file, `ErngElement.withStyles(styles)`), layouts (split, cards, editor: slots only, the editor has a `wa-split-panel` the user can move, views import no styles), api.utils.ts (typed commands), format and form helpers, mock backend
+  common/                  components (one folder each: `<name>/<name>.component.{ts,css}`, styles always in the css file, `ErngElement.withStyles(styles)`), layouts (split, cards, editor: slots only, split and editor have a `wa-split-panel` the user can move (their slots are the panels, so they style their own slots; the divider position is stored under the `position-key` of the view; the list has a minimum and maximum, the detail a minimum; the editor shows only the form where the minimums of both sides do not fit, a container query), views import no styles), api.utils.ts (typed commands), format and form helpers, mock backend
 src-tauri/src/
   invoice/                 profile choice, rule checks, German finding texts, CII writer, golden test set
   draft.rs                 form draft → invoice model
@@ -134,6 +134,8 @@ frame, cyan for the aids of a letter (address window, fold and punch marks, midd
 default, else it is archived. An exported invoice freezes its layout like the settings.
 `cargo test -- --include-ignored` validates every golden case in the built-in layout and with letterhead pictures, a font and
 image parts.
+
+What is remembered between runs is a convenience of the machine, not a setting: the dividers and the last open view (`memory.utils.ts`, `localStorage`, wrapped so a missing storage breaks nothing; a blank invoice is not restored) and the size, place and state of the window (`tauri-plugin-window-state`). A divider is stored as the `position` (percent) of its `wa-split-panel`; the limits are its native `--min`/`--max` in the layout's css, which clamp what is drawn, not the stored value.
 
 ## Release
 

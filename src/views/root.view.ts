@@ -9,6 +9,7 @@ import { customElement, eventOptions } from 'lit/decorators.js';
 import { when } from 'lit/directives/when.js';
 
 import { ErngElement } from '../common/utils/base.utils.js';
+import { rememberRoute } from '../common/utils/memory.utils.js';
 import { followOpenedFiles } from '../common/utils/opened.utils.js';
 import { registerRouter } from '../common/utils/routing.utils.js';
 import { errors, isErrored, isLoading } from '../state.js';
@@ -41,6 +42,11 @@ export class RootView extends ErngElement.withStyles(styles) {
     // the overlay title bar puts the traffic lights on top of the header
     this.toggleAttribute('macos', platform() === 'macos');
     void followOpenedFiles();
+  }
+
+  /** The router renders again after every navigation (links, back and forth): that is the view open now */
+  protected override updated() {
+    rememberRoute(location.pathname);
   }
 
   protected override async firstUpdated() {

@@ -738,7 +738,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   private standardPage() {
     return html`
       <erng-page frameless slot="detail">
-        <erng-editor>
+        <erng-editor position-key="editor:layout">
           <h2 slot="form">Standard</h2>
           <div slot="form" class="stack">
             <span>${this.layouts.find(l => l.id === 'standard')?.description}</span>
@@ -837,7 +837,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     const isNew = layout.id === null;
     return html`
       <erng-page frameless slot="detail">
-        <erng-editor>
+        <erng-editor position-key="editor:layout">
           ${
             layout.archived
               ? html`
@@ -905,7 +905,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     if (!settings) {
       return nothing;
     }
-    return html`<erng-split>${this.renderList()} ${this.renderDetail(settings)}</erng-split>
+    return html`<erng-split position-key="split:settings"
+        >${this.renderList()} ${this.renderDetail(settings)}</erng-split
+      >
       ${this.importDialog()}`;
   }
 }

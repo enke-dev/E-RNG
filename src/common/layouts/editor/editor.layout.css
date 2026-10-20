@@ -1,6 +1,7 @@
 /* the form and the page it edits side by side, the divider is the user's to move; the page scales
    with its panel. Below the room both minimums need, the page goes away. */
 :host {
+  container-type: inline-size;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -9,21 +10,35 @@
 wa-split-panel {
   flex: 1 1 auto;
   /* the form never gets narrower than it needs, the page keeps its minimum */
-  --min: var(--form-min);
-  --max: calc(100% - var(--preview-min));
-  --divider-width: 0.25rem;
+  --min: 25rem;
+  --max: calc(100% - 20rem);
+  --divider-width: var(--wa-border-width-s);
 }
 
-/* the panels of a split panel are slots, so the boxes are ours */
-.preview {
+/* the panels of a split panel are slots without a box of their own: our slots, given a display, are
+   what the grid lays out */
+slot[name='form'] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-m);
+  padding: var(--wa-space-m) var(--wa-space-l);
+}
+
+slot[name='preview'] {
+  display: block;
   min-width: 0;
   padding: 0 var(--wa-space-l);
   background: var(--wa-color-surface-lowered);
 }
 
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--wa-space-m);
-  padding: var(--wa-space-m) var(--wa-space-l);
+/* where both minimums do not fit (25rem + 20rem), the form has the room for itself */
+@container (max-width: 45rem) {
+  wa-split-panel {
+    grid-template-columns: 1fr !important;
+  }
+
+  wa-split-panel::part(divider),
+  slot[name='preview'] {
+    display: none;
+  }
 }

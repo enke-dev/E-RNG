@@ -163,7 +163,7 @@ export class InvoicesView extends ErngElement {
   override render() {
     const shown = this.shown;
     return html`
-      <erng-split @invoice-changed="${this.handleChanged}">
+      <erng-split position-key="split:invoices" @invoice-changed="${this.handleChanged}">
         <erng-filter-bar
           slot="list"
           .query="${this.query}"

@@ -3,10 +3,12 @@ import 'urlpattern-polyfill';
 
 import { registerIcons } from './common/utils/icon.utils.js';
 import { initLog } from './common/utils/log.utils.js';
+import { restoreRoute } from './common/utils/memory.utils.js';
 import { errors, followSystemScheme } from './state.js';
 
 followSystemScheme();
 registerIcons();
+restoreRoute();
 
 /**
  * First set up logging, then load the app

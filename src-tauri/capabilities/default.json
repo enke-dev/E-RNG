@@ -14,6 +14,7 @@
     "fs:allow-temp-write",
     "log:default",
     "opener:default",
-    "os:default"
+    "os:default",
+    "window-state:default"
   ]
 }

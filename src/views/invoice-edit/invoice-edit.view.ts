@@ -918,7 +918,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       (this.check?.findings.some(f => f.severity === 'Fatal') ?? false);
 
     return html`
-      <erng-editor>
+      <erng-editor position-key="editor:invoice">
         <section id="form" slot="form">
           ${
             locked
