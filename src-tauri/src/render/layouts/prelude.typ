@@ -139,22 +139,33 @@
   place(top + right, dx: -m.right - 2pt, dy: 2pt, note(mm(m.right)))
 }
 
+// what a printer can print on: desktop printers leave about 5 mm at every edge blank
+#let printable-area() = {
+  let area = (paint: red, thickness: 0.6pt, dash: "dashed")
+  place(top + left, dx: 5mm, dy: 5mm, rect(width: 100% - 10mm, height: 100% - 10mm, stroke: area))
+}
+
 // what helps to lay out a letter (DIN 5008 form B): the window of the address, the folds, the punch
-// mark, the middle of the page
+// mark, the middle of the page; the holes of a two-hole punch are on every page
 #let letter-aids(first) = {
   let aid = (paint: cyan, thickness: 0.5pt, dash: "dashed")
   let note(body) = text(size: 6pt, fill: cyan, body)
   place(top + left, dx: 105mm, line(angle: 90deg, length: 100%, stroke: aid))
-  place(top + left, dx: 106mm, dy: 2mm, note[Mitte])
+  // a two-hole punch (ISO 838): 6 mm holes, 80 mm apart around the middle, their centres 12 mm from the edge
+  for y in (108.5mm, 188.5mm) {
+    place(top + left, dx: 12mm - 3mm, dy: y - 3mm, circle(radius: 3mm, stroke: 0.5pt + cyan))
+  }
+  // the four-hole pattern adds two more, 80 mm further out: dashed, as not every binder needs them
+  for y in (28.5mm, 268.5mm) {
+    place(top + left, dx: 12mm - 3mm, dy: y - 3mm, circle(radius: 3mm, stroke: aid))
+  }
   if first {
     place(top + left, dx: 20mm, dy: 45mm, rect(width: 85mm, height: 45mm, stroke: aid))
     place(top + left, dx: 21mm, dy: 46mm, note[Anschriftfeld (DIN 5008 B)])
-    for (y, label) in ((105mm, [Falzmarke]), (210mm, [Falzmarke])) {
+    for y in (105mm, 210mm) {
       place(top + left, dy: y, line(length: 100%, stroke: aid))
-      place(top + left, dx: 1mm, dy: y - 8pt, note(label))
     }
     place(top + left, dy: 148.5mm, line(length: 6mm, stroke: 0.8pt + cyan))
-    place(top + left, dx: 7mm, dy: 148.5mm - 3pt, note[Lochmarke])
   }
 }
 
@@ -171,6 +182,7 @@
   if d.page.guides {
     letter-aids(first)
     guides-of(margin)
+    printable-area()
   }
 }
 

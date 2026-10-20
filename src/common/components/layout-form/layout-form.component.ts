@@ -112,7 +112,7 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
             ></wa-input>
             <wa-checkbox
               ?checked="${this.guides}"
-              hint="Zeichnet Linien an die Ränder des Inhalts und die Maße eines Briefs"
+              hint="Zeichnet Linien an die Ränder des Inhalts, die Maße eines Briefs und den druckbaren Bereich"
               @change="${(e: Event) =>
                 this.dispatchEvent(
                   new CustomEvent<boolean>('guides-change', {

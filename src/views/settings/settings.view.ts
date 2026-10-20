@@ -33,6 +33,7 @@ import type {
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
+import { recall, remember } from '../../common/utils/memory.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { takeOpenedLayouts } from '../../common/utils/opened.utils.js';
 import { goto } from '../../common/utils/routing.utils.js';
@@ -82,7 +83,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   @state() private sample: Preview | undefined;
   @state() private sampleError = '';
   /** Lines where the margins are, to see what a layout does */
-  @state() private guides = false;
+  @state() private guides = recall('guides') === 1;
   /** What the user points at in the form: a page setup, and a part of it */
   @state() private pointed: { first: boolean; index: number | null } | undefined;
   /** The part under the pointer in the sample, or in the form */
@@ -777,13 +778,19 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     ></erng-sheet>`;
   }
 
+  /** The guides are for looking at layouts: they stay as they were left, for the next start too */
+  private setGuides(on: boolean) {
+    this.guides = on;
+    remember('guides', on ? 1 : 0);
+  }
+
   private guidesToggle() {
     return html`<wa-checkbox
       slot="form"
       ?checked="${this.guides}"
-      hint="Zeichnet Linien an die Ränder des Inhalts"
+      hint="Zeichnet Linien an die Ränder des Inhalts und den druckbaren Bereich"
       @change="${(e: Event) => {
-        this.guides = (e.target as HTMLInputElement).checked;
+        this.setGuides((e.target as HTMLInputElement).checked);
         this.schedulePreview(0);
       }}"
     >
@@ -916,7 +923,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
             .reveal="${this.reveal}"
             .tab="${this.pointed && !this.pointed.first ? 'page' : 'first'}"
             @guides-change="${(e: CustomEvent<boolean>) => {
-              this.guides = e.detail;
+              this.setGuides(e.detail);
               this.schedulePreview(0);
             }}"
             @part-focus="${(
