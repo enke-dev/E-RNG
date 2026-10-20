@@ -24,6 +24,8 @@ h2 {
 footer {
   position: sticky;
   bottom: 0;
+  /* above the divider of a split panel in the content */
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

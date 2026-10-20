@@ -211,6 +211,7 @@ footer {
   bottom: 0;
   box-sizing: border-box;
   min-height: var(--footer-height);
+  z-index: 2;
 
   display: flex;
   gap: var(--wa-space-s);
