@@ -561,4 +561,43 @@ mod tests {
         }
         out
     }
+
+    /// A seller with a tax number and no VAT id (small businesses, associations) can issue a valid
+    /// invoice in both profiles, the tax number is also the seller identifier (BR-CO-26).
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn a_seller_with_only_a_tax_number_issues_valid_invoices() {
+        use crate::draft::{build_invoice, fixtures};
+
+        for vat_free in [false, true] {
+            for profile in [ProfileKind::En16931, ProfileKind::XRechnung] {
+                let mut settings = fixtures::settings();
+                settings.seller.vat_id = None;
+                settings.seller.tax_number = Some("123/456/78901".into());
+                if vat_free {
+                    settings.tax_rate.clear();
+                }
+                let mut draft = fixtures::draft();
+                draft.profile = profile;
+                draft.buyer_reference = Some("991-01234-56".into());
+                let invoice = build_invoice(&draft, &settings, "RE-2026-001").unwrap();
+                let dir = tempfile::tempdir().unwrap();
+
+                let produced = produce(
+                    &Sidecars::in_repo(),
+                    dir.path(),
+                    &invoice,
+                    profile,
+                    &Branding::for_draft(&draft, &settings, &[]),
+                )
+                .unwrap();
+
+                let errors: Vec<_> = produced.report.errors().collect();
+                assert!(
+                    produced.report.valid,
+                    "{profile:?}, vat free {vat_free}: {errors:#?}"
+                );
+            }
+        }
+    }
 }

@@ -18,7 +18,7 @@ const TEXTS: &[(&str, &str)] = &[
     ),
     (
         "BR-CO-26",
-        "Zur Identifikation des Unternehmens fehlt die USt-IdNr. (Einstellungen).",
+        "Zur Identifikation des Unternehmens fehlt die USt-IdNr. oder die Steuernummer (Einstellungen).",
     ),
     (
         "BR-S-02",

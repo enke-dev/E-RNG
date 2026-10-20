@@ -80,8 +80,11 @@ fn seller_party(seller: &Seller) -> Result<Party, Vec<InputProblem>> {
         .map_err(|p| problems.push(p))
         .ok();
     let mut party = Party::new(seller.name.trim(), postal.unwrap_or_default());
-    if let Some(vat) = blank(&seller.vat_id) {
-        party = party.with_vat_identifier(vat);
+    match (blank(&seller.vat_id), blank(&seller.tax_number)) {
+        (Some(vat), _) => party = party.with_vat_identifier(vat),
+        // BR-CO-26 wants a seller identifier or a VAT id, a tax number (BT-32) alone does not count
+        (None, Some(tax)) => party.identifiers.push(Identifier::new(tax)),
+        (None, None) => {}
     }
     party.tax_registration = blank(&seller.tax_number).map(str::to_owned);
     party.additional_legal_information = blank(&seller.legal_info).map(str::to_owned);
@@ -556,5 +559,39 @@ mod tests {
             .unwrap_err()
             .iter()
             .any(|p| p.field == "positions"));
+    }
+
+    #[test]
+    fn a_tax_number_alone_identifies_the_seller() {
+        let mut only_tax = settings();
+        only_tax.seller.vat_id = None;
+        only_tax.seller.tax_number = Some("123/456/78901".into());
+
+        for profile in [ProfileKind::En16931, ProfileKind::XRechnung] {
+            let mut d = draft();
+            d.profile = profile;
+            d.buyer_reference = Some("991-01234-56".into());
+            let invoice = build_invoice(&d, &only_tax, "RE-1").unwrap();
+
+            assert_eq!(
+                invoice.seller.identifiers,
+                [Identifier::new("123/456/78901")]
+            );
+            assert!(validate(&invoice, profile).is_empty(), "{profile:?}");
+        }
+    }
+
+    #[test]
+    fn a_vat_id_is_the_identifier_and_no_tax_number_is_repeated() {
+        let mut both = settings();
+        both.seller.tax_number = Some("123/456/78901".into());
+
+        let invoice = build_invoice(&draft(), &both, "RE-1").unwrap();
+
+        assert!(invoice.seller.identifiers.is_empty());
+        assert_eq!(
+            invoice.seller.vat_identifier.as_deref(),
+            Some("DE123456789")
+        );
     }
 }
