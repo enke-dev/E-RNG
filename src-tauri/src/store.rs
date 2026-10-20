@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(store.settings().unwrap().tax_rate, "19");
 
         let mut changed = settings();
-        changed.payment_days = 30;
+        changed.payment_days = Some(30);
         store.save_settings(&changed).unwrap();
 
         assert_eq!(store.settings().unwrap(), changed);

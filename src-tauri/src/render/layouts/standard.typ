@@ -36,7 +36,7 @@
      #for a in l.adjustments [\ #text(size: 8.5pt, fill: muted)[#a]]],
     l.quantity,
     l.unit,
-    [#l.unit_price #text(size: 8pt, fill: muted)[(#l.vat_rate)]],
+    [#l.unit_price #if l.vat_rate != "" [#text(size: 8pt, fill: muted)[(#l.vat_rate)]]],
     l.net,
   )),
   make: rows => table(

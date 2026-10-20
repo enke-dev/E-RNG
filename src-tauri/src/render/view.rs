@@ -15,6 +15,10 @@ use crate::model::{CustomLayout, Format, Insets, InvoiceDraft, Settings};
 pub struct Branding {
     /// The legal information of the seller (managing directors, register entry), for `{legal}`
     pub legal: Option<String>,
+    /// No VAT is charged: the document shows no rate, no VAT rows and no gross sum, only the reason
+    pub vat_free: bool,
+    /// The settings have no payment term: the document shows neither a due date nor payment terms
+    pub no_payment_term: bool,
     /// The texts around the table: salutation and introduction, closing
     pub intro: Option<String>,
     pub closing: Option<String>,
@@ -55,6 +59,8 @@ impl Branding {
                 .legal_info
                 .clone()
                 .or_else(|| settings.footer.clone()),
+            vat_free: settings.vat_free(),
+            no_payment_term: settings.payment_days.is_none(),
             custom,
             guides: false,
             marks: false,
@@ -277,12 +283,18 @@ fn bank_lines(invoice: &Invoice, fmt: &Formatter) -> Vec<Labeled> {
         .collect()
 }
 
-fn payment_lines(invoice: &Invoice, currency: &str, fmt: &Formatter) -> Vec<String> {
+/// `with_term`: the payment terms and the due date are part of it, else only how to pay
+fn payment_lines(
+    invoice: &Invoice,
+    currency: &str,
+    fmt: &Formatter,
+    with_term: bool,
+) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(terms) = &invoice.payment_terms {
+    if let Some(terms) = invoice.payment_terms.as_ref().filter(|_| with_term) {
         out.push(terms.clone());
     }
-    if let Some(due) = invoice.due_date {
+    if let Some(due) = invoice.due_date.filter(|_| with_term) {
         out.push(format!(
             "Zahlbar bis {}, Betrag {}",
             fmt.date(due),
@@ -352,7 +364,7 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
             });
         }
     }
-    if let Some(due) = invoice.due_date {
+    if let Some(due) = invoice.due_date.filter(|_| !branding.no_payment_term) {
         infos.push(date("due-date", "Fällig am", due));
     }
     if let Some(reference) = &invoice.buyer_reference {
@@ -376,10 +388,14 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         .lines
         .iter()
         .map(|l| {
-            let rate = l.vat.rate.map_or_else(
-                || "USt. frei".to_owned(),
-                |r| format!("{} USt.", fmt.percent(&r.to_string())),
-            );
+            let rate = if branding.vat_free {
+                String::new()
+            } else {
+                l.vat.rate.map_or_else(
+                    || "USt. frei".to_owned(),
+                    |r| format!("{} USt.", fmt.percent(&r.to_string())),
+                )
+            };
             let adjustments = l
                 .allowances
                 .iter()
@@ -423,12 +439,16 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
             strong: false,
         });
     }
-    rows.push(Total {
-        label: "Nettobetrag".into(),
-        value: fmt.money(totals.taxable_total, currency),
-        strong: false,
-    });
-    for entry in &invoice.vat_breakdown {
+    let adjusted = rows.len() > 1;
+    // without VAT the net is the sum of the positions, unless something was added or taken off
+    if !branding.vat_free || adjusted {
+        rows.push(Total {
+            label: "Nettobetrag".into(),
+            value: fmt.money(totals.taxable_total, currency),
+            strong: false,
+        });
+    }
+    for entry in invoice.vat_breakdown.iter().filter(|_| !branding.vat_free) {
         let rate = fmt.percent(&entry.rate.map_or_else(|| "0".to_owned(), |r| r.to_string()));
         rows.push(Total {
             label: format!(
@@ -439,11 +459,13 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
             strong: false,
         });
     }
-    rows.push(Total {
-        label: "Gesamtbetrag".into(),
-        value: fmt.money(totals.gross_total, currency),
-        strong: true,
-    });
+    if !branding.vat_free {
+        rows.push(Total {
+            label: "Gesamtbetrag".into(),
+            value: fmt.money(totals.gross_total, currency),
+            strong: true,
+        });
+    }
     if let Some(paid) = totals.paid.filter(|p| !p.is_zero()) {
         rows.push(Total {
             label: "Bereits bezahlt".into(),
@@ -499,7 +521,7 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         lines,
         totals: rows,
         vat_notes,
-        payment: payment_lines(invoice, currency, fmt),
+        payment: payment_lines(invoice, currency, fmt, !branding.no_payment_term),
         legal: branding.legal.clone(),
         letter: Letter {
             intro: branding.intro.clone(),
@@ -514,7 +536,10 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
                 .and_then(|d| d.date)
                 .map(|d| fmt.date(d)),
             same_day: invoice.delivery.as_ref().and_then(|d| d.date) == Some(issue),
-            due_date: invoice.due_date.map(|d| fmt.date(d)),
+            due_date: invoice
+                .due_date
+                .filter(|_| !branding.no_payment_term)
+                .map(|d| fmt.date(d)),
             buyer_reference: invoice.buyer_reference.clone(),
             tax_number: invoice.seller.tax_registration.clone(),
             vat_id: invoice.seller.vat_identifier.clone(),
@@ -535,6 +560,71 @@ mod tests {
             fonts: Vec::new(),
             ..crate::layout::builtin()
         }
+    }
+
+    #[test]
+    fn without_vat_the_document_shows_no_rate_no_vat_row_and_no_gross_sum() {
+        let free = Settings {
+            tax_rate: String::new(),
+            ..crate::draft::fixtures::settings()
+        };
+        let draft = crate::draft::fixtures::draft();
+        let invoice = crate::draft::build_invoice(&draft, &free, "RE-1").unwrap();
+        let branding = Branding::for_draft(&draft, &free, &[]);
+
+        let view = build(&invoice, &branding, &Format::default());
+
+        assert!(view.lines.iter().all(|l| l.vat_rate.is_empty()));
+        let labels: Vec<_> = view.totals.iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(labels, ["Summe der Positionen", "Zahlbetrag"]);
+        assert_eq!(
+            view.vat_notes,
+            ["Gemäß § 19 UStG wird keine Umsatzsteuer berechnet."]
+        );
+
+        // with VAT everything is there as before
+        let taxed = crate::draft::fixtures::settings();
+        let invoice = crate::draft::build_invoice(&draft, &taxed, "RE-1").unwrap();
+        let view = build(
+            &invoice,
+            &Branding::for_draft(&draft, &taxed, &[]),
+            &Format::default(),
+        );
+        assert!(view.totals.iter().any(|t| t.label.contains("Umsatzsteuer")));
+        assert!(view.lines[0].vat_rate.starts_with("19"));
+    }
+
+    #[test]
+    fn without_payment_days_the_document_has_no_due_date_and_no_terms() {
+        let none = Settings {
+            payment_days: None,
+            ..crate::draft::fixtures::settings()
+        };
+        let draft = crate::draft::fixtures::draft();
+        let invoice = crate::draft::build_invoice(&draft, &none, "RE-1").unwrap();
+
+        let view = build(
+            &invoice,
+            &Branding::for_draft(&draft, &none, &[]),
+            &Format::default(),
+        );
+
+        assert_eq!(view.facts.due_date, None);
+        assert!(view.facts.due_date.is_none());
+        assert!(view.infos.iter().all(|i| i.key != "due-date"));
+        assert!(view.payment.iter().all(|l| !l.contains("Zahlbar")));
+        // how to pay is still there
+        assert!(!view.payment.is_empty());
+
+        let with = crate::draft::fixtures::settings();
+        let invoice = crate::draft::build_invoice(&draft, &with, "RE-1").unwrap();
+        let view = build(
+            &invoice,
+            &Branding::for_draft(&draft, &with, &[]),
+            &Format::default(),
+        );
+        assert!(view.facts.due_date.is_some());
+        assert!(view.payment.iter().any(|l| l.contains("Zahlbar")));
     }
 
     #[test]

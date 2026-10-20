@@ -37,6 +37,7 @@ const settings: Settings = {
     legal_info: null,
   },
   tax_rate: '19',
+  vat_note: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
   payment_days: 14,
   number_pattern: '[RE-]YYYY-NNN',
   layout: 'standard',
@@ -167,7 +168,7 @@ function totals(draft: InvoiceDraft) {
     (sum, p) => sum + (number(p.quantity) || 1) * number(p.price),
     0
   );
-  const vat = (net * Number(settings.tax_rate)) / 100;
+  const vat = (net * (Number(settings.tax_rate) || 0)) / 100;
   return { net: euro(net), vat: euro(vat), gross: euro(net + vat) };
 }
 

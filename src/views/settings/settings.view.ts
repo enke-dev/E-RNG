@@ -294,8 +294,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       return;
     }
     const rate = Number(settings.tax_rate.replace(',', '.'));
-    if (!Number.isFinite(rate) || rate <= 0 || rate > 100) {
-      notify('Der Steuersatz muss zwischen 0 und 100 liegen (in Prozent).', 'danger');
+    // blank is no VAT, a rate is more than 0 and at most 100
+    if (settings.tax_rate.trim() !== '' && (!Number.isFinite(rate) || rate <= 0 || rate > 100)) {
+      notify(
+        'Der Steuersatz muss zwischen 0 und 100 liegen (in Prozent), oder leer sein.',
+        'danger'
+      );
       return;
     }
     try {
@@ -650,6 +654,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         <wa-input
           label="Umsatzsteuersatz (%)"
           inputmode="decimal"
+          hint="Leer: keine Umsatzsteuer, z. B. als Kleinunternehmer"
           .value="${settings.tax_rate}"
           @input="${(e: Event) => this.edit(s => (s.tax_rate = text(e)))}"
         ></wa-input>
@@ -657,10 +662,25 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           label="Zahlungsziel (Tage)"
           type="number"
           min="0"
-          .value="${String(settings.payment_days)}"
-          @input="${(e: Event) => this.edit(s => (s.payment_days = Math.max(0, Number(text(e)) || 0)))}"
+          hint="Leer: kein Fälligkeitsdatum, kein Zahlungshinweis"
+          .value="${settings.payment_days === null ? '' : String(settings.payment_days)}"
+          @input="${(e: Event) =>
+            this.edit(s => {
+              const days = text(e).trim();
+              s.payment_days = days === '' ? null : Math.max(0, Math.trunc(Number(days)) || 0);
+            })}"
         ></wa-input>
       </div>
+      ${
+        settings.tax_rate.trim() === ''
+          ? html`<wa-input
+              label="Hinweis zur Steuerbefreiung"
+              hint="Steht auf der Rechnung und in der XML-Datei, solange keine Umsatzsteuer berechnet wird."
+              .value="${settings.vat_note}"
+              @input="${(e: Event) => this.edit(s => (s.vat_note = text(e)))}"
+            ></wa-input>`
+          : nothing
+      }
       <wa-input
         label="Muster der Rechnungsnummer"
         hint="${this.numberHint}"

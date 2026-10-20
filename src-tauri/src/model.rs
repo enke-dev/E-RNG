@@ -52,9 +52,13 @@ pub struct Seller {
 #[serde(default)]
 pub struct Settings {
     pub seller: Seller,
-    /// VAT rate in percent, one for the whole app
+    /// VAT rate in percent, one for the whole app; blank: no VAT is charged (e.g. § 19 UStG), the
+    /// invoices show none and say why with `vat_note`
     pub tax_rate: String,
-    pub payment_days: u32,
+    /// Why no VAT is charged, on invoices without it (the reason of the exemption, BT-120)
+    pub vat_note: String,
+    /// Days until an invoice is due; blank: no due date and no payment terms are shown
+    pub payment_days: Option<u32>,
     /// How invoice numbers are made, see `numbering`
     pub number_pattern: String,
     /// From before there was a pattern, only read: `normalized` turns it into one
@@ -76,7 +80,8 @@ impl Default for Settings {
         Self {
             seller: Seller::default(),
             tax_rate: "19".into(),
-            payment_days: 14,
+            vat_note: "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.".into(),
+            payment_days: Some(14),
             number_pattern: crate::numbering::DEFAULT_PATTERN.into(),
             number_prefix: None,
             footer: None,
@@ -88,6 +93,11 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// No VAT is charged: there is no rate
+    pub fn vat_free(&self) -> bool {
+        self.tax_rate.trim().is_empty()
+    }
+
     /// Settings of an older version have a prefix and no pattern: the numbers stay what they were.
     pub fn normalized(mut self) -> Self {
         if let Some(prefix) = self.number_prefix.take() {

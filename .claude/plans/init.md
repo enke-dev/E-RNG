@@ -29,7 +29,7 @@ this list is the index of what is still open.
 **Invoice features not in the UI yet**
 - [ ] Credit notes from the UI (the model and the template support them), several VAT rates, reverse charge and other VAT-free cases, discounts and surcharges
 - [ ] Other payment means (direct debit, card), tax representative, payee, attachments (BG-24)
-- [ ] Kleinunternehmer mode (§ 19 UStG), 0 % rate
+- [x] Kleinunternehmer mode (§ 19 UStG): a blank tax rate means no VAT (category E, 0 %, reason text), see `docs/development.md`; a seller with only a tax number still meets BR-CO-26
 - [x] Mark as paid: a switch and a date on exported invoices (`invoices.paid_at`, `invoice_set_paid`, the invoice itself stays locked)
 - [ ] Customer-specific payment terms, dunning
 

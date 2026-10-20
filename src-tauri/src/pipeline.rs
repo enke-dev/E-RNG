@@ -228,6 +228,43 @@ mod tests {
         }
     }
 
+    /// Without a rate and without payment days: valid for the validator, and the document says
+    /// neither (`RENDER_OUT` keeps the PDF).
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn an_invoice_without_vat_and_payment_term_is_a_valid_pdf() {
+        use crate::draft::{build_invoice, fixtures};
+
+        let free = crate::model::Settings {
+            tax_rate: String::new(),
+            payment_days: None,
+            ..fixtures::settings()
+        };
+        let draft = fixtures::draft();
+        let invoice = build_invoice(&draft, &free, "RE-2026-001").unwrap();
+        let branding = Branding::for_draft(&draft, &free, &[]);
+        let dir = tempfile::tempdir().unwrap();
+
+        let produced = produce(
+            &Sidecars::in_repo(),
+            dir.path(),
+            &invoice,
+            ProfileKind::En16931,
+            &branding,
+        )
+        .unwrap();
+
+        let errors: Vec<_> = produced.report.errors().collect();
+        assert!(produced.report.valid, "{errors:#?}");
+        if let Some(out) = std::env::var_os("RENDER_OUT") {
+            std::fs::copy(
+                &produced.pdf,
+                std::path::Path::new(&out).join("without-vat.pdf"),
+            )
+            .unwrap();
+        }
+    }
+
     #[test]
     #[ignore = "needs the sidecars: bun run generate:sidecars"]
     fn the_preview_renders_one_svg_per_page() {

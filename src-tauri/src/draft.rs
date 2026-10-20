@@ -6,7 +6,7 @@ use std::str::FromStr;
 use en16931::invoice::{
     Contact, Delivery, InvoiceNote, Party, PaymentInstructions, PaymentMeans, PostalAddress,
 };
-use en16931::{Date, Identifier, Percentage, Quantity, UnitPriceAmount};
+use en16931::{Date, Identifier, Percentage, Quantity, Reconciler, UnitPriceAmount};
 use rust_decimal::Decimal;
 use serde::Serialize;
 
@@ -140,6 +140,7 @@ fn line(
     index: usize,
     position: &Position,
     rate: Percentage,
+    vat_free: bool,
 ) -> Result<en16931::InvoiceLine, Vec<InputProblem>> {
     let field = |name: &str| format!("positions[{index}].{name}");
     let mut problems = Vec::new();
@@ -177,7 +178,7 @@ fn line(
         Quantity::new(quantity),
         blank(&position.unit).unwrap_or("C62"),
         UnitPriceAmount::new(price),
-        "S",
+        if vat_free { "E" } else { "S" },
         Some(rate),
     )
     .map_err(|_| vec![problem(field("price"), "Der Betrag ist zu groß")])
@@ -200,9 +201,15 @@ pub fn build_invoice(
     let delivery = Date::parse(&draft.delivery_date)
         .map_err(|_| problems.push(problem("delivery_date", "Kein gültiges Datum")))
         .ok();
-    let rate = decimal(&settings.tax_rate)
-        .filter(|r| r.is_sign_positive() && *r <= Decimal::ONE_HUNDRED)
-        .map(Percentage::new);
+    // no rate is no VAT: exempt (E) with 0 %, and the reason on the invoice
+    let vat_free = settings.vat_free();
+    let rate = if vat_free {
+        Some(Percentage::new(Decimal::ZERO))
+    } else {
+        decimal(&settings.tax_rate)
+            .filter(|r| *r > Decimal::ZERO && *r <= Decimal::ONE_HUNDRED)
+            .map(Percentage::new)
+    };
     if rate.is_none() {
         problems.push(problem("tax_rate", "Kein gültiger Steuersatz"));
     }
@@ -222,7 +229,7 @@ pub fn build_invoice(
     let mut lines = Vec::new();
     if let Some(rate) = rate {
         for (index, position) in draft.positions.iter().enumerate() {
-            match line(index, position, rate) {
+            match line(index, position, rate, vat_free) {
                 Ok(line) => lines.push(line),
                 Err(p) => problems.extend(p),
             }
@@ -245,16 +252,19 @@ pub fn build_invoice(
     )
     .seller(seller)
     .buyer(buyer)
-    .due_in_days(i32::try_from(settings.payment_days).unwrap_or(14))
-    .payment_terms(format!(
-        "Zahlbar innerhalb von {} Tagen ohne Abzug",
-        settings.payment_days
-    ))
     .delivery(Delivery {
         date: Some(delivery),
         ..Delivery::default()
     })
     .payment(payment(&settings.seller));
+    // EN 16931 wants a due date or payment terms (BR-CO-25): without terms the invoice is due when
+    // it is issued, which the document does not need to say
+    builder = match settings.payment_days {
+        Some(days) => builder
+            .due_in_days(i32::try_from(days).unwrap_or(14))
+            .payment_terms(format!("Zahlbar innerhalb von {days} Tagen ohne Abzug")),
+        None => builder.due_in_days(0),
+    };
     if let Some(reference) = blank(&draft.buyer_reference) {
         builder = builder.buyer_reference(reference);
     }
@@ -267,7 +277,16 @@ pub fn build_invoice(
     for line in lines {
         builder = builder.line(line);
     }
-    builder.build_reconciled().map_err(|e| {
+    let reconciler = if vat_free {
+        Reconciler::new().exemption(
+            "E",
+            Some(settings.vat_note.trim()).filter(|n| !n.is_empty()),
+            None,
+        )
+    } else {
+        Reconciler::new()
+    };
+    builder.build_reconciled_with(&reconciler).map_err(|e| {
         vec![problem(
             "positions",
             format!("Die Summen lassen sich nicht berechnen: {e}"),
@@ -405,6 +424,55 @@ mod tests {
             (t.net.as_str(), t.vat.as_str(), t.gross.as_str()),
             ("992.50", "188.58", "1181.08")
         );
+    }
+
+    #[test]
+    fn without_a_rate_no_vat_is_charged_and_the_reason_is_on_the_invoice() {
+        let free = Settings {
+            tax_rate: " ".into(),
+            vat_note: "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.".into(),
+            ..settings()
+        };
+
+        let invoice = build_invoice(&draft(), &free, "RE-1").unwrap();
+
+        assert!(validate(&invoice, ProfileKind::En16931).is_empty());
+        let t = totals(&invoice);
+        assert_eq!(
+            (t.net.as_str(), t.vat.as_str(), t.gross.as_str()),
+            ("992.50", "0.00", "992.50")
+        );
+        assert!(invoice.lines.iter().all(|l| l.vat.category.as_str() == "E"));
+        assert_eq!(
+            invoice.vat_breakdown[0].exemption_reason.as_deref(),
+            Some("Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.")
+        );
+        // a rate that is none or 0 is no rate either
+        for bad in ["0", "abc", "101"] {
+            let invalid = Settings {
+                tax_rate: bad.into(),
+                ..settings()
+            };
+            assert!(build_invoice(&draft(), &invalid, "X").is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn without_payment_days_the_invoice_is_due_when_issued_and_has_no_terms() {
+        let none = Settings {
+            payment_days: None,
+            ..settings()
+        };
+
+        let invoice = build_invoice(&draft(), &none, "RE-1").unwrap();
+
+        // EN 16931 wants a due date or terms (BR-CO-25), so the date is there, the terms are not
+        assert_eq!(invoice.due_date, invoice.issue_date);
+        assert_eq!(invoice.payment_terms, None);
+        assert!(validate(&invoice, ProfileKind::En16931).is_empty());
+
+        let with = build_invoice(&draft(), &settings(), "RE-1").unwrap();
+        assert!(with.payment_terms.is_some() && with.due_date != with.issue_date);
     }
 
     #[test]

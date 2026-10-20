@@ -769,11 +769,17 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   private renderSummary() {
     const totals = this.check?.totals;
-    const rate = this.draft?.frozen?.tax_rate ?? this.settings?.tax_rate ?? '';
+    const rate = (this.draft?.frozen ?? this.settings)?.tax_rate.trim() ?? '';
     return html`
       <div class="summary">
-        <span>Netto</span><span class="value">${money(totals?.net)}</span>
-        <span>Umsatzsteuer ${rate} %</span><span class="value">${money(totals?.vat)}</span>
+        ${
+          rate === ''
+            ? nothing
+            : html`
+                <span>Netto</span><span class="value">${money(totals?.net)}</span>
+                <span>Umsatzsteuer ${rate} %</span><span class="value">${money(totals?.vat)}</span>
+              `
+        }
         <span class="total">Gesamtbetrag</span>
         <span class="value total">${money(totals?.gross)}</span>
       </div>

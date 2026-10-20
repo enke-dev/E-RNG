@@ -183,6 +183,19 @@ fn reverse_charge() -> Invoice {
         .unwrap()
 }
 
+/// Without a VAT rate (e.g. § 19 UStG): exempt, 0 %, with the reason, due when issued
+fn vat_free() -> Invoice {
+    builder("RE-8")
+        .due_in_days(0)
+        .line(line("1", "Beratung", 10, "95.00", "E", 0))
+        .build_reconciled_with(&Reconciler::new().exemption(
+            "E",
+            Some("Gemäß § 19 UStG wird keine Umsatzsteuer berechnet."),
+            None,
+        ))
+        .unwrap()
+}
+
 fn xrechnung() -> Invoice {
     builder_for("RE-6", ProfileKind::XRechnung)
         .buyer_reference("991-01234-56")
@@ -205,6 +218,7 @@ pub(crate) fn cases() -> Vec<(&'static str, Invoice, ProfileKind)> {
         ("many-lines", many_lines(), ProfileKind::En16931),
         ("credit-note", credit_note(), ProfileKind::En16931),
         ("reverse-charge", reverse_charge(), ProfileKind::En16931),
+        ("vat-free", vat_free(), ProfileKind::En16931),
         ("xrechnung", xrechnung(), ProfileKind::XRechnung),
     ]
 }

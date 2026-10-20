@@ -25,8 +25,11 @@ export interface Seller {
 
 export interface Settings {
   seller: Seller;
+  /** Blank: no VAT is charged, the invoices show none and `vat_note` says why */
   tax_rate: string;
-  payment_days: number;
+  vat_note: string;
+  /** Blank: no due date and no payment terms */
+  payment_days: number | null;
   /** How invoice numbers are made: date tokens like in layouts, N for the counter (NNN: three digits) */
   number_pattern: string;
   /** The layout of the invoice document, invoices may choose another */
