@@ -7,6 +7,7 @@ import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '../../common/components/customer-form/customer-form.component.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
+import '../../common/components/scope-select/scope-select.component.js';
 import '../../common/layouts/cards/cards.layout.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
@@ -16,10 +17,12 @@ import { customElement, state } from 'lit/decorators.js';
 import type { Customer } from '../../common/utils/api.utils.js';
 import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
+import { activeContext, contextById, label } from '../../common/utils/context.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
 
 const blank = (): Customer => ({
   id: null,
+  context_id: null,
   name: '',
   address: { street: '', post_code: '', city: '', country: 'DE' },
   vat_id: null,
@@ -47,7 +50,10 @@ export class CustomersView extends ErngElement {
 
   private async load() {
     try {
-      this.customers = await api.customersList();
+      const context = activeContext.get()?.id;
+      if (context != null) {
+        this.customers = await api.customersList(context);
+      }
     } catch (error) {
       notifyError(error);
     }
@@ -141,6 +147,11 @@ export class CustomersView extends ErngElement {
                       <div class="muted">
                         ${c.address.street}<br>${c.address.post_code} ${c.address.city}
                       </div>
+                      ${
+                        c.context_id === null
+                          ? nothing
+                          : html`<div class="muted">Nur ${label(contextById(c.context_id))}</div>`
+                      }
                     </wa-card>
                   `
                 )}
@@ -161,30 +172,36 @@ export class CustomersView extends ErngElement {
                       .customer="${editing}"
                       @change="${() => this.requestUpdate()}"
                     ></erng-customer-form>
+                    <erng-scope-select
+                      .value="${editing.context_id}"
+                      @scope-change="${(e: CustomEvent<number | null>) => {
+                        editing.context_id = e.detail;
+                        this.requestUpdate();
+                      }}"
+                    ></erng-scope-select>
                   </div>
                 `
               : nothing
           }
-          ${
-            editing?.id != null
-              ? html`
-                  <wa-button
-                    slot="footer"
-                    variant="danger"
-                    appearance="outlined"
-                    @click="${this.deleteCustomer}"
-                  >
-                    Löschen
-                  </wa-button>
-                `
-              : nothing
-          }
-          <wa-button-group slot="footer" label="Bearbeiten">
+          <div slot="footer" class="dialog-footer">
             <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}">
               Abbrechen
             </wa-button>
-            <wa-button variant="brand" @click="${this.save}"> Speichern </wa-button>
-          </wa-button-group>
+            <div class="end">
+              ${
+                editing?.id != null
+                  ? html`<wa-button
+                      variant="danger"
+                      appearance="outlined"
+                      @click="${this.deleteCustomer}"
+                    >
+                      Löschen
+                    </wa-button>`
+                  : nothing
+              }
+              <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
+            </div>
+          </div>
         </wa-dialog>
       </erng-cards>
     `;

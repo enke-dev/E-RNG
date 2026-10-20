@@ -1,5 +1,7 @@
 #[path = "check-invoice.command.rs"]
 pub mod check_invoice_command;
+#[path = "contexts.command.rs"]
+pub mod contexts_command;
 #[path = "customers.command.rs"]
 pub mod customers_command;
 #[path = "discard-work-dir.command.rs"]
@@ -16,7 +18,5 @@ pub mod opened_files_command;
 pub mod preview_invoice_command;
 #[path = "produce-invoice.command.rs"]
 pub mod produce_invoice_command;
-#[path = "settings.command.rs"]
-pub mod settings_command;
 #[path = "templates.command.rs"]
 pub mod templates_command;

@@ -38,7 +38,7 @@ pub async fn produce_invoice(
 ) -> Result<ProduceResult, ProduceError> {
     let sidecars = Sidecars::locate(&app).map_err(failed)?;
     let stored = store.invoice(id).map_err(failed)?;
-    let current = store.settings().map_err(failed)?;
+    let current = store.settings(stored.context_id).map_err(failed)?;
     let numbered_by = current.number_pattern.clone();
     let settings = stored.draft.frozen.clone().unwrap_or(current);
 
@@ -47,6 +47,7 @@ pub async fn produce_invoice(
         Some(number) => number.clone(),
         None => store
             .next_number(
+                stored.context_id,
                 &numbered_by,
                 crate::utils::issue_day(&stored.draft.issue_date),
             )
@@ -55,7 +56,7 @@ pub async fn produce_invoice(
     let invoice = build_invoice(&stored.draft, &settings, &number)
         .map_err(|problems| ProduceError::Input { problems })?;
     let total = totals(&invoice).gross;
-    let customs = store.custom_layouts().map_err(failed)?;
+    let customs = store.all_custom_layouts().map_err(failed)?;
     let branding = Branding::for_draft(&stored.draft, &settings, &customs);
     let profile = stored.draft.profile;
     let produced_layout = branding.custom.clone();

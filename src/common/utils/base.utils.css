@@ -29,6 +29,21 @@
   justify-content: space-between;
 }
 
+/* the footer of a dialog: what leaves it (cancel, close) on the left, the actions on the right */
+.dialog-footer {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wa-space-s);
+
+  & .end {
+    display: flex;
+    gap: var(--wa-space-s);
+    margin-inline-start: auto;
+  }
+}
+
 .grid {
   display: grid;
   gap: var(--wa-space-m);

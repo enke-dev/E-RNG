@@ -15,6 +15,10 @@ export class ListGroupComponent extends ErngElement.withStyles(styles) {
   @property({ type: String, reflect: true })
   heading = '';
 
+  /** Stands for something that is being made and is not stored yet: the heading is set in italics */
+  @property({ type: Boolean, reflect: true })
+  placeholder = false;
+
   override render() {
     return html`
       <header>

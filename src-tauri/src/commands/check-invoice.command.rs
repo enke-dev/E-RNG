@@ -19,8 +19,12 @@ pub struct Check {
 
 /// Live feedback for the form: totals and rule findings without storing anything.
 #[tauri::command]
-pub fn check_invoice(store: State<'_, Store>, draft: InvoiceDraft) -> Result<Check, String> {
-    let settings = store.settings().map_err(message)?;
+pub fn check_invoice(
+    store: State<'_, Store>,
+    context_id: i64,
+    draft: InvoiceDraft,
+) -> Result<Check, String> {
+    let settings = store.settings(context_id).map_err(message)?;
     Ok(match build_invoice(&draft, &settings, "ENTWURF") {
         Ok(invoice) => Check {
             problems: Vec::new(),

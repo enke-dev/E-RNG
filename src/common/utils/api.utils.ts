@@ -39,8 +39,44 @@ export interface Settings {
   closing: string | null;
 }
 
+/**
+ * One issuer (a company, later maybe a Verein or a private person) with its own seller, numbering
+ * and defaults. The UI is tinted with its brand color.
+ */
+export interface Context {
+  id: number | null;
+  /** Palette name of the UI library (`wa-brand-<name>`), empty on a new context: the store picks one */
+  brand: string;
+  /** Set when archived: hidden from the switch, its invoices stay */
+  archived_at: string | null;
+  settings: Settings;
+  /** What is missing before an invoice can be issued, as field paths of the form */
+  missing: string[];
+  /** What only XRechnung asks for on top */
+  missing_for_xrechnung: string[];
+}
+
+export interface Missing {
+  missing: string[];
+  missing_for_xrechnung: string[];
+}
+
+/** What belongs to a context */
+export interface ContextUsage {
+  drafts: number;
+  exported: number;
+  customers: number;
+  templates: number;
+  layouts: number;
+}
+
+/** What happens with what is scoped to a context that is removed */
+export type Disposition = { kind: 'share' } | { kind: 'move'; to: number } | { kind: 'delete' };
+
 export interface Customer {
   id: number | null;
+  /** The context it belongs to, null: shared by all */
+  context_id: number | null;
   name: string;
   address: Address;
   vat_id: string | null;
@@ -57,6 +93,8 @@ export interface Position {
 
 export interface PositionTemplate extends Position {
   id: number | null;
+  /** The context it belongs to, null: shared by all */
+  context_id: number | null;
 }
 
 export type Profile = 'en16931' | 'xrechnung';
@@ -80,6 +118,8 @@ export type Status = 'draft' | 'exported';
 
 export interface StoredInvoice {
   id: number;
+  /** The context (issuer) it was made under, for good */
+  context_id: number;
   number: string | null;
   status: Status;
   draft: InvoiceDraft;
@@ -92,6 +132,9 @@ export interface StoredInvoice {
 
 export interface ListEntry {
   id: number;
+  context_id: number;
+  /** The seller of its context, tells invoices apart in a mixed list */
+  seller_name: string;
   number: string | null;
   status: Status;
   customer_name: string;
@@ -272,6 +315,8 @@ export interface Format {
 /** A layout the user made, it starts as the built-in one */
 export interface CustomLayout {
   id: number | null;
+  /** The context it belongs to, null: every context can use it */
+  context_id: number | null;
   /** Stays with the layout through renaming, export and import; empty until it is stored */
   uid: string;
   /** When it was last saved (UTC, ISO), empty until it is stored */
@@ -354,19 +399,24 @@ export function errorText(error: unknown): string {
 }
 
 export const api = {
-  settingsGet: () => invoke<Settings>('settings_get'),
+  contextsList: () => invoke<Context[]>('contexts_list'),
+  contextBlank: () => invoke<Context>('context_blank'),
+  contextSave: (context: Context) => invoke<Context>('context_save', { context }),
+  contextArchive: (id: number) => invoke<Context>('context_archive', { id }),
+  contextUsage: (id: number) => invoke<ContextUsage>('context_usage', { id }),
+  contextRemove: (id: number, what: Disposition) => invoke<null>('context_remove', { id, what }),
+  settingsCheck: (settings: Settings) => invoke<Missing>('settings_check', { settings }),
   numberExample: (pattern: string) => invoke<string>('number_example', { pattern }),
-  settingsSave: (settings: Settings) => invoke<null>('settings_save', { settings }),
 
-  customersList: () => invoke<Customer[]>('customers_list'),
+  customersList: (contextId: number) => invoke<Customer[]>('customers_list', { contextId }),
   customerSave: (customer: Customer) => invoke<Customer>('customer_save', { customer }),
   customerDelete: (id: number) => invoke<null>('customer_delete', { id }),
 
-  layoutsList: () => invoke<LayoutInfo[]>('layouts_list'),
-  layoutsCustom: () => invoke<CustomLayout[]>('layouts_custom'),
+  layoutsList: (contextId: number) => invoke<LayoutInfo[]>('layouts_list', { contextId }),
+  layoutsCustom: (contextId: number) => invoke<CustomLayout[]>('layouts_custom', { contextId }),
   layoutSave: (layout: CustomLayout) => invoke<CustomLayout>('layout_save', { layout }),
-  layoutPreview: (layout: CustomLayout | null, guides: boolean) =>
-    invoke<Preview>('layout_preview', { layout, guides }),
+  layoutPreview: (layout: CustomLayout | null, guides: boolean, contextId: number | null) =>
+    invoke<Preview>('layout_preview', { layout, guides, contextId }),
   layoutExport: (layout: CustomLayout, withFonts: boolean, path: string) =>
     invoke<null>('layout_export', { layout, withFonts, path }),
   layoutImport: (path: string, choice: ImportChoice) =>
@@ -377,24 +427,28 @@ export const api = {
   layoutDelete: (id: number) => invoke<null>('layout_delete', { id }),
   layoutImportFont: (path: string) => invoke<FontFile>('layout_import_font', { path }),
 
-  templatesList: () => invoke<PositionTemplate[]>('templates_list'),
+  templatesList: (contextId: number) => invoke<PositionTemplate[]>('templates_list', { contextId }),
   templateSave: (template: PositionTemplate) =>
     invoke<PositionTemplate>('template_save', { template }),
   templateDelete: (id: number) => invoke<null>('template_delete', { id }),
 
-  invoicesList: () => invoke<ListEntry[]>('invoices_list'),
+  /** `null` lists the invoices of all contexts */
+  invoicesList: (contextId: number | null) => invoke<ListEntry[]>('invoices_list', { contextId }),
   invoiceGet: (id: number) => invoke<StoredInvoice>('invoice_get', { id }),
   invoiceBlank: () => invoke<InvoiceDraft>('invoice_blank'),
-  invoiceSave: (id: number | null, draft: InvoiceDraft) =>
-    invoke<StoredInvoice>('invoice_save', { id, draft }),
+  /** A new invoice (`id` null) is made under `contextId`, a stored one stays where it is */
+  invoiceSave: (id: number | null, contextId: number | null, draft: InvoiceDraft) =>
+    invoke<StoredInvoice>('invoice_save', { id, contextId, draft }),
+  invoiceArchive: (id: number) => invoke<null>('invoice_archive', { id }),
   invoiceSetPaid: (id: number, paidAt: string | null) =>
     invoke<StoredInvoice>('invoice_set_paid', { id, paidAt }),
   invoiceDuplicate: (id: number) => invoke<StoredInvoice>('invoice_duplicate', { id }),
   invoiceDelete: (id: number) => invoke<null>('invoice_delete', { id }),
-  invoiceCheck: (draft: InvoiceDraft) => invoke<Check>('check_invoice', { draft }),
+  invoiceCheck: (contextId: number, draft: InvoiceDraft) =>
+    invoke<Check>('check_invoice', { contextId, draft }),
 
-  invoicePreview: (draft: InvoiceDraft, id: number | null) =>
-    invoke<Preview>('preview_invoice', { draft, id }),
+  invoicePreview: (draft: InvoiceDraft, id: number | null, contextId: number) =>
+    invoke<Preview>('preview_invoice', { draft, id, contextId }),
 
   produce: (id: number) => invoke<ProduceResult>('produce_invoice', { id }),
   exportInvoice: (

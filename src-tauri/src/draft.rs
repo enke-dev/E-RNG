@@ -366,6 +366,7 @@ pub(crate) mod fixtures {
     pub fn customer() -> Customer {
         Customer {
             id: None,
+            context_id: None,
             name: "Beispiel AG".into(),
             address: Address {
                 street: "Marktplatz 2".into(),

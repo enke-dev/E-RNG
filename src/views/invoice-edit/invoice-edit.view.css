@@ -213,6 +213,7 @@ footer {
   min-height: var(--footer-height);
   z-index: 2;
 
+  /* what leaves the invoice on the left, the actions on the right */
   display: flex;
   gap: var(--wa-space-s);
   align-items: center;
@@ -222,9 +223,15 @@ footer {
   background: var(--wa-color-surface-default);
   border-top: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
 
+  .start {
+    display: flex;
+    justify-content: flex-start;
+  }
+
   nav {
     display: flex;
     flex-flow: row wrap;
+    justify-content: flex-end;
     gap: var(--wa-space-s);
   }
 

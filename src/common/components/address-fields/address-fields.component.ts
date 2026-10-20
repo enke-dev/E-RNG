@@ -16,6 +16,10 @@ export class AddressFieldsComponent extends ErngElement {
   @property({ type: Boolean })
   disabled = false;
 
+  /** Marks every field as required */
+  @property({ type: Boolean })
+  required = false;
+
   private set(key: keyof Address, value: string) {
     this.address[key] = value;
     this.dispatchEvent(new CustomEvent('change', { bubbles: true, composed: true }));
@@ -27,6 +31,7 @@ export class AddressFieldsComponent extends ErngElement {
       <div class="stack">
         <wa-input
           label="Straße und Hausnummer"
+          ?required="${this.required}"
           ?disabled="${this.disabled}"
           .value="${a.street}"
           @input="${(e: Event) => this.set('street', text(e))}"
@@ -34,12 +39,14 @@ export class AddressFieldsComponent extends ErngElement {
         <div class="grid">
           <wa-input
             label="PLZ"
+            ?required="${this.required}"
             ?disabled="${this.disabled}"
             .value="${a.post_code}"
             @input="${(e: Event) => this.set('post_code', text(e))}"
           ></wa-input>
           <wa-input
             label="Ort"
+            ?required="${this.required}"
             ?disabled="${this.disabled}"
             .value="${a.city}"
             @input="${(e: Event) => this.set('city', text(e))}"
@@ -47,6 +54,7 @@ export class AddressFieldsComponent extends ErngElement {
           <wa-input
             label="Land (Code)"
             maxlength="2"
+            ?required="${this.required}"
             ?disabled="${this.disabled}"
             .value="${a.country}"
             @input="${(e: Event) => this.set('country', text(e).toUpperCase())}"

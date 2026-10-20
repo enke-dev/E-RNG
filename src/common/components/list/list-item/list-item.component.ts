@@ -19,6 +19,9 @@ export class ListItemComponent extends ErngElement.withStyles(styles) {
   /** The entry that is shown on the other side */
   @property({ type: Boolean, reflect: true }) selected = false;
 
+  /** Stands for something that is being made and is not stored yet: set in italics, not clickable */
+  @property({ type: Boolean, reflect: true }) placeholder = false;
+
   /** Kept for what was made with it, but no longer offered */
   @property({ type: Boolean, reflect: true }) archived = false;
 
@@ -26,13 +29,24 @@ export class ListItemComponent extends ErngElement.withStyles(styles) {
   @property({ type: String, reflect: true })
   override readonly role = 'listitem';
 
+  /** The grid places `end` and `sub` by what is next to them: the host says which slots are filled */
+  private noted(attribute: string) {
+    return (e: Event) =>
+      this.toggleAttribute(attribute, (e.target as HTMLSlotElement).assignedElements().length > 0);
+  }
+
   override render() {
     return html`
-      <button part="button" type="button" aria-current="${this.selected ? 'true' : 'false'}">
+      <button
+        part="button"
+        type="button"
+        aria-current="${this.selected ? 'true' : 'false'}"
+        ?disabled="${this.placeholder}"
+      >
         <span class="name"><slot></slot></span>
-        <slot name="end"></slot>
+        <slot name="end" @slotchange="${this.noted('has-end')}"></slot>
         <slot name="sub"></slot>
-        <slot name="sub-end"></slot>
+        <slot name="sub-end" @slotchange="${this.noted('has-sub-end')}"></slot>
       </button>
     `;
   }

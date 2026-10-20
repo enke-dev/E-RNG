@@ -6,9 +6,11 @@
 import { mockIPC } from '@tauri-apps/api/mocks';
 
 import type {
+  Context,
   Customer,
   CustomLayout,
   InvoiceDraft,
+  ListEntry,
   PositionTemplate,
   Settings,
   StoredInvoice,
@@ -45,9 +47,66 @@ const settings: Settings = {
   closing: null,
 };
 
+const second: Settings = {
+  ...settings,
+  seller: {
+    ...settings.seller,
+    name: 'Kinderverein e.V.',
+    vat_id: null,
+    tax_number: '123/456/78901',
+    iban: 'DE89 3704 0044 0532 0130 00',
+  },
+  tax_rate: '',
+  number_pattern: '[KV-]YYYY-NNN',
+};
+
+/** Mirrors `Settings::missing` in `context.rs`, roughly: only to see the guard and the form */
+const missingOf = (s: Settings) =>
+  [
+    ['seller.name', s.seller.name.trim() === ''],
+    ['seller.address.street', s.seller.address.street.trim() === ''],
+    ['seller.address.post_code', s.seller.address.post_code.trim() === ''],
+    ['seller.address.city', s.seller.address.city.trim() === ''],
+    [
+      'seller.vat_id',
+      (s.seller.vat_id ?? '').trim() === '' && (s.seller.tax_number ?? '').trim() === '',
+    ],
+    ['seller.iban', s.seller.iban.trim() === ''],
+  ]
+    .filter(([, absent]) => absent)
+    .map(([field]) => String(field));
+
+const missingForXRechnung = (s: Settings) =>
+  [
+    ['seller.contact_name', s.seller.contact_name.trim() === ''],
+    ['seller.phone', s.seller.phone.trim() === ''],
+    ['seller.email', s.seller.email.trim() === ''],
+  ]
+    .filter(([, absent]) => absent)
+    .map(([field]) => String(field));
+
+const contexts: Context[] = [
+  { id: 1, brand: 'blue', archived_at: null, settings },
+  { id: 2, brand: 'green', archived_at: null, settings: second },
+].map(c => ({
+  ...c,
+  missing: missingOf(c.settings),
+  missing_for_xrechnung: missingForXRechnung(c.settings),
+}));
+
+const refreshed = (c: Context): Context => ({
+  ...c,
+  missing: missingOf(c.settings),
+  missing_for_xrechnung: missingForXRechnung(c.settings),
+});
+
+const sellerOf = (contextId: number) =>
+  contexts.find(c => c.id === contextId)?.settings.seller.name ?? '';
+
 const customers: Customer[] = [
   {
     id: 1,
+    context_id: null,
     name: 'Beispiel AG',
     address,
     vat_id: null,
@@ -56,6 +115,7 @@ const customers: Customer[] = [
   },
   {
     id: 2,
+    context_id: null,
     name: 'Stadt Beispielstadt',
     address,
     vat_id: null,
@@ -69,6 +129,7 @@ const customLayouts: CustomLayout[] = [];
 /** A small stand-in for the built-in layout the backend hands out */
 const builtinLayout = (): CustomLayout => ({
   id: null,
+  context_id: null,
   uid: '',
   updated_at: '',
   name: 'Klassisch',
@@ -117,9 +178,23 @@ const builtinLayout = (): CustomLayout => ({
 });
 
 const templates: PositionTemplate[] = [
-  { id: 1, description: 'Beratung', quantity: '1', unit: 'HUR', price: '95,00' },
-  { id: 2, description: 'Reisekosten', quantity: null, unit: null, price: '42,50' },
-  { id: 3, description: 'Wartungsvertrag', quantity: '12', unit: 'MON', price: '49,00' },
+  { id: 1, context_id: null, description: 'Beratung', quantity: '1', unit: 'HUR', price: '95,00' },
+  {
+    id: 2,
+    context_id: null,
+    description: 'Reisekosten',
+    quantity: null,
+    unit: null,
+    price: '42,50',
+  },
+  {
+    id: 3,
+    context_id: null,
+    description: 'Wartungsvertrag',
+    quantity: '12',
+    unit: 'MON',
+    price: '49,00',
+  },
 ];
 
 const draftOf = (customer: Customer): InvoiceDraft => ({
@@ -139,6 +214,7 @@ const draftOf = (customer: Customer): InvoiceDraft => ({
 const invoices: StoredInvoice[] = [
   {
     id: 1,
+    context_id: 1,
     number: 'RE-2026-001',
     status: 'exported',
     draft: { ...draftOf(customers[0] as Customer), frozen: settings },
@@ -149,6 +225,7 @@ const invoices: StoredInvoice[] = [
   },
   {
     id: 2,
+    context_id: 1,
     number: null,
     status: 'draft',
     draft: draftOf(customers[1] as Customer),
@@ -201,6 +278,9 @@ function check(draft: InvoiceDraft) {
   return { problems, findings, totals: problems.length === 0 ? totals(draft) : null };
 }
 
+/** Invoices taken out of the list */
+const archived = new Set<number>();
+
 const find = (id: number) => invoices.find(i => i.id === id) as StoredInvoice;
 
 export function installMocks() {
@@ -232,11 +312,67 @@ export function installMocks() {
                     : '1'.padStart(m.length, '0'))
           );
         }
-        case 'settings_get':
-          return settings;
-        case 'settings_save':
-          Object.assign(settings, args['settings']);
+        case 'contexts_list':
+          return contexts;
+        case 'context_blank':
+          return refreshed({
+            id: null,
+            brand: '',
+            archived_at: null,
+            missing: [],
+            missing_for_xrechnung: [],
+            settings: {
+              ...settings,
+              seller: {
+                ...settings.seller,
+                name: '',
+                vat_id: null,
+                iban: '',
+                address: { street: '', post_code: '', city: '', country: 'DE' },
+              },
+            },
+          });
+        case 'context_save': {
+          const context = args['context'] as Context;
+          if (context.id === null) {
+            const saved = refreshed({
+              ...context,
+              id: contexts.length + 1,
+              brand: context.brand || 'orange',
+            });
+            contexts.push(saved);
+            return saved;
+          }
+          const at = contexts.findIndex(c => c.id === context.id);
+          contexts[at] = refreshed({ ...context, archived_at: contexts[at]?.archived_at ?? null });
+          return contexts[at];
+        }
+        case 'context_archive': {
+          const context = contexts.find(c => c.id === args['id']) as Context;
+          context.archived_at = new Date().toISOString();
+          return context;
+        }
+        case 'context_usage': {
+          const id = args['id'];
+          return {
+            drafts: invoices.filter(i => i.context_id === id && i.status === 'draft').length,
+            exported: invoices.filter(i => i.context_id === id && i.status === 'exported').length,
+            customers: 0,
+            templates: 0,
+            layouts: 0,
+          };
+        }
+        case 'context_remove':
+          contexts.splice(
+            contexts.findIndex(c => c.id === args['id']),
+            1
+          );
           return null;
+        case 'settings_check':
+          return {
+            missing: missingOf(args['settings']),
+            missing_for_xrechnung: missingForXRechnung(args['settings']),
+          };
         case 'customers_list':
           return customers;
         case 'customer_save': {
@@ -372,16 +508,24 @@ export function installMocks() {
           };
         }
         case 'invoices_list':
-          return invoices.map(i => ({
-            id: i.id,
-            number: i.number,
-            status: i.status,
-            customer_name: i.draft.customer.name,
-            issue_date: i.draft.issue_date,
-            total: i.total,
-            paid_at: i.paid_at,
-            updated_at: i.updated_at,
-          }));
+          return invoices
+            .filter(i => args['contextId'] == null || i.context_id === args['contextId'])
+            .filter(i => !archived.has(i.id))
+            .map((i): ListEntry => ({
+              id: i.id,
+              context_id: i.context_id,
+              seller_name: sellerOf(i.context_id),
+              number: i.number,
+              status: i.status,
+              customer_name: i.draft.customer.name,
+              issue_date: i.draft.issue_date,
+              total: i.total,
+              paid_at: i.paid_at,
+              updated_at: i.updated_at,
+            }));
+        case 'invoice_archive':
+          archived.add(args['id']);
+          return null;
         case 'invoice_set_paid': {
           const stored = find(args['id']);
           stored.paid_at = (args['paidAt'] as string | null) ?? null;
@@ -400,6 +544,7 @@ export function installMocks() {
           const existing = args['id'] === null ? undefined : find(args['id']);
           const stored: StoredInvoice = existing ?? {
             id: invoices.length + 1,
+            context_id: (args['contextId'] as number | null) ?? 1,
             number: null,
             status: 'draft',
             draft,

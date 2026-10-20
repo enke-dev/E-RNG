@@ -2,6 +2,8 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
+import '@awesome.me/webawesome/dist/components/option/option.js';
+import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '@awesome.me/webawesome/dist/components/tooltip/tooltip.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
@@ -11,40 +13,88 @@ import '../../common/components/list/list/list.component.js';
 import '../../common/components/list/list-group/list-group.component.js';
 import '../../common/components/list/list-item/list-item.component.js';
 import '../../common/components/page/page.component.js';
+import '../../common/components/scope-select/scope-select.component.js';
 import '../../common/layouts/editor/editor.layout.js';
 import '../../common/layouts/split/split.layout.js';
 
 import WaInput from '@awesome.me/webawesome/dist/components/input/input.js';
+import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import { ask, open, save } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { ifDefined } from 'lit/directives/if-defined.js';
 
+import { BRANDS } from '../../common/components/brand-select/brand-select.component.js';
 import { regionKey } from '../../common/components/sheet/sheet.component.js';
 import type {
+  Context,
+  ContextUsage,
   CustomLayout,
   ImportChoice,
   ImportOutcome,
   LayoutInfo,
   LayoutUsage,
+  Missing,
   Preview,
   Settings,
 } from '../../common/utils/api.utils.js';
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
+import {
+  activate,
+  activeContext,
+  available,
+  blockedAt,
+  contextById,
+  contexts,
+  ensureContexts,
+  label,
+  loadContexts,
+  switchContext,
+} from '../../common/utils/context.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
+import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
 import { recall, remember } from '../../common/utils/memory.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { takeOpenedLayouts } from '../../common/utils/opened.utils.js';
-import { goto } from '../../common/utils/routing.utils.js';
+import { goto, redirect } from '../../common/utils/routing.utils.js';
 import styles from './settings.view.css';
 
-/** The pages that edit the settings, saved together */
-const SECTIONS = [
+/** The pages of a context, saved together */
+const PAGES = [
   ['company', 'Unternehmen'],
   ['bank', 'Bankverbindung'],
   ['invoices', 'Rechnungen'],
 ] as const;
+
+type Page = (typeof PAGES)[number][0];
+
+/** `context-<id>-<page>`, or `context-new-<page>` for one that is not stored yet */
+const CONTEXT_PAGE = /^context-(new|\d+)-(company|bank|invoices)$/;
+
+/** What the form calls the fields that must be filled in before an invoice can be issued */
+const FIELD_LABELS: Record<string, string> = {
+  'seller.name': 'Name',
+  'seller.address.street': 'Straße',
+  'seller.address.post_code': 'PLZ',
+  'seller.address.city': 'Ort',
+  'seller.address.country': 'Land (zwei Buchstaben)',
+  'seller.vat_id': 'USt-IdNr. oder Steuernummer',
+  'seller.iban': 'IBAN',
+  number_pattern: 'Muster der Rechnungsnummer',
+  tax_rate: 'Umsatzsteuersatz',
+  vat_note: 'Hinweis zur Steuerbefreiung',
+  'seller.contact_name': 'Ansprechpartner',
+  'seller.phone': 'Telefon',
+  'seller.email': 'E-Mail',
+};
+
+const fieldNames = (fields: string[]) => fields.map(f => FIELD_LABELS[f] ?? f).join(', ');
+
+/** What identifies a context's form values, brand and settings (the rest is computed) */
+const snapshot = (context: Context | undefined) =>
+  JSON.stringify(context && [context.brand, context.settings]);
 
 const LAYOUT = 'layout-';
 
@@ -61,15 +111,23 @@ const parseKey = (key: string): { first: boolean; index: number } => {
 };
 
 /**
- * Settings: the pages on the left (company, bank, invoices, then the layouts), the selected
- * one on the right. The company pages share one Save button, a layout is saved on its own.
+ * Settings: on the left the contexts (the open one shows its pages: company, bank, invoices) and
+ * the layouts, the selected one on the right. The pages of a context share one Save button, a layout
+ * is saved on its own.
  */
 @customElement('erng-settings')
 export class SettingsView extends ErngElement.withStyles(styles) {
-  /** From the address: a section, `layout-standard`, `layout-<id>`, `layout-new`; empty is the first */
+  /** From the address: `context-<id>-<page>`, `layout-standard`, `layout-<id>`, `layout-new`; empty is the active context */
   @property() selected = '';
 
-  @state() private settings: Settings | undefined;
+  /** A copy of the selected context, what its pages edit; one that is not stored yet has no id */
+  @state() private context: Context | undefined;
+  /** What the context in the form still lacks, asked of the backend while typing */
+  @state() private missing: Missing = { missing: [], missing_for_xrechnung: [] };
+  /** What belongs to the selected stored context, unknown while it is looked up */
+  @state() private contextUsage: ContextUsage | undefined;
+  /** The question of removing the selected context: what happens with what belongs to it */
+  @state() private removing: { what: 'share' | 'move' | 'delete'; to: number | null } | undefined;
 
   /** What the next number would look like by the pattern in the form, or what is wrong with it */
   @state() private numberHint = '';
@@ -96,8 +154,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   /** A part to open in the form, asked for by a click in the sample */
   @state() private reveal: { first: boolean; index: number; token: number } | undefined;
 
-  /** The settings as they are stored, what "unchanged" is compared against */
+  /** The context as it is stored, what "unchanged" is compared against */
   #saved = '';
+  #missingTimer: ReturnType<typeof setTimeout> | undefined;
   /** The own layout as it is stored */
   #layoutSaved = '';
 
@@ -113,7 +172,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   #sampleRequest = 0;
 
   private get changed() {
-    return JSON.stringify(this.settings) !== this.#saved;
+    return snapshot(this.context) !== this.#saved;
   }
 
   private get layoutChanged() {
@@ -121,7 +180,23 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   private get section() {
-    return this.selected === '' ? 'company' : this.selected;
+    return this.selected;
+  }
+
+  /** The context and page on show, none on the pages of the layouts */
+  private get contextRoute(): { id: number | 'new'; page: Page } | undefined {
+    const found = CONTEXT_PAGE.exec(this.selected);
+    if (!found) {
+      return undefined;
+    }
+    const [, id = '', page = ''] = found;
+    return { id: id === 'new' ? 'new' : Number(id), page: page as Page };
+  }
+
+  /** The context whose layouts the lists show: the one on show, else the active one */
+  private get listContextId(): number | undefined {
+    const shown = this.contextRoute?.id;
+    return typeof shown === 'number' ? shown : (activeContext.get()?.id ?? undefined);
   }
 
   /** The id of the own layout on the page, `undefined` for other pages, `null` for a new one */
@@ -137,25 +212,36 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     return this.layouts.find(l => !l.custom)?.name ?? '';
   }
 
+  /** The layout new invoices of the active context start with */
   private get defaultLayout() {
-    return this.settings?.layout ?? 'standard';
+    return activeContext.get()?.settings.layout ?? 'standard';
   }
 
   #stopOpened: (() => void) | undefined;
+  #stopLeaveCheck: (() => void) | undefined;
+
+  /** Whether going to `target` loses edits: the pages of a context share theirs, a layout has its own */
+  readonly #losesEdits = (target: string): boolean => {
+    const section = target.startsWith('/settings/') ? target.slice('/settings/'.length) : '';
+    if (
+      this.context &&
+      this.changed &&
+      !section.startsWith(`context-${this.context.id ?? 'new'}-`)
+    ) {
+      return true;
+    }
+    return this.layoutChanged && section !== this.selected;
+  };
 
   override connectedCallback() {
     super.connectedCallback();
+    this.#stopLeaveCheck = registerLeaveCheck(this.#losesEdits);
     // files the system opened with the app come here, to be imported like picked ones
     this.#stopOpened = takeOpenedLayouts(path =>
       this.layoutAction(async () => this.importFrom(path, {}))
     );
-    void this.loadLayouts();
-    api.settingsGet().then(
-      settings => {
-        this.#saved = JSON.stringify(settings);
-        this.settings = settings;
-        void this.showNumberExample();
-      },
+    ensureContexts().then(
+      () => void this.enter(),
       (error: unknown) => notifyError(error)
     );
   }
@@ -163,17 +249,106 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.#stopOpened?.();
+    this.#stopLeaveCheck?.();
   }
 
   protected override updated(changed: PropertyValues<this>) {
-    if (changed.has('selected')) {
-      void this.openLayout();
+    if (changed.has('selected') && contexts.get()) {
+      void this.enter();
+    }
+  }
+
+  /** Shows what the address asks for; the bare address is the active context, or the form of the first one */
+  private async enter() {
+    if (this.selected === '') {
+      const active = activeContext.get();
+      redirect(active ? `/settings/context-${active.id}-company` : '/settings/context-new-company');
+      return;
+    }
+    await this.openContext();
+  }
+
+  /** Takes the selected context into the form, the pages of one context share what is being edited */
+  private async openContext() {
+    const route = this.contextRoute;
+    if (route && contexts.get()) {
+      const keep = route.id === 'new' ? this.context?.id === null : this.context?.id === route.id;
+      if (!keep) {
+        await this.startEditing(route.id);
+      }
+    } else if (!route) {
+      this.context = undefined;
+    }
+    await this.loadLayouts();
+  }
+
+  private async startEditing(id: number | 'new') {
+    this.contextUsage = undefined;
+    if (id === 'new') {
+      const blank = await api.contextBlank();
+      // the address moved on while the answer was on its way (a context was just saved): not for us
+      if (this.contextRoute?.id !== 'new') {
+        return;
+      }
+      const active = activeContext.get();
+      if (active) {
+        // the defaults of the one in use are a better start than the app's, the seller is its own
+        const { tax_rate, vat_note, payment_days, number_pattern, intro, closing } =
+          active.settings;
+        blank.settings = {
+          ...blank.settings,
+          tax_rate,
+          vat_note,
+          payment_days,
+          number_pattern,
+          intro,
+          closing,
+        };
+      }
+      // the first context is blue, the next ones take a color no other context has
+      const used = new Set((contexts.get() ?? []).map(c => c.brand));
+      const free = BRANDS.map(([name]) => name).filter(name => !used.has(name));
+      blank.brand =
+        used.size === 0 ? 'blue' : (free[Math.floor(Math.random() * free.length)] ?? 'blue');
+      this.context = blank;
+    } else {
+      const found = contextById(id);
+      this.context = found ? structuredClone(found) : undefined;
+      if (found) {
+        void this.loadUsage(id);
+      }
+    }
+    this.#saved = snapshot(this.context);
+    this.missing = {
+      missing: this.context?.missing ?? [],
+      missing_for_xrechnung: this.context?.missing_for_xrechnung ?? [],
+    };
+    void this.showNumberExample();
+  }
+
+  private async loadUsage(id: number) {
+    try {
+      const usage = await api.contextUsage(id);
+      if (this.context?.id === id) {
+        this.contextUsage = usage;
+      }
+    } catch (error) {
+      notifyError(error);
     }
   }
 
   private async loadLayouts() {
+    const context = this.listContextId;
+    if (context === undefined) {
+      this.layouts = [];
+      this.customs = [];
+      return;
+    }
     try {
-      [this.layouts, this.customs] = await Promise.all([api.layoutsList(), api.layoutsCustom()]);
+      [this.layouts, this.customs] = await Promise.all([
+        api.layoutsList(context),
+        api.layoutsCustom(context),
+      ]);
       await this.openLayout();
     } catch (error) {
       notifyError(error);
@@ -194,6 +369,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         : this.customs.find(c => c.id === id);
     if (id === undefined || !layout) {
       this.editing = undefined;
+      if (typeof id === 'number' && this.layouts.length > 0) {
+        // the layout is not there for this context (it belongs to another one): the built-in one is
+        redirect(`/settings/${LAYOUT}standard`);
+      }
       return;
     }
     // what the user is typing stays when the list reloads
@@ -237,7 +416,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     }
     const request = ++this.#sampleRequest;
     try {
-      const sample = await api.layoutPreview(layout, this.guides);
+      const sample = await api.layoutPreview(layout, this.guides, this.listContextId ?? null);
       if (request === this.#sampleRequest) {
         this.sample = sample;
         this.sampleError = '';
@@ -250,38 +429,55 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   private edit(change: (settings: Settings) => void) {
-    if (!this.settings) {
+    if (!this.context) {
       return;
     }
-    change(this.settings);
+    change(this.context.settings);
     this.requestUpdate();
+    this.askMissing();
+  }
+
+  /** What is still missing, asked of the backend shortly after the last keystroke */
+  private askMissing() {
+    clearTimeout(this.#missingTimer);
+    this.#missingTimer = setTimeout(() => {
+      const settings = this.context?.settings;
+      if (settings) {
+        api.settingsCheck(settings).then(
+          missing => (this.missing = missing),
+          () => undefined
+        );
+      }
+    }, 150);
   }
 
   private seller(
     key: 'name' | 'contact_name' | 'phone' | 'email' | 'iban',
-    label: string,
-    type = 'text'
+    caption: string,
+    type = 'text',
+    required = false
   ) {
-    const settings = this.settings as Settings;
+    const settings = (this.context as Context).settings;
     return html`<wa-input
-      label="${label}"
+      label="${caption}"
       type="${type as WaInput['type']}"
+      ?required="${required}"
       .value="${settings.seller[key]}"
       @input="${(e: Event) => this.edit(s => (s.seller[key] = text(e)))}"
     ></wa-input>`;
   }
 
-  private optional(key: 'vat_id' | 'tax_number' | 'bic' | 'account_holder', label: string) {
-    const settings = this.settings as Settings;
+  private optional(key: 'vat_id' | 'tax_number' | 'bic' | 'account_holder', caption: string) {
+    const settings = (this.context as Context).settings;
     return html`<wa-input
-      label="${label}"
+      label="${caption}"
       .value="${settings.seller[key] ?? ''}"
       @input="${(e: Event) => this.edit(s => (s.seller[key] = nullable(text(e))))}"
     ></wa-input>`;
   }
 
   private async showNumberExample() {
-    const pattern = this.settings?.number_pattern ?? '';
+    const pattern = this.context?.settings.number_pattern ?? '';
     try {
       this.numberHint = `Die nächste Nummer sähe so aus: ${await api.numberExample(pattern)}`;
     } catch (error) {
@@ -290,10 +486,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   private async save() {
-    const settings = this.settings;
-    if (!settings) {
+    const context = this.context;
+    if (!context) {
       return;
     }
+    const settings = context.settings;
     const rate = Number(settings.tax_rate.replace(',', '.'));
     // blank is no VAT, a rate is more than 0 and at most 100
     if (settings.tax_rate.trim() !== '' && (!Number.isFinite(rate) || rate <= 0 || rate > 100)) {
@@ -304,12 +501,165 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       return;
     }
     try {
-      await api.settingsSave(settings);
-      this.#saved = JSON.stringify(settings);
+      const wasNew = context.id === null;
+      const saved = await api.contextSave(context);
+      await loadContexts();
+      if (wasNew && saved.id !== null) {
+        // the one just made is the one to work in
+        activate(saved.id);
+      }
+      this.context = structuredClone(saved);
+      this.#saved = snapshot(saved);
+      this.missing = {
+        missing: saved.missing,
+        missing_for_xrechnung: saved.missing_for_xrechnung,
+      };
       notify('Gespeichert. Bereits exportierte Rechnungen behalten ihre alten Angaben.');
+      const back = blockedAt.get();
+      if (saved.missing.length === 0 && back !== undefined) {
+        // the guard sent the user here, so they can go on where they wanted to
+        blockedAt.set(undefined);
+        goto(back);
+      } else if (wasNew) {
+        goto(`/settings/context-${saved.id}-company`);
+      }
     } catch (error) {
       notifyError(error);
     }
+  }
+
+  /** Where to go when a context is gone: the next one in use, or the form for a new one */
+  private afterContextGone() {
+    const next = available.get()[0];
+    goto(next ? `/settings/context-${next.id}-company` : '/settings/context-new-company');
+  }
+
+  /** An archived context leaves the switch, its invoices stay; there is no way back yet */
+  private archiveContext() {
+    const id = this.context?.id;
+    if (id == null) {
+      return;
+    }
+    return this.layoutAction(async () => {
+      const sure = await ask(
+        `„${label(this.context)}“ aus der Auswahl nehmen? Die Rechnungen bleiben erhalten. Wiederherstellen ist noch nicht möglich.`,
+        { title: 'Kontext archivieren', okLabel: 'Archivieren', cancelLabel: 'Abbrechen' }
+      );
+      if (!sure) {
+        return;
+      }
+      await api.contextArchive(id);
+      await loadContexts();
+      this.context = undefined;
+      this.afterContextGone();
+    });
+  }
+
+  /** What belongs to the context decides what the removal has to ask */
+  private get scoped() {
+    const usage = this.contextUsage;
+    return usage ? usage.customers + usage.templates + usage.layouts : 0;
+  }
+
+  private openRemove() {
+    this.removing = { what: 'share', to: null };
+  }
+
+  private confirmRemove() {
+    const id = this.context?.id;
+    const choice = this.removing;
+    if (id == null || !choice) {
+      return;
+    }
+    return this.layoutAction(async () => {
+      const what =
+        choice.what === 'move'
+          ? { kind: 'move' as const, to: choice.to ?? 0 }
+          : { kind: choice.what };
+      await api.contextRemove(id, what);
+      this.removing = undefined;
+      await loadContexts();
+      this.context = undefined;
+      this.afterContextGone();
+    });
+  }
+
+  private removeDialog() {
+    const choice = this.removing;
+    const others = available.get().filter(c => c.id !== this.context?.id);
+    const usage = this.contextUsage;
+    return html`<wa-dialog
+      ?open="${choice !== undefined}"
+      label="Kontext entfernen"
+      @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.removing = undefined)}"
+    >
+      ${
+        choice
+          ? html`<div class="stack">
+              <span>
+                „${label(this.context)}“ wird entfernt. Es hat keine Rechnungen, dieser Schritt
+                lässt sich nicht rückgängig machen.
+              </span>
+              ${
+                usage && this.scoped > 0
+                  ? html`<span>
+                        Zu diesem Kontext gehören ${usage.customers} Kunden, ${usage.templates}
+                        gespeicherte Positionen und ${usage.layouts} Layouts. Was soll damit
+                        geschehen?
+                      </span>
+                      <wa-select
+                        label="Dazugehörige Einträge"
+                        .value="${choice.what}"
+                        @change="${(e: Event) => {
+                          const what = String((e.target as WaSelect).value) as
+                            'share' | 'move' | 'delete';
+                          this.removing = {
+                            what,
+                            to: what === 'move' ? (others[0]?.id ?? null) : null,
+                          };
+                        }}"
+                      >
+                        <wa-option value="share">Für alle Kontexte freigeben</wa-option>
+                        ${
+                          others.length > 0
+                            ? html`<wa-option value="move"
+                                >In einen anderen Kontext verschieben</wa-option
+                              >`
+                            : nothing
+                        }
+                        <wa-option value="delete">Mit entfernen</wa-option>
+                      </wa-select>
+                      ${
+                        choice.what === 'move'
+                          ? html`<wa-select
+                              label="Verschieben nach"
+                              .value="${String(choice.to ?? '')}"
+                              @change="${(e: Event) => {
+                                this.removing = {
+                                  what: 'move',
+                                  to: Number((e.target as WaSelect).value),
+                                };
+                              }}"
+                            >
+                              ${others.map(
+                                c =>
+                                  html`<wa-option value="${String(c.id)}">${label(c)}</wa-option>`
+                              )}
+                            </wa-select>`
+                          : nothing
+                      }`
+                  : nothing
+              }
+            </div>`
+          : nothing
+      }
+      <div slot="footer" class="dialog-footer">
+        <wa-button appearance="outlined" @click="${() => (this.removing = undefined)}">
+          Abbrechen
+        </wa-button>
+        <wa-button variant="danger" @click="${this.confirmRemove}">Entfernen</wa-button>
+      </div>
+    </wa-dialog>`;
   }
 
   // layouts
@@ -437,27 +787,25 @@ export class SettingsView extends ErngElement.withStyles(styles) {
               </div>`
             : nothing
       }
-      <wa-button slot="footer" appearance="outlined" @click="${() => this.answerImport()}">
-        Abbrechen
-      </wa-button>
-      ${
-        question?.kind === 'replace'
-          ? html`<wa-button
-              slot="footer"
-              variant="${question.incoming_updated_at < question.existing.updated_at ? 'danger' : 'brand'}"
-              @click="${() => this.answerImport({ replace: true })}"
-            >
-              Ersetzen
-            </wa-button>`
-          : html`<wa-button
-              slot="footer"
-              variant="brand"
-              ?disabled="${(pending?.name ?? '').trim() === ''}"
-              @click="${() => this.answerImport({ name: pending?.name })}"
-            >
-              Importieren
-            </wa-button>`
-      }
+      <div slot="footer" class="dialog-footer">
+        <wa-button appearance="outlined" @click="${() => this.answerImport()}">Abbrechen</wa-button>
+        ${
+          question?.kind === 'replace'
+            ? html`<wa-button
+                variant="${question.incoming_updated_at < question.existing.updated_at ? 'danger' : 'brand'}"
+                @click="${() => this.answerImport({ replace: true })}"
+              >
+                Ersetzen
+              </wa-button>`
+            : html`<wa-button
+                variant="brand"
+                ?disabled="${(pending?.name ?? '').trim() === ''}"
+                @click="${() => this.answerImport({ name: pending?.name })}"
+              >
+                Importieren
+              </wa-button>`
+        }
+      </div>
     </wa-dialog>`;
   }
 
@@ -536,14 +884,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   /** The default is stored at once, without what else is edited on the other pages */
   private makeDefault(key: string) {
     return this.layoutAction(async () => {
-      if (!this.settings) {
+      const active = activeContext.get();
+      if (!active) {
         return;
       }
-      const stored = JSON.parse(this.#saved) as Settings;
-      stored.layout = key;
-      await api.settingsSave(stored);
-      this.#saved = JSON.stringify(stored);
-      this.edit(s => (s.layout = key));
+      await api.contextSave({ ...active, settings: { ...active.settings, layout: key } });
+      await loadContexts();
     });
   }
 
@@ -563,6 +909,70 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     `;
   }
 
+  /**
+   * The contexts, each a group with the seller name as heading. Only the one on show has its pages
+   * (the active one while a layout is on show), the others are empty until the user switches to them.
+   */
+  private renderContexts() {
+    const active = activeContext.get()?.id;
+    // on the pages of the layouts the active context stays open, its pages remain reachable
+    const open = this.contextRoute?.id ?? active;
+    const status = (c: Context) => html`
+      ${c.missing.length > 0 ? html`<wa-tag size="s" variant="warning">unvollständig</wa-tag>` : nothing}
+      ${
+        // with one context there is nothing to tell apart or to switch to
+        available.get().length < 2
+          ? nothing
+          : c.id === active
+            ? html`<wa-tag size="s" variant="brand">Aktiv</wa-tag>`
+            : html`
+                <wa-button
+                  size="xs"
+                  appearance="outlined"
+                  variant="neutral"
+                  class="tag"
+                  @click="${() => void switchContext(c.id as number)}"
+                >
+                  Wechseln
+                </wa-button>
+              `
+      }
+    `;
+    const group = (id: number | 'new', heading: string, extra: unknown = nothing) => html`
+      <erng-list-group heading="${heading}" ?placeholder="${id === 'new'}">
+        <span slot="action" class="row">${extra}</span>
+        ${
+          open === id
+            ? PAGES.map(
+                ([page, caption]) => html`
+                  <erng-list-item
+                    ?selected="${this.contextRoute?.page === page}"
+                    @click="${() => goto(`/settings/context-${id}-${page}`)}"
+                  >
+                    ${caption}
+                  </erng-list-item>
+                `
+              )
+            : nothing
+        }
+      </erng-list-group>
+    `;
+    return html`
+      ${available.get().map(c => group(c.id as number, label(c), status(c)))}
+      ${open === 'new' ? group('new', label(this.context)) : nothing}
+      ${
+        open === 'new'
+          ? nothing
+          : html`<erng-list-item
+              class="add"
+              @click="${() => goto('/settings/context-new-company')}"
+            >
+              + Kontext hinzufügen
+            </erng-list-item>`
+      }
+    `;
+  }
+
   private renderList() {
     const isDefault = (key: string) =>
       key === this.defaultLayout
@@ -570,11 +980,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         : nothing;
     return html`
       <erng-list slot="list">
-        ${SECTIONS.map(([key, label]) => this.item(key, label, ''))}
+        ${this.renderContexts()}
         <erng-list-group heading="Layouts">
           <span slot="action" class="row">
             <wa-button
-              size="s"
+              size="xs"
               appearance="outlined"
               ?disabled="${this.section === `${LAYOUT}new`}"
               @click="${this.importLayout}"
@@ -582,7 +992,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
               Import
             </wa-button>
             <wa-button
-              size="s"
+              size="xs"
               appearance="outlined"
               ?disabled="${this.section === `${LAYOUT}new`}"
               @click="${() => goto(`/settings/${LAYOUT}new`)}"
@@ -590,6 +1000,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
               Neu
             </wa-button>
           </span>
+          ${
+            this.section === `${LAYOUT}new`
+              ? html`<erng-list-item placeholder selected>Neues Layout</erng-list-item>`
+              : nothing
+          }
           ${this.item(`${LAYOUT}standard`, this.builtInName, 'Eingebaut', isDefault('standard'))}
           ${this.customs.map(c =>
             this.item(
@@ -606,15 +1021,29 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   private companyPage(settings: Settings) {
+    const context = this.context as Context;
     return html`
-      ${this.seller('name', 'Name des Unternehmens')}
+      <div class="name-row">
+        ${this.seller('name', 'Name des Unternehmens', 'text', true)}
+        <erng-brand-select
+          .value="${context.brand}"
+          @brand-change="${(e: CustomEvent<string>) => {
+            context.brand = e.detail;
+            this.requestUpdate();
+          }}"
+        ></erng-brand-select>
+      </div>
       <erng-address-fields
+        required
         .address="${settings.seller.address}"
         @change="${() => this.edit(() => undefined)}"
       ></erng-address-fields>
       <div class="grid">
         ${this.optional('vat_id', 'USt-IdNr.')} ${this.optional('tax_number', 'Steuernummer')}
       </div>
+      <span class="muted">
+        Eine von beiden ist Pflicht: ohne sie ist eine Rechnung nicht gültig.
+      </span>
       <div class="grid">
         ${this.seller('contact_name', 'Ansprechpartner')} ${this.seller('phone', 'Telefon', 'tel')}
         ${this.seller('email', 'E-Mail', 'email')}
@@ -643,7 +1072,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   private bankPage() {
     return html`
       <div class="grid">
-        ${this.seller('iban', 'IBAN')} ${this.optional('bic', 'BIC')}
+        ${this.seller('iban', 'IBAN', 'text', true)} ${this.optional('bic', 'BIC')}
         ${this.optional('account_holder', 'Kontoinhaber')}
       </div>
     `;
@@ -711,24 +1140,106 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         .value="${settings.closing ?? ''}"
         @input="${(e: Event) => this.edit(s => (s.closing = nullable(text(e))))}"
       ></wa-textarea>
-      <span class="muted">
-        Das Layout der Rechnungen wählst du unter Layouts, dort legst du auch das Standard-Layout
-        fest.
-      </span>
+      <wa-select
+        label="Standard-Layout"
+        hint="Neue Rechnungen dieses Kontexts beginnen damit, jede kann ein anderes wählen. Eigene Layouts legst du unter Layouts an."
+        .value="${settings.layout}"
+        @change="${(e: Event) => this.edit(s => (s.layout = String((e.target as WaSelect).value)))}"
+      >
+        ${this.layouts
+          .filter(l => !l.archived || l.id === settings.layout)
+          .map(l => html`<wa-option value="${l.id}">${l.name}</wa-option>`)}
+      </wa-select>
     `;
   }
 
-  private settingsPage(settings: Settings) {
-    const pages = {
-      company: ['Unternehmen', () => this.companyPage(settings)],
-      bank: ['Bankverbindung', () => this.bankPage()],
-      invoices: ['Rechnungen', () => this.invoicesPage(settings)],
-    } satisfies Record<string, [string, () => unknown]>;
-    const key = (this.section in pages ? this.section : 'company') as keyof typeof pages;
-    const [heading, content] = pages[key];
+  /** What stops invoices from being issued under the context, and what only XRechnung needs */
+  private missingNotes() {
+    const { missing, missing_for_xrechnung: forXRechnung } = this.missing;
     return html`
-      <erng-page slot="detail" heading="${heading}">
-        ${content()}
+      ${
+        missing.length > 0
+          ? html`
+              <wa-callout variant="warning">
+                Für Rechnungen fehlt noch: ${fieldNames(missing)}. Bis dahin sind Rechnungen, Kunden
+                und Positionen gesperrt.
+              </wa-callout>
+            `
+          : nothing
+      }
+      ${
+        forXRechnung.length > 0
+          ? html`
+              <wa-callout variant="neutral">
+                Für XRechnung fehlt noch: ${fieldNames(forXRechnung)}.
+              </wa-callout>
+            `
+          : nothing
+      }
+    `;
+  }
+
+  /** What can be done with a stored context besides editing it */
+  private contextActions(context: Context) {
+    const usage = this.contextUsage;
+    const hasInvoices = usage === undefined || usage.drafts + usage.exported > 0;
+    return html`
+      <span slot="actions" id="remove-context">
+        <wa-button
+          variant="danger"
+          appearance="outlined"
+          ?disabled="${hasInvoices}"
+          @click="${this.openRemove}"
+        >
+          Entfernen
+        </wa-button>
+      </span>
+      ${
+        hasInvoices
+          ? html`
+              <wa-tooltip slot="actions" for="remove-context">
+                ${usage === undefined ? 'Wird geprüft…' : 'Mit Rechnungen kann der Kontext nur archiviert werden.'}
+              </wa-tooltip>
+            `
+          : nothing
+      }
+      <wa-button
+        slot="actions"
+        appearance="outlined"
+        ?disabled="${context.archived_at !== null}"
+        @click="${this.archiveContext}"
+      >
+        Archivieren
+      </wa-button>
+    `;
+  }
+
+  /** A new context can be dropped as long as there is another one to go back to */
+  private cancelNewContext() {
+    const back = activeContext.get()?.id;
+    return back == null
+      ? nothing
+      : html`<wa-button
+          slot="actions"
+          appearance="outlined"
+          @click="${() => goto(`/settings/context-${back}-company`)}"
+        >
+          Abbrechen
+        </wa-button>`;
+  }
+
+  private contextPage(context: Context, page: Page) {
+    const settings = context.settings;
+    const content = {
+      company: () => this.companyPage(settings),
+      bank: () => this.bankPage(),
+      invoices: () => this.invoicesPage(settings),
+    }[page];
+    const heading = PAGES.find(([key]) => key === page)?.[1];
+    return html`
+      <erng-page slot="detail" heading="${ifDefined(heading)}">
+        ${this.missingNotes()} ${content()}
+        ${context.id === null ? this.cancelNewContext() : this.contextActions(context)}
         <wa-button
           slot="primary"
           variant="brand"
@@ -911,6 +1422,14 @@ export class SettingsView extends ErngElement.withStyles(styles) {
                 `
               : nothing
           }
+          <erng-scope-select
+            slot="form"
+            .value="${layout.context_id}"
+            @scope-change="${(e: CustomEvent<number | null>) => {
+              layout.context_id = e.detail;
+              this.requestUpdate();
+            }}"
+          ></erng-scope-select>
           <erng-layout-form
             slot="form"
             .layout="${layout}"
@@ -943,7 +1462,17 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           ></erng-layout-form>
           ${this.sampleSheet()}
         </erng-editor>
-        ${isNew ? nothing : this.layoutActions(layout)}
+        ${
+          isNew
+            ? html`<wa-button
+                slot="actions"
+                appearance="outlined"
+                @click="${() => goto(`/settings/${LAYOUT}standard`)}"
+              >
+                Abbrechen
+              </wa-button>`
+            : this.layoutActions(layout)
+        }
         <wa-button
           slot="primary"
           variant="brand"
@@ -956,7 +1485,13 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  private renderDetail(settings: Settings) {
+  private renderDetail() {
+    const route = this.contextRoute;
+    if (route) {
+      return this.context
+        ? this.contextPage(this.context, route.page)
+        : html`<wa-callout slot="detail" variant="neutral">Kontext nicht gefunden.</wa-callout>`;
+    }
     if (this.section === `${LAYOUT}standard`) {
       return this.standardPage();
     }
@@ -965,18 +1500,17 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         ? this.layoutPage(this.editing)
         : html`<wa-callout slot="detail" variant="neutral">Layout nicht gefunden.</wa-callout>`;
     }
-    return this.settingsPage(settings);
+    return html`<wa-callout slot="detail" variant="neutral">Seite nicht gefunden.</wa-callout>`;
   }
 
   override render() {
-    const settings = this.settings;
-    if (!settings) {
+    if (!contexts.get()) {
       return nothing;
     }
     return html`<erng-split position-key="split:settings"
-        >${this.renderList()} ${this.renderDetail(settings)}</erng-split
+        >${this.renderList()} ${this.renderDetail()}</erng-split
       >
-      ${this.importDialog()}`;
+      ${this.importDialog()} ${this.removeDialog()}`;
   }
 }
 

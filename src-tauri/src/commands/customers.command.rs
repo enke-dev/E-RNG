@@ -5,8 +5,8 @@ use crate::store::Store;
 use crate::utils::message;
 
 #[tauri::command]
-pub fn customers_list(store: State<'_, Store>) -> Result<Vec<Customer>, String> {
-    store.customers().map_err(message)
+pub fn customers_list(store: State<'_, Store>, context_id: i64) -> Result<Vec<Customer>, String> {
+    store.customers(context_id).map_err(message)
 }
 
 #[tauri::command]

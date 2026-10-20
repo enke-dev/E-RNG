@@ -5,8 +5,11 @@ use crate::store::Store;
 use crate::utils::message;
 
 #[tauri::command]
-pub fn templates_list(store: State<'_, Store>) -> Result<Vec<PositionTemplate>, String> {
-    store.templates().map_err(message)
+pub fn templates_list(
+    store: State<'_, Store>,
+    context_id: i64,
+) -> Result<Vec<PositionTemplate>, String> {
+    store.templates(context_id).map_err(message)
 }
 
 #[tauri::command]

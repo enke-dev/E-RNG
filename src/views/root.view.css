@@ -54,6 +54,11 @@ nav {
   }
 }
 
+nav a.disabled {
+  opacity: 0.5;
+  /* the guard sends the click to the form of the context, the link itself is dimmed */
+}
+
 #end {
   display: flex;
   align-items: center;

@@ -124,6 +124,9 @@ pub use crate::layout::{CustomLayout, FontFile, Format, Insets, LayoutUsage};
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Customer {
     pub id: Option<i64>,
+    /// The context it belongs to, none: it is shared by all. Stored beside the entry, not in it.
+    #[serde(default)]
+    pub context_id: Option<i64>,
     pub name: String,
     pub address: Address,
     pub vat_id: Option<String>,
@@ -176,6 +179,9 @@ impl Position {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PositionTemplate {
     pub id: Option<i64>,
+    /// The context it belongs to, none: it is shared by all
+    #[serde(default)]
+    pub context_id: Option<i64>,
     #[serde(flatten)]
     pub position: Position,
 }
@@ -238,6 +244,8 @@ pub enum Status {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StoredInvoice {
     pub id: i64,
+    /// The context (issuer) it was made under, for good
+    pub context_id: i64,
     /// Assigned when the invoice is exported, drafts have none
     pub number: Option<String>,
     pub status: Status,
@@ -252,6 +260,9 @@ pub struct StoredInvoice {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ListEntry {
     pub id: i64,
+    pub context_id: i64,
+    /// The seller of its context, tells invoices of different contexts apart in a mixed list
+    pub seller_name: String,
     pub number: Option<String>,
     pub status: Status,
     pub customer_name: String,

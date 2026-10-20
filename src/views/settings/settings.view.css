@@ -1,3 +1,17 @@
+erng-list-item.add {
+  color: var(--wa-color-text-quiet);
+}
+
+.name-row {
+  display: flex;
+  align-items: end;
+  gap: var(--wa-space-s);
+
+  & wa-input {
+    flex: 1;
+  }
+}
+
 .row {
   display: flex;
   gap: var(--wa-space-xs);
@@ -20,4 +34,8 @@ erng-sheet {
 
 wa-tag {
   text-indent: 0;
+}
+
+wa-button.tag::part(base) {
+  text-transform: uppercase;
 }

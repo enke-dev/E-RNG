@@ -17,6 +17,11 @@ header {
   text-transform: uppercase;
 }
 
+/* a new group that does not exist yet: the form next to the list is for it */
+:host([placeholder]) header {
+  font-style: italic;
+}
+
 slot:not([name])::slotted(erng-list-item) {
   text-indent: var(--wa-space-l);
 }

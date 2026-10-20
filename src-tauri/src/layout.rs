@@ -204,6 +204,9 @@ impl Default for Format {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CustomLayout {
     pub id: Option<i64>,
+    /// The context it belongs to, none: every context can use it. Stored beside the layout.
+    #[serde(default)]
+    pub context_id: Option<i64>,
     /// Stays with the layout through renaming, export and import: tells copies of one layout from
     /// layouts that only share a name. Made when the layout is first stored.
     #[serde(default)]
@@ -372,6 +375,7 @@ pub fn builtin() -> CustomLayout {
     ]);
     CustomLayout {
         id: None,
+        context_id: None,
         uid: String::new(),
         updated_at: String::new(),
         name: "Klassisch".into(),

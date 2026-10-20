@@ -1,0 +1,21 @@
+.placeholder {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--wa-space-m);
+  block-size: 100%;
+  padding: var(--wa-space-xl);
+  color: var(--wa-color-text-quiet);
+  text-align: center;
+}
+
+span[slot='sub']:has(.payed) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wa-space-xs);
+}
+
+.payed {
+  aspect-ratio: 1;
+  padding: var(--wa-space-3xs);
+}

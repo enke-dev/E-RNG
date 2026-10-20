@@ -1,4 +1,5 @@
 mod commands;
+mod context;
 mod draft;
 mod invoice;
 mod layout;
@@ -47,11 +48,21 @@ pub fn run() {
         .manage(commands::opened_files_command::OpenedFiles::default())
         .invoke_handler(tauri::generate_handler![
             commands::check_invoice_command::check_invoice,
+            commands::contexts_command::context_archive,
+            commands::contexts_command::context_blank,
+            commands::contexts_command::context_brands,
+            commands::contexts_command::context_remove,
+            commands::contexts_command::context_save,
+            commands::contexts_command::context_usage,
+            commands::contexts_command::contexts_list,
+            commands::contexts_command::number_example,
+            commands::contexts_command::settings_check,
             commands::customers_command::customer_delete,
             commands::customers_command::customer_save,
             commands::customers_command::customers_list,
             commands::discard_work_dir_command::discard_work_dir,
             commands::export_invoice_command::export_invoice,
+            commands::invoices_command::invoice_archive,
             commands::invoices_command::invoice_blank,
             commands::invoices_command::invoice_delete,
             commands::invoices_command::invoice_duplicate,
@@ -73,9 +84,6 @@ pub fn run() {
             commands::opened_files_command::opened_files,
             commands::preview_invoice_command::preview_invoice,
             commands::produce_invoice_command::produce_invoice,
-            commands::settings_command::number_example,
-            commands::settings_command::settings_get,
-            commands::settings_command::settings_save,
             commands::templates_command::template_delete,
             commands::templates_command::template_save,
             commands::templates_command::templates_list,

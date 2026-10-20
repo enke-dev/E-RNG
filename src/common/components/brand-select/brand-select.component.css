@@ -1,0 +1,11 @@
+:host {
+  display: inline-block;
+}
+
+.swatch {
+  display: block;
+  inline-size: 1.25em;
+  block-size: 1.25em;
+  border-radius: var(--wa-border-radius-s);
+  background: var(--swatch);
+}

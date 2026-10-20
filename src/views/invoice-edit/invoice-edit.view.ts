@@ -19,7 +19,7 @@ import '../../common/layouts/editor/editor.layout.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import type WaSwitch from '@awesome.me/webawesome/dist/components/switch/switch.js';
-import { save } from '@tauri-apps/plugin-dialog';
+import { ask, save } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -40,6 +40,7 @@ import type {
 } from '../../common/utils/api.utils.js';
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
+import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { formatDate, money, UNITS } from '../../common/utils/format.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
@@ -62,6 +63,7 @@ type Export =
 
 const blankCustomer = (): Customer => ({
   id: null,
+  context_id: null,
   name: '',
   address: { street: '', post_code: '', city: '', country: 'DE' },
   vat_id: null,
@@ -77,6 +79,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   @state() private stored: StoredInvoice | undefined;
   @state() private draft: InvoiceDraft | undefined;
   @state() private settings: Settings | undefined;
+  /** The context the invoice is made under: its own when stored, else the active one */
+  @state() private contextId: number | undefined;
   @state() private customers: Customer[] = [];
   @state() private layouts: LayoutInfo[] = [];
   @state() private check: Check | undefined;
@@ -153,15 +157,24 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   private async load() {
     try {
-      const [settings, customers, layouts] = await Promise.all([
-        api.settingsGet(),
-        api.customersList(),
-        api.layoutsList(),
+      const stored =
+        this.invoiceId === 'new' ? undefined : await api.invoiceGet(Number(this.invoiceId));
+      await ensureContexts();
+      const contextId = stored?.context_id ?? activeContext.get()?.id;
+      const context = contextById(contextId);
+      if (contextId == null || !context) {
+        throw new Error('Für die Rechnung fehlt der Kontext.');
+      }
+      const settings = context.settings;
+      const [customers, layouts] = await Promise.all([
+        api.customersList(contextId),
+        api.layoutsList(contextId),
       ]);
+      this.contextId = contextId;
       this.layouts = layouts;
       this.settings = settings;
       this.customers = customers;
-      if (this.invoiceId === 'new') {
+      if (stored === undefined) {
         this.stored = undefined;
         this.draft = await api.invoiceBlank();
         // a new invoice starts with the default layout, it can pick another
@@ -170,8 +183,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         this.draft.intro = settings.intro ?? '';
         this.draft.closing = settings.closing ?? '';
       } else {
-        this.stored = await api.invoiceGet(Number(this.invoiceId));
-        this.draft = this.stored.draft;
+        this.stored = stored;
+        this.draft = stored.draft;
       }
       await this.runCheck();
       void this.renderPreview();
@@ -187,7 +200,11 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
     const request = ++this.#previewRequest;
     try {
-      const preview = await api.invoicePreview(this.draft, this.stored?.id ?? null);
+      const preview = await api.invoicePreview(
+        this.draft,
+        this.stored?.id ?? null,
+        this.contextId as number
+      );
       if (request !== this.#previewRequest) {
         return;
       }
@@ -202,7 +219,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   private async runCheck() {
     if (this.draft) {
-      this.check = await api.invoiceCheck(this.draft);
+      this.check = await api.invoiceCheck(this.contextId as number, this.draft);
     }
   }
 
@@ -255,7 +272,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
     try {
       const saved = await api.customerSave(customer);
-      this.customers = await api.customersList();
+      this.customers = await api.customersList(this.contextId as number);
       this.newCustomer = undefined;
       this.selectCustomer(String(saved.id));
     } catch (error) {
@@ -268,7 +285,11 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       return this.stored;
     }
     const isNew = this.stored === undefined;
-    this.stored = await api.invoiceSave(this.stored?.id ?? null, this.draft);
+    this.stored = await api.invoiceSave(
+      this.stored?.id ?? null,
+      this.contextId ?? null,
+      this.draft
+    );
     this.#dirty = false;
     // the first save gives the new invoice its address, without reloading the form
     if (updateUrl && isNew && this.invoiceId === 'new') {
@@ -299,6 +320,55 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       this.#dirty = false;
       this.announce({ id: copy.id });
       goto(`/invoices/${copy.id}`);
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+
+  /** Puts the invoice away; edits of a draft are kept as a draft, like when another invoice opens */
+  private async close() {
+    if (this.#dirty && !this.locked) {
+      try {
+        await this.persist({ updateUrl: false });
+        this.announce();
+      } catch (error) {
+        // what was typed stays on screen
+        notifyError(error);
+        return;
+      }
+    }
+    goto('/invoices/none');
+  }
+
+  /** A new invoice that was never saved is dropped, what was typed asks first */
+  private async cancelNew() {
+    if (this.#dirty) {
+      const sure = await ask('Die Eingaben dieser Rechnung gehen verloren.', {
+        title: 'Neue Rechnung abbrechen',
+        kind: 'warning',
+        okLabel: 'Verwerfen',
+        cancelLabel: 'Zurück',
+      });
+      if (!sure) {
+        return;
+      }
+    }
+    // nothing of it is kept: no draft is saved on the way out
+    this.#dirty = false;
+    goto('/invoices/none');
+  }
+
+  /** An exported invoice cannot go, it leaves the list instead and stays for the books */
+  private async archive() {
+    if (!this.stored) {
+      return;
+    }
+    try {
+      const id = this.stored.id;
+      await api.invoiceArchive(id);
+      this.announce({ id, deleted: true });
+      notify('Die Rechnung ist archiviert und steht nicht mehr in der Liste.');
+      goto('/');
     } catch (error) {
       notifyError(error);
     }
@@ -429,7 +499,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     this.templateQuery = '';
     this.templates = [];
     try {
-      this.templates = await api.templatesList();
+      this.templates = await api.templatesList(this.contextId as number);
     } catch (error) {
       notifyError(error);
     }
@@ -457,8 +527,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       return;
     }
     try {
-      const before = await api.templatesList();
-      const saved = await api.templateSave({ ...position, id: null });
+      const before = await api.templatesList(this.contextId as number);
+      const saved = await api.templateSave({ ...position, id: null, context_id: null });
       // the same one is not saved twice, the saved one comes back
       if (before.some(t => t.id === saved.id)) {
         notify(`„${position.description}“ gibt es schon unter Positionen.`, 'neutral');
@@ -709,13 +779,11 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 </div>`
           }
         </div>
-        <wa-button
-          slot="footer"
-          appearance="outlined"
-          @click="${() => (this.templates = undefined)}"
-        >
-          Schließen
-        </wa-button>
+        <div slot="footer" class="dialog-footer">
+          <wa-button appearance="outlined" @click="${() => (this.templates = undefined)}">
+            Schließen
+          </wa-button>
+        </div>
       </wa-dialog>
     `;
   }
@@ -802,7 +870,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         }
         ${exporting?.phase === 'failed' ? this.renderFailure(exporting.error) : nothing}
         ${exporting?.phase === 'ready' ? this.renderReady(exporting) : nothing}
-        <wa-button-group slot="footer" label="Export">
+        <div slot="footer" class="dialog-footer">
           <wa-button appearance="outlined" @click="${() => void this.closeExport()}">
             ${exporting?.phase === 'ready' && exporting.result.report.valid ? 'Abbrechen' : 'Schließen'}
           </wa-button>
@@ -819,7 +887,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 `
               : nothing
           }
-        </wa-button-group>
+        </div>
       </wa-dialog>
     `;
   }
@@ -1060,26 +1128,38 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       </erng-editor>
 
       <footer>
-        <wa-tag>${stored ? (stored.number ?? 'Entwurf') : 'Neue Rechnung'}</wa-tag>
+        <div class="start">
+          ${
+            stored
+              ? html`<wa-button appearance="outlined" @click="${this.close}">Schließen</wa-button>`
+              : html`<wa-button appearance="outlined" @click="${this.cancelNew}">
+                  Abbrechen
+                </wa-button>`
+          }
+        </div>
         <nav>
-          <wa-button-group label="Rechnung">
-            ${
-              stored && locked
-                ? html`<wa-button appearance="outlined" @click="${this.duplicate}">
-                    Duplizieren
-                  </wa-button>`
-                : nothing
-            }
-            ${
-              stored && !locked
-                ? html`
-                    <wa-button appearance="outlined" variant="danger" @click="${this.deleteDraft}">
-                      Entwurf löschen
-                    </wa-button>
-                  `
-                : nothing
-            }
-          </wa-button-group>
+          ${
+            stored
+              ? html`<wa-button-group label="Rechnung">
+                  ${
+                    locked
+                      ? html`<wa-button appearance="outlined" @click="${this.duplicate}">
+                            Duplizieren
+                          </wa-button>
+                          <wa-button appearance="outlined" @click="${this.archive}">
+                            Archivieren
+                          </wa-button>`
+                      : html`<wa-button
+                          appearance="outlined"
+                          variant="danger"
+                          @click="${this.deleteDraft}"
+                        >
+                          Entwurf löschen
+                        </wa-button>`
+                  }
+                </wa-button-group>`
+              : nothing
+          }
           <wa-button-group label="Speichern">
             ${
               !locked
@@ -1122,12 +1202,12 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
               `
             : nothing
         }
-        <wa-button-group slot="footer" label="Kunde">
+        <div slot="footer" class="dialog-footer">
           <wa-button appearance="outlined" @click="${() => (this.newCustomer = undefined)}">
             Abbrechen
           </wa-button>
-          <wa-button variant="brand" @click="${this.saveNewCustomer}"> Speichern </wa-button>
-        </wa-button-group>
+          <wa-button variant="brand" @click="${this.saveNewCustomer}">Speichern</wa-button>
+        </div>
       </wa-dialog>
     `;
   }

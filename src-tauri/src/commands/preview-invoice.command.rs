@@ -26,8 +26,9 @@ pub async fn preview_invoice(
     store: State<'_, Store>,
     draft: InvoiceDraft,
     id: Option<i64>,
+    context_id: i64,
 ) -> Result<Preview, String> {
-    let current = store.settings().map_err(message)?;
+    let current = store.settings(context_id).map_err(message)?;
     let settings = draft.frozen.clone().unwrap_or(current.clone());
 
     // an exported invoice shows its number, a draft the one it would get
@@ -39,7 +40,11 @@ pub async fn preview_invoice(
     let number = match stored_number {
         Some(number) => number,
         None => store
-            .next_number(&current.number_pattern, issue_day(&draft.issue_date))
+            .next_number(
+                context_id,
+                &current.number_pattern,
+                issue_day(&draft.issue_date),
+            )
             .map_err(message)?,
     };
 
@@ -53,7 +58,7 @@ pub async fn preview_invoice(
             })
         }
     };
-    let customs = store.custom_layouts().map_err(message)?;
+    let customs = store.all_custom_layouts().map_err(message)?;
     let branding = Branding::for_draft(&draft, &settings, &customs);
     let sidecars = Sidecars::locate(&app).map_err(message)?;
 

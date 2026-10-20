@@ -23,6 +23,23 @@ export function remember(key: string, value: number) {
   }
 }
 
+/** A short text, e.g. an id */
+export function recallText(key: string): string | undefined {
+  try {
+    return localStorage.getItem(PREFIX + key) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function rememberText(key: string, value: string) {
+  try {
+    localStorage.setItem(PREFIX + key, value);
+  } catch {
+    // not remembered, nothing breaks
+  }
+}
+
 const ROUTE = `${PREFIX}route`;
 
 /** Views worth coming back to; a blank invoice is not stored yet, there is nothing to come back to */

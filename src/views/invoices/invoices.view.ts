@@ -16,12 +16,14 @@ import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { ListEntry, Settings } from '../../common/utils/api.utils.js';
+import type { ListEntry } from '../../common/utils/api.utils.js';
 import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
+import { activeContext, available } from '../../common/utils/context.utils.js';
 import { formatDate, money } from '../../common/utils/format.utils.js';
 import { notifyError } from '../../common/utils/notify.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
+import styles from './invoices.view.css';
 
 type StatusFilter = 'all' | 'draft' | 'exported' | 'open' | 'paid';
 
@@ -42,6 +44,7 @@ function haystack(entry: ListEntry): string {
   return [
     entry.number ?? 'entwurf',
     entry.customer_name,
+    entry.seller_name,
     formatDate(entry.issue_date),
     money(entry.total),
   ]
@@ -54,16 +57,17 @@ function haystack(entry: ListEntry): string {
  * Without a selection in the address the newest invoice is shown.
  */
 @customElement('erng-invoices')
-export class InvoicesView extends ErngElement {
-  /** From the address: `new`, an id, or empty for "the newest" */
+export class InvoicesView extends ErngElement.withStyles(styles) {
+  /** From the address: `new`, an id, `none` (nothing open), or empty for "the newest" */
   @property() selected = '';
 
   @state() private entries: ListEntry[] | undefined;
-  @state() private settings: Settings | undefined;
   @state() private query = '';
   @state() private status: StatusFilter = 'all';
   @state() private year = 'all';
   @state() private customer = 'all';
+  /** The invoices of every context, not only of the active one */
+  @state() private all = false;
   /** An invoice that got its id while the address still says `new` */
   @state() private created: number | undefined;
 
@@ -94,9 +98,15 @@ export class InvoicesView extends ErngElement {
 
   private async load() {
     try {
-      const [entries, settings] = await Promise.all([api.invoicesList(), api.settingsGet()]);
-      this.entries = entries;
-      this.settings = settings;
+      const context = activeContext.get()?.id ?? null;
+      this.entries = await api.invoicesList(this.all ? null : context);
+      // the selected invoice may not be in this list (the filter changed): show the newest instead
+      const id = Number(this.selected);
+      if (this.selected !== '' && Number.isInteger(id) && !this.entries.some(e => e.id === id)) {
+        const newest = this.entries[0];
+        redirect(newest ? `/invoices/${newest.id}` : '/');
+        return;
+      }
       this.selectNewest();
     } catch (error) {
       notifyError(error);
@@ -116,11 +126,16 @@ export class InvoicesView extends ErngElement {
 
   /** What the detail shows: the address wins, then the newest invoice, then a blank one */
   private get current(): string {
+    // closed: the user put the invoice away, nothing is open until they pick one
+    if (this.selected === 'none') {
+      return '';
+    }
     if (this.selected !== '') {
       return this.selected;
     }
     const newest = this.entries?.[0];
-    return newest ? String(newest.id) : 'new';
+    // without invoices nothing is open, a blank form only comes with "Neue Rechnung"
+    return newest ? String(newest.id) : '';
   }
 
   private get highlighted(): string {
@@ -130,12 +145,6 @@ export class InvoicesView extends ErngElement {
   /** A new invoice exists only once it is saved as a draft, until then there is no second new one */
   private get unsaved() {
     return this.current === 'new' && this.created === undefined;
-  }
-
-  /** Without a seller and a bank account no invoice can be valid */
-  private get incomplete() {
-    const seller = this.settings?.seller;
-    return seller !== undefined && (seller.name.trim() === '' || seller.iban.trim() === '');
   }
 
   private get shown(): ListEntry[] {
@@ -170,6 +179,22 @@ export class InvoicesView extends ErngElement {
           placeholder="Rechnungen suchen"
           @query-change="${(e: CustomEvent<string>) => (this.query = e.detail)}"
         >
+          ${
+            available.get().length > 1
+              ? html`<wa-select
+                  slot="filters"
+                  aria-label="Kontext"
+                  .value="${this.all ? 'all' : 'active'}"
+                  @change="${(e: Event) => {
+                    this.all = String((e.target as WaSelect).value) === 'all';
+                    void this.load();
+                  }}"
+                >
+                  <wa-option value="active">Dieser Kontext</wa-option>
+                  <wa-option value="all">Alle Kontexte</wa-option>
+                </wa-select>`
+              : nothing
+          }
           <wa-select
             slot="filters"
             aria-label="Status"
@@ -203,31 +228,28 @@ export class InvoicesView extends ErngElement {
           <wa-button
             slot="actions"
             variant="brand"
-            ?disabled="${this.incomplete || this.unsaved}"
+            ?disabled="${this.unsaved}"
             @click="${() => goto('/invoices/new')}"
           >
             Neue Rechnung
           </wa-button>
         </erng-filter-bar>
         ${
-          this.incomplete
+          this.entries && shown.length === 0
             ? html`
-                <wa-callout slot="list" variant="warning">
-                  Bitte zuerst <a href="/settings">Unternehmen und Bankverbindung</a> in den
-                  Einstellungen eintragen.
+                <wa-callout slot="list" variant="neutral">
+                  ${this.entries.length === 0 ? 'Noch keine Rechnungen.' : 'Keine Treffer.'}
                 </wa-callout>
               `
             : nothing
         }
-        ${
-          this.entries && shown.length === 0
-            ? html`<wa-callout slot="list" variant="neutral">
-                ${this.entries.length === 0 ? 'Noch keine Rechnungen.' : 'Keine Treffer.'}
-              </wa-callout>`
-            : nothing
-        }
 
         <erng-list slot="list">
+          ${
+            this.unsaved
+              ? html`<erng-list-item placeholder selected>Neue Rechnung</erng-list-item>`
+              : nothing
+          }
           ${shown.map(
             e => html`
               <erng-list-item
@@ -238,15 +260,19 @@ export class InvoicesView extends ErngElement {
                 <span slot="end">${money(e.total)}</span>
                 <span slot="sub">
                   ${e.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
+                  ${this.all ? html`<span class="muted">${e.seller_name || '–'}</span>` : nothing}
                   ${
                     e.paid_at
-                      ? html`<wa-badge
-                          variant="success"
-                          pill
-                          title="Bezahlt am ${formatDate(e.paid_at)}"
-                        >
-                          <wa-icon name="check" label="Bezahlt"></wa-icon>
-                        </wa-badge>`
+                      ? html`
+                          <wa-badge
+                            pill
+                            class="payed"
+                            variant="success"
+                            title="Bezahlt am ${formatDate(e.paid_at)}"
+                          >
+                            <wa-icon name="check" label="Bezahlt"></wa-icon>
+                          </wa-badge>
+                        `
                       : nothing
                   }
                 </span>
@@ -258,10 +284,18 @@ export class InvoicesView extends ErngElement {
 
         ${
           this.entries
-            ? html`<erng-invoice-edit
-                slot="detail"
-                invoice-id="${this.current}"
-              ></erng-invoice-edit>`
+            ? this.current === ''
+              ? html`<div slot="detail" class="placeholder">
+                  <span>
+                    ${this.entries.length === 0 ? 'Noch keine Rechnungen.' : 'Keine Rechnung ausgewählt.'}
+                  </span>
+                  <wa-button variant="brand" @click="${() => goto('/invoices/new')}">
+                    Neue Rechnung
+                  </wa-button>
+                </div>`
+              : html`
+                  <erng-invoice-edit slot="detail" invoice-id="${this.current}"></erng-invoice-edit>
+                `
             : nothing
         }
       </erng-split>

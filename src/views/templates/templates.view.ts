@@ -7,6 +7,7 @@ import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
+import '../../common/components/scope-select/scope-select.component.js';
 import '../../common/layouts/cards/cards.layout.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
@@ -16,12 +17,14 @@ import { customElement, state } from 'lit/decorators.js';
 import type { PositionTemplate } from '../../common/utils/api.utils.js';
 import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
+import { activeContext, contextById, label } from '../../common/utils/context.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
 import { UNITS } from '../../common/utils/format.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
 
 const blank = (): PositionTemplate => ({
   id: null,
+  context_id: null,
   description: '',
   quantity: null,
   unit: null,
@@ -45,7 +48,10 @@ export class TemplatesView extends ErngElement {
 
   private async load() {
     try {
-      this.templates = await api.templatesList();
+      const context = activeContext.get()?.id;
+      if (context != null) {
+        this.templates = await api.templatesList(context);
+      }
     } catch (error) {
       notifyError(error);
     }
@@ -146,6 +152,11 @@ export class TemplatesView extends ErngElement {
                       <div class="muted">
                         ${t.quantity ?? '1'} ${unitLabel(t.unit)} × ${t.price} €
                       </div>
+                      ${
+                        t.context_id === null
+                          ? nothing
+                          : html`<div class="muted">Nur ${label(contextById(t.context_id))}</div>`
+                      }
                     </wa-card>
                   `
                 )}
@@ -196,30 +207,34 @@ export class TemplatesView extends ErngElement {
                         @input="${(e: Event) => this.change(t => (t.price = text(e)))}"
                       ></wa-input>
                     </div>
+                    <erng-scope-select
+                      .value="${editing.context_id}"
+                      @scope-change="${(e: CustomEvent<number | null>) =>
+                        this.change(t => (t.context_id = e.detail))}"
+                    ></erng-scope-select>
                   </div>
                 `
               : nothing
           }
-          ${
-            editing?.id != null
-              ? html`
-                  <wa-button
-                    slot="footer"
-                    variant="danger"
-                    appearance="outlined"
-                    @click="${this.deleteTemplate}"
-                  >
-                    Löschen
-                  </wa-button>
-                `
-              : nothing
-          }
-          <wa-button-group slot="footer" label="Bearbeiten">
+          <div slot="footer" class="dialog-footer">
             <wa-button appearance="outlined" @click="${() => (this.editing = undefined)}">
               Abbrechen
             </wa-button>
-            <wa-button variant="brand" @click="${this.save}"> Speichern </wa-button>
-          </wa-button-group>
+            <div class="end">
+              ${
+                editing?.id != null
+                  ? html`<wa-button
+                      variant="danger"
+                      appearance="outlined"
+                      @click="${this.deleteTemplate}"
+                    >
+                      Löschen
+                    </wa-button>`
+                  : nothing
+              }
+              <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>
+            </div>
+          </div>
         </wa-dialog>
       </erng-cards>
     `;

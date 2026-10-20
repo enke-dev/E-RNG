@@ -937,16 +937,59 @@ mod tests {
     use crate::draft::fixtures::{customer, draft, settings};
     use crate::model::Position;
 
+    fn context(store: &Store, seller: &str) -> Context {
+        let mut settings = settings();
+        settings.seller.name = seller.into();
+        store.save_context(&Context::new(settings, "")).unwrap()
+    }
+
     #[test]
-    fn settings_default_until_saved() {
+    fn contexts_are_created_updated_and_checked() {
         let store = Store::in_memory().unwrap();
-        assert_eq!(store.settings().unwrap().tax_rate, "19");
+        assert!(store.contexts().unwrap().is_empty());
 
-        let mut changed = settings();
-        changed.payment_days = Some(30);
-        store.save_settings(&changed).unwrap();
+        let first = context(&store, "Alpha GmbH");
+        assert_eq!(first.brand, "blue");
+        assert!(first.missing.is_empty());
 
-        assert_eq!(store.settings().unwrap(), changed);
+        let mut changed = first.clone();
+        changed.settings.payment_days = Some(30);
+        changed.settings.seller.iban.clear();
+        let saved = store.save_context(&changed).unwrap();
+
+        assert_eq!(
+            store.settings(first.id.unwrap()).unwrap().payment_days,
+            Some(30)
+        );
+        assert_eq!(saved.missing, ["seller.iban"]);
+        assert!(store.settings(999).is_err());
+    }
+
+    #[test]
+    fn a_new_context_gets_a_brand_that_is_not_in_use() {
+        let store = Store::in_memory().unwrap();
+        let mut brands = vec![context(&store, "A").brand];
+        for name in ["B", "C", "D"] {
+            brands.push(context(&store, name).brand);
+        }
+
+        let mut unique = brands.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), brands.len(), "{brands:?}");
+        assert!(brands.iter().all(|b| BRANDS.contains(&b.as_str())));
+    }
+
+    #[test]
+    fn archived_contexts_stay_but_are_marked() {
+        let store = Store::in_memory().unwrap();
+        let a = context(&store, "A");
+
+        let archived = store.archive_context(a.id.unwrap()).unwrap();
+
+        assert!(archived.archived_at.is_some());
+        assert_eq!(store.contexts().unwrap().len(), 1);
+        assert!(store.archive_context(a.id.unwrap()).is_err());
     }
 
     #[test]
@@ -967,7 +1010,7 @@ mod tests {
 
         assert_eq!(
             store
-                .customers()
+                .customers(1)
                 .unwrap()
                 .iter()
                 .map(|c| c.name.as_str())
@@ -981,10 +1024,10 @@ mod tests {
                 ..b.clone()
             })
             .unwrap();
-        assert_eq!(store.customers().unwrap().last().unwrap().name, "Charlie");
+        assert_eq!(store.customers(1).unwrap().last().unwrap().name, "Charlie");
 
         store.delete_customer(a.id.unwrap()).unwrap();
-        assert_eq!(store.customers().unwrap().len(), 1);
+        assert_eq!(store.customers(1).unwrap().len(), 1);
         assert!(store
             .save_customer(&Customer {
                 id: Some(999),
@@ -998,6 +1041,7 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let template = |description: &str, price: &str| PositionTemplate {
             id: None,
+            context_id: None,
             position: Position {
                 description: description.into(),
                 quantity: None,
@@ -1012,11 +1056,11 @@ mod tests {
             .save_template(&template(" beratung ", "95,00"))
             .unwrap();
         assert_eq!(again.id, first.id);
-        assert_eq!(store.templates().unwrap().len(), 1);
+        assert_eq!(store.templates(1).unwrap().len(), 1);
 
         // a different price is another template
         store.save_template(&template("Beratung", "120")).unwrap();
-        assert_eq!(store.templates().unwrap().len(), 2);
+        assert_eq!(store.templates(1).unwrap().len(), 2);
     }
 
     #[test]
@@ -1024,6 +1068,7 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let template = |description: &str| PositionTemplate {
             id: None,
+            context_id: None,
             position: Position {
                 description: description.into(),
                 quantity: Some("2".into()),
@@ -1036,7 +1081,7 @@ mod tests {
 
         let names = |store: &Store| {
             store
-                .templates()
+                .templates(1)
                 .unwrap()
                 .into_iter()
                 .map(|t| t.position.description)
@@ -1083,7 +1128,7 @@ mod tests {
 
         let store = Store::init(conn).unwrap();
 
-        assert!(store.templates().unwrap().is_empty());
+        assert!(store.templates(1).unwrap().is_empty());
     }
 
     fn own_layout(name: &str) -> CustomLayout {
@@ -1136,7 +1181,7 @@ mod tests {
         drop(conn);
         let uid = |store: &Store| {
             store
-                .custom_layouts()
+                .custom_layouts(1)
                 .unwrap()
                 .into_iter()
                 .find(|l| l.name == "Old")
@@ -1155,7 +1200,7 @@ mod tests {
         store.save_custom_layout(&own_layout("alpha")).unwrap();
 
         let names: Vec<_> = store
-            .custom_layouts()
+            .custom_layouts(1)
             .unwrap()
             .into_iter()
             .map(|l| l.name)
@@ -1167,10 +1212,10 @@ mod tests {
             ..b.clone()
         };
         store.save_custom_layout(&archived).unwrap();
-        assert!(store.custom_layouts().unwrap().iter().any(|l| l.archived));
+        assert!(store.custom_layouts(1).unwrap().iter().any(|l| l.archived));
 
         store.delete_custom_layout(b.id.unwrap()).unwrap();
-        assert_eq!(store.custom_layouts().unwrap().len(), 1);
+        assert_eq!(store.custom_layouts(1).unwrap().len(), 1);
     }
 
     #[test]
@@ -1184,10 +1229,10 @@ mod tests {
 
         let mut chosen = draft();
         chosen.layout = Some(layout.key());
-        store.save_draft(None, &chosen, None).unwrap();
+        store.save_draft(None, 1, &chosen, None).unwrap();
         assert_eq!(store.layout_usages(id).unwrap().len(), 1);
 
-        let exported = store.save_draft(None, &draft(), None).unwrap().id;
+        let exported = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
             .finalize(exported, "RE-2026-001", &settings(), Some(&layout), "1.00")
             .unwrap();
@@ -1197,7 +1242,7 @@ mod tests {
     #[test]
     fn an_exported_invoice_can_be_marked_paid_and_open_again() {
         let store = Store::in_memory().unwrap();
-        let id = store.save_draft(None, &draft(), None).unwrap().id;
+        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         assert!(
             store.set_paid(id, Some("2026-10-20")).is_err(),
             "drafts are not paid"
@@ -1213,7 +1258,7 @@ mod tests {
 
         let paid = store.set_paid(id, Some("2026-10-20")).unwrap();
         assert_eq!(paid.paid_at.as_deref(), Some("2026-10-20"));
-        assert_eq!(store.invoices().unwrap()[0].paid_at, paid.paid_at);
+        assert_eq!(store.invoices(None).unwrap()[0].paid_at, paid.paid_at);
 
         assert_eq!(store.set_paid(id, None).unwrap().paid_at, None);
     }
@@ -1235,18 +1280,20 @@ mod tests {
     #[test]
     fn drafts_are_saved_listed_and_updated() {
         let store = Store::in_memory().unwrap();
-        let first = store.save_draft(None, &draft(), Some("1181.08")).unwrap();
+        let first = store
+            .save_draft(None, 1, &draft(), Some("1181.08"))
+            .unwrap();
         assert_eq!(first.status, Status::Draft);
         assert_eq!(first.number, None);
 
         let mut changed = draft();
         changed.note = Some("Danke".into());
         let updated = store
-            .save_draft(Some(first.id), &changed, Some("2.00"))
+            .save_draft(Some(first.id), 1, &changed, Some("2.00"))
             .unwrap();
 
         assert_eq!(updated.draft.note.as_deref(), Some("Danke"));
-        let list = store.invoices().unwrap();
+        let list = store.invoices(None).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(
             (list[0].customer_name.as_str(), list[0].total.as_deref()),
@@ -1260,42 +1307,46 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let pattern = crate::numbering::DEFAULT_PATTERN;
         assert_eq!(
-            store.next_number(pattern, day(2026, 3, 7)).unwrap(),
+            store.next_number(1, pattern, day(2026, 3, 7)).unwrap(),
             "RE-2026-001"
         );
 
-        let id = store.save_draft(None, &draft(), None).unwrap().id;
+        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
             .finalize(id, "RE-2026-001", &settings(), None, "1.00")
             .unwrap();
-        let id = store.save_draft(None, &draft(), None).unwrap().id;
+        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
             .finalize(id, "RE-2026-007", &settings(), None, "1.00")
             .unwrap();
 
         assert_eq!(
-            store.next_number(pattern, day(2026, 3, 7)).unwrap(),
+            store.next_number(1, pattern, day(2026, 3, 7)).unwrap(),
             "RE-2026-008"
         );
         assert_eq!(
-            store.next_number(pattern, day(2027, 1, 1)).unwrap(),
+            store.next_number(1, pattern, day(2027, 1, 1)).unwrap(),
             "RE-2027-001"
         );
         assert_eq!(
-            store.next_number("[R-]YYYY-NNN", day(2026, 1, 1)).unwrap(),
+            store
+                .next_number(1, "[R-]YYYY-NNN", day(2026, 1, 1))
+                .unwrap(),
             "R-2026-001"
         );
         assert_eq!(
-            store.next_number("[X-]YYYY-NNN", day(2026, 1, 1)).unwrap(),
+            store
+                .next_number(1, "[X-]YYYY-NNN", day(2026, 1, 1))
+                .unwrap(),
             "X-2026-001"
         );
-        assert!(store.next_number("YYYY", day(2026, 1, 1)).is_err());
+        assert!(store.next_number(1, "YYYY", day(2026, 1, 1)).is_err());
     }
 
     #[test]
     fn exported_invoices_are_locked_and_keep_their_settings() {
         let store = Store::in_memory().unwrap();
-        let id = store.save_draft(None, &draft(), None).unwrap().id;
+        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
 
         let done = store
             .finalize(id, "RE-2026-001", &settings(), None, "1181.08")
@@ -1305,7 +1356,7 @@ mod tests {
         assert_eq!(done.number.as_deref(), Some("RE-2026-001"));
         assert_eq!(done.draft.frozen, Some(settings()));
         assert!(done.exported_at.is_some());
-        assert!(store.save_draft(Some(id), &draft(), None).is_err());
+        assert!(store.save_draft(Some(id), 1, &draft(), None).is_err());
         assert!(store.delete_draft(id).is_err());
         assert!(store
             .finalize(id, "RE-2026-002", &settings(), None, "1.00")
@@ -1315,8 +1366,8 @@ mod tests {
     #[test]
     fn a_number_is_never_given_twice() {
         let store = Store::in_memory().unwrap();
-        let a = store.save_draft(None, &draft(), None).unwrap().id;
-        let b = store.save_draft(None, &draft(), None).unwrap().id;
+        let a = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let b = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
             .finalize(a, "RE-2026-001", &settings(), None, "1.00")
             .unwrap();
@@ -1332,7 +1383,7 @@ mod tests {
     #[test]
     fn duplicates_are_fresh_drafts_with_todays_date() {
         let store = Store::in_memory().unwrap();
-        let id = store.save_draft(None, &draft(), None).unwrap().id;
+        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         let done = store
             .finalize(id, "RE-2026-001", &settings(), None, "1181.08")
             .unwrap();
@@ -1355,11 +1406,327 @@ mod tests {
     #[test]
     fn only_drafts_can_be_deleted() {
         let store = Store::in_memory().unwrap();
-        let id = store.save_draft(None, &draft(), None).unwrap().id;
+        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
 
         store.delete_draft(id).unwrap();
 
-        assert!(store.invoices().unwrap().is_empty());
+        assert!(store.invoices(None).unwrap().is_empty());
         assert!(store.delete_draft(id).is_err());
+    }
+
+    #[test]
+    fn a_version_four_database_becomes_the_first_context() {
+        let conn = Connection::open_in_memory().unwrap();
+        let mut old = settings();
+        old.seller.name = "Alt GmbH".into();
+        conn.execute_batch(
+            "CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
+             CREATE TABLE customers (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
+             CREATE TABLE templates (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
+             CREATE TABLE layouts (id INTEGER PRIMARY KEY, json TEXT NOT NULL);
+             CREATE TABLE invoices (id INTEGER PRIMARY KEY, number TEXT UNIQUE, status TEXT NOT NULL,
+                 draft TEXT NOT NULL, total TEXT, exported_at TEXT, updated_at TEXT NOT NULL,
+                 paid_at TEXT);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (id, json) VALUES (1, ?1)",
+            [serde_json::to_string(&old).unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO customers (json) VALUES (?1)",
+            [serde_json::to_string(&customer()).unwrap()],
+        )
+        .unwrap();
+        let json = serde_json::to_string(&draft()).unwrap();
+        conn.execute(
+            "INSERT INTO invoices (number, status, draft, total, exported_at, updated_at, paid_at)
+             VALUES ('RE-2026-001', 'exported', ?1, '1.00', '2026-10-01T00:00:00Z', '2026-10-01', '2026-10-05')",
+            [&json],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO invoices (status, draft, updated_at) VALUES ('draft', ?1, '2026-10-02')",
+            [&json],
+        )
+        .unwrap();
+        conn.execute_batch("PRAGMA user_version = 4;").unwrap();
+
+        let store = Store::init(conn).unwrap();
+
+        let contexts = store.contexts().unwrap();
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].id, Some(1));
+        assert_eq!(contexts[0].brand, "blue");
+        assert_eq!(contexts[0].settings, old);
+        let list = store.invoices(None).unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().all(|i| i.context_id == 1));
+        let exported = list.iter().find(|i| i.number.is_some()).unwrap();
+        assert_eq!(exported.paid_at.as_deref(), Some("2026-10-05"));
+        assert_eq!(exported.seller_name, "Alt GmbH");
+        assert_eq!(store.customers(1).unwrap().len(), 1);
+        assert!(store.customers(1).unwrap()[0].context_id.is_none());
+        // numbers are unique per context now: the old counter goes on
+        assert_eq!(
+            store
+                .next_number(
+                    1,
+                    crate::numbering::DEFAULT_PATTERN,
+                    Date::new(2026, 10, 9).unwrap()
+                )
+                .unwrap(),
+            "RE-2026-002"
+        );
+        let version: i32 = store
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn a_fresh_database_has_no_context() {
+        let store = Store::in_memory().unwrap();
+        assert!(store.contexts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn invoice_numbers_and_counters_are_per_context() {
+        let store = Store::in_memory().unwrap();
+        let a = context(&store, "A").id.unwrap();
+        let b = context(&store, "B").id.unwrap();
+        let pattern = crate::numbering::DEFAULT_PATTERN;
+        let day = Date::new(2026, 3, 7).unwrap();
+
+        let first = store.save_draft(None, a, &draft(), None).unwrap();
+        store
+            .finalize(first.id, "RE-2026-001", &settings(), None, "1.00")
+            .unwrap();
+        assert_eq!(store.next_number(a, pattern, day).unwrap(), "RE-2026-002");
+        assert_eq!(store.next_number(b, pattern, day).unwrap(), "RE-2026-001");
+
+        // the same number in another context is fine, inside one it is not
+        let other = store.save_draft(None, b, &draft(), None).unwrap();
+        store
+            .finalize(other.id, "RE-2026-001", &settings(), None, "1.00")
+            .unwrap();
+        let again = store.save_draft(None, a, &draft(), None).unwrap();
+        assert!(store
+            .finalize(again.id, "RE-2026-001", &settings(), None, "1.00")
+            .is_err());
+    }
+
+    #[test]
+    fn the_list_can_show_one_context_or_all_and_leaves_archived_invoices_out() {
+        let store = Store::in_memory().unwrap();
+        let a = context(&store, "Alpha").id.unwrap();
+        let b = context(&store, "Beta").id.unwrap();
+        let in_a = store.save_draft(None, a, &draft(), None).unwrap();
+        store.save_draft(None, b, &draft(), None).unwrap();
+
+        assert_eq!(store.invoices(None).unwrap().len(), 2);
+        let only_a = store.invoices(Some(a)).unwrap();
+        assert_eq!(only_a.len(), 1);
+        assert_eq!(only_a[0].seller_name, "Alpha");
+
+        assert!(
+            store.archive_invoice(in_a.id).is_err(),
+            "drafts are deleted, not archived"
+        );
+        store
+            .finalize(in_a.id, "RE-2026-001", &settings(), None, "1.00")
+            .unwrap();
+        store.archive_invoice(in_a.id).unwrap();
+        assert!(store.invoices(Some(a)).unwrap().is_empty());
+        // it still counts for the numbers
+        assert_eq!(
+            store
+                .next_number(
+                    a,
+                    crate::numbering::DEFAULT_PATTERN,
+                    Date::new(2026, 5, 1).unwrap()
+                )
+                .unwrap(),
+            "RE-2026-002"
+        );
+        assert!(store.archive_invoice(in_a.id).is_err());
+    }
+
+    #[test]
+    fn a_draft_stays_in_its_context_and_so_do_its_duplicates() {
+        let store = Store::in_memory().unwrap();
+        let a = context(&store, "A").id.unwrap();
+        let b = context(&store, "B").id.unwrap();
+        let draft_in_b = store.save_draft(None, b, &draft(), None).unwrap();
+
+        // saving again with another context does not move it
+        let updated = store
+            .save_draft(Some(draft_in_b.id), a, &draft(), None)
+            .unwrap();
+        assert_eq!(updated.context_id, b);
+
+        let done = store
+            .finalize(draft_in_b.id, "RE-2026-001", &settings(), None, "1.00")
+            .unwrap();
+        assert_eq!(
+            store.duplicate(done.id, "2026-11-02").unwrap().context_id,
+            b
+        );
+    }
+
+    #[test]
+    fn customers_templates_and_layouts_can_belong_to_one_context() {
+        let store = Store::in_memory().unwrap();
+        let a = context(&store, "A").id.unwrap();
+        let b = context(&store, "B").id.unwrap();
+        let name =
+            |customers: Vec<Customer>| customers.into_iter().map(|c| c.name).collect::<Vec<_>>();
+        for (name, context_id) in [("Shared", None), ("Only A", Some(a)), ("Only B", Some(b))] {
+            store
+                .save_customer(&Customer {
+                    name: name.into(),
+                    context_id,
+                    ..customer()
+                })
+                .unwrap();
+        }
+
+        assert_eq!(name(store.customers(a).unwrap()), ["Only A", "Shared"]);
+        assert_eq!(name(store.customers(b).unwrap()), ["Only B", "Shared"]);
+        // the scope survives a round trip and an update
+        let only_a = store.customers(a).unwrap()[0].clone();
+        assert_eq!(only_a.context_id, Some(a));
+        store
+            .save_customer(&Customer {
+                context_id: None,
+                ..only_a
+            })
+            .unwrap();
+        assert_eq!(store.customers(b).unwrap().len(), 3);
+
+        let template = |description: &str, context_id| PositionTemplate {
+            id: None,
+            context_id,
+            position: Position {
+                description: description.into(),
+                quantity: None,
+                unit: None,
+                price: "10".into(),
+            },
+        };
+        store.save_template(&template("Beratung", None)).unwrap();
+        store.save_template(&template("Beratung", Some(a))).unwrap();
+        assert_eq!(store.templates(a).unwrap().len(), 2);
+        assert_eq!(store.templates(b).unwrap().len(), 1);
+
+        store
+            .save_custom_layout(&CustomLayout {
+                context_id: Some(a),
+                ..own_layout("Nur A")
+            })
+            .unwrap();
+        store.save_custom_layout(&own_layout("Alle")).unwrap();
+        assert_eq!(store.custom_layouts(a).unwrap().len(), 2);
+        assert_eq!(store.custom_layouts(b).unwrap().len(), 1);
+        assert_eq!(store.all_custom_layouts().unwrap().len(), 2);
+    }
+
+    fn scoped(store: &Store, context: i64) {
+        store
+            .save_customer(&Customer {
+                context_id: Some(context),
+                ..customer()
+            })
+            .unwrap();
+        store
+            .save_template(&PositionTemplate {
+                id: None,
+                context_id: Some(context),
+                position: Position {
+                    description: "x".into(),
+                    quantity: None,
+                    unit: None,
+                    price: "1".into(),
+                },
+            })
+            .unwrap();
+        store
+            .save_custom_layout(&CustomLayout {
+                context_id: Some(context),
+                ..own_layout("L")
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn removing_a_context_settles_what_belongs_to_it() {
+        use crate::context::Disposition::{Delete, Move, Share};
+        let store = Store::in_memory().unwrap();
+        let a = context(&store, "A").id.unwrap();
+        let b = context(&store, "B").id.unwrap();
+
+        scoped(&store, a);
+        store.remove_context(a, Share).unwrap();
+        assert_eq!(store.contexts().unwrap().len(), 1);
+        assert!(store
+            .customers(b)
+            .unwrap()
+            .iter()
+            .all(|c| c.context_id.is_none()));
+        assert_eq!(store.customers(b).unwrap().len(), 1);
+
+        let c = context(&store, "C").id.unwrap();
+        scoped(&store, c);
+        assert!(store.remove_context(c, Move { to: c }).is_err());
+        store.remove_context(c, Move { to: b }).unwrap();
+        assert_eq!(store.context_usage(b).unwrap().customers, 1);
+        assert_eq!(store.context_usage(b).unwrap().layouts, 1);
+
+        scoped(&store, b);
+        assert_eq!(store.context_usage(b).unwrap().customers, 2);
+        let customers = store.customers(b).unwrap().len();
+        let spare = context(&store, "D").id.unwrap();
+        store.remove_context(spare, Delete).unwrap();
+        assert_eq!(store.customers(b).unwrap().len(), customers);
+
+        let d = context(&store, "E").id.unwrap();
+        scoped(&store, d);
+        store.remove_context(d, Delete).unwrap();
+        // shared from A, moved from C, scoped to B: the layout of E is gone
+        assert_eq!(store.all_custom_layouts().unwrap().len(), 3);
+        assert!(store.context(d).is_err());
+    }
+
+    #[test]
+    fn a_context_with_invoices_cannot_be_removed() {
+        let store = Store::in_memory().unwrap();
+        let a = context(&store, "A").id.unwrap();
+        let b = context(&store, "B").id.unwrap();
+        store.save_draft(None, a, &draft(), None).unwrap();
+
+        let error = store
+            .remove_context(a, crate::context::Disposition::Share)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("archive"));
+        assert!(store.context(a).is_ok());
+        assert!(store
+            .remove_context(b, crate::context::Disposition::Share)
+            .is_ok());
+    }
+
+    #[test]
+    fn a_layout_is_a_default_while_a_context_in_use_has_it_as_default() {
+        let store = Store::in_memory().unwrap();
+        let mut with_layout = settings();
+        with_layout.layout = "custom-7".into();
+        let a = store.save_context(&Context::new(with_layout, "")).unwrap();
+        assert!(store.is_default_layout("custom-7").unwrap());
+        assert!(!store.is_default_layout("custom-8").unwrap());
+
+        store.archive_context(a.id.unwrap()).unwrap();
+        assert!(!store.is_default_layout("custom-7").unwrap());
     }
 }

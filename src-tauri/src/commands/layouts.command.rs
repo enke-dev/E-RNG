@@ -23,15 +23,19 @@ fn files_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(message)
 }
 
-/// The invoice layouts the settings and the invoice form can choose from: built in and own.
+/// The invoice layouts a context and its invoice form can choose from: built in, shared and its own.
 #[tauri::command]
-pub fn layouts_list(store: State<'_, Store>) -> Result<Vec<LayoutInfo>, String> {
-    Ok(layouts(&store.custom_layouts().map_err(message)?))
+pub fn layouts_list(store: State<'_, Store>, context_id: i64) -> Result<Vec<LayoutInfo>, String> {
+    Ok(layouts(&store.custom_layouts(context_id).map_err(message)?))
 }
 
+/// The own layouts of a context, for the layout settings: shared ones and those only it can use
 #[tauri::command]
-pub fn layouts_custom(store: State<'_, Store>) -> Result<Vec<CustomLayout>, String> {
-    store.custom_layouts().map_err(message)
+pub fn layouts_custom(
+    store: State<'_, Store>,
+    context_id: i64,
+) -> Result<Vec<CustomLayout>, String> {
+    store.custom_layouts(context_id).map_err(message)
 }
 
 #[tauri::command]
@@ -39,7 +43,7 @@ pub fn layout_save(store: State<'_, Store>, layout: CustomLayout) -> Result<Cust
     if layout.name.trim().is_empty() {
         return Err("Bitte dem Layout einen Namen geben.".into());
     }
-    if layout.archived && store.settings().map_err(message)?.layout == layout.key() {
+    if layout.archived && store.is_default_layout(&layout.key()).map_err(message)? {
         return Err("Das Standard-Layout kann nicht archiviert werden.".into());
     }
     store.save_custom_layout(&layout).map_err(message)
@@ -55,7 +59,10 @@ pub fn layout_usage(store: State<'_, Store>, id: i64) -> Result<Vec<LayoutUsage>
 /// archive it instead).
 #[tauri::command]
 pub fn layout_delete(store: State<'_, Store>, id: i64) -> Result<(), String> {
-    if store.settings().map_err(message)?.layout == format!("custom-{id}") {
+    if store
+        .is_default_layout(&format!("custom-{id}"))
+        .map_err(message)?
+    {
         return Err("Das Standard-Layout kann nicht gelöscht werden.".into());
     }
     if !store.layout_usages(id).map_err(message)?.is_empty() {
@@ -204,7 +211,7 @@ pub fn layout_import(
     }
     let parsed =
         layout_bundle::parse(&std::fs::read_to_string(&path).map_err(message)?).map_err(message)?;
-    let layouts = store.custom_layouts().map_err(message)?;
+    let layouts = store.all_custom_layouts().map_err(message)?;
     let find = |id: i64| layouts.iter().find(|l| l.id == Some(id));
 
     let (name, replacing) = match plan(
@@ -216,7 +223,7 @@ pub fn layout_import(
         Plan::AskReplace(id) => {
             let existing = find(id).ok_or("Das Layout gibt es nicht mehr.")?;
             let uses = store.layout_usages(id).map_err(message)?.len();
-            let is_default = store.settings().map_err(message)?.layout == existing.key();
+            let is_default = store.is_default_layout(&existing.key()).map_err(message)?;
             return Ok(ImportOutcome::Replace {
                 existing: Stored {
                     name: existing.name.clone(),
@@ -244,6 +251,7 @@ pub fn layout_import(
     if let Some(existing) = replacing {
         // the same layout, so what points at it keeps doing so
         layout.id = existing.id;
+        layout.context_id = existing.context_id;
         layout.archived = existing.archived;
     }
     Ok(ImportOutcome::Done {
@@ -295,8 +303,12 @@ pub async fn layout_preview(
     store: State<'_, Store>,
     layout: Option<CustomLayout>,
     guides: bool,
+    context_id: Option<i64>,
 ) -> Result<Preview, String> {
-    let settings = store.settings().map_err(message)?;
+    // the sample shows the seller of the context the layout is edited for, if there is one yet
+    let settings = context_id
+        .and_then(|id| store.settings(id).ok())
+        .unwrap_or_default();
     let draft = sample(&settings, layout.as_ref());
     let invoice = match build_invoice(&for_preview(&draft), &settings, "RE-BEISPIEL") {
         Ok(invoice) => invoice,
