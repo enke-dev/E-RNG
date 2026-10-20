@@ -52,16 +52,27 @@ wa-button-group {
   border-radius: var(--wa-border-radius-m);
 }
 
-/* what is under the pointer is a part of the layout, the same mark as in the form */
+/* what is under the pointer is a part of the layout, marked like in the form: blue for what the
+   pointer is over, orange for the selected one. The ring is an outline with some air around the
+   part, so it does not hide the edge of what it marks. */
 .region {
   all: unset;
   position: absolute;
   box-sizing: border-box;
   cursor: pointer;
+  border-radius: var(--wa-border-radius-s);
 }
 
-.region:hover,
+.region.hover,
 .region.active {
-  border: 2px solid var(--erng-highlight);
-  background: color-mix(in srgb, var(--erng-highlight) 25%, transparent);
+  --mark: var(--erng-hover);
+  outline: 2px solid var(--mark);
+  outline-offset: 3px;
+}
+
+.region.active {
+  --mark: var(--erng-highlight);
+  /* the fill reaches to the ring */
+  background: color-mix(in srgb, var(--mark) 25%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mark) 25%, transparent);
 }

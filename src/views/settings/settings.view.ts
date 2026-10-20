@@ -85,8 +85,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   @state() private guides = false;
   /** What the user points at in the form: a page setup, and a part of it */
   @state() private pointed: { first: boolean; index: number | null } | undefined;
-  /** The part under the pointer in the sample */
+  /** The part under the pointer in the sample, or in the form */
   @state() private overSample: { first: boolean; index: number } | null = null;
+  @state() private overForm: { first: boolean; index: number } | null = null;
+  /** The part that is open in the form: the selected one */
+  @state() private openPart: { first: boolean; index: number } | null = null;
   /** A part to bring into view in the sample, because it was opened in the form */
   @state() private showInSample: { key: string; token: number } | undefined;
   /** A part to open in the form, asked for by a click in the sample */
@@ -200,6 +203,8 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     this.#layoutSaved = JSON.stringify(this.editing);
     this.sample = undefined;
     this.pointed = undefined;
+    this.overForm = null;
+    this.openPart = null;
     this.schedulePreview(0);
     this.usage = undefined;
     if (id === null) {
@@ -715,26 +720,26 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  /** The part marked in the form and in the sample: under the pointer there, or pointed at here */
-  private get active(): { first: boolean; index: number } | null {
-    const here = this.pointed;
-    return (
-      this.overSample ?? (here?.index == null ? null : { first: here.first, index: here.index })
-    );
+  /** The part the pointer is over, in the sample or in the form; the selected one needs no hover */
+  private get hovered(): { first: boolean; index: number } | null {
+    const over = this.overSample ?? this.overForm;
+    const same = over && this.openPart?.first === over.first && this.openPart.index === over.index;
+    return same ? null : over;
   }
 
-  /** The sample invoice, rendered by the real template */
-  private sampleSheet() {
+  /** The sample invoice, rendered by the real template; its parts are for pointing at when there is a form for them */
+  private sampleSheet(interactive = true) {
     // the first page shows what is set up for it, the second what the others look like
     const page = this.pointed && !this.pointed.first && this.editing?.first ? 1 : 0;
-    const active = this.active;
+    const { openPart, hovered } = this;
     return html`<erng-sheet
       slot="preview"
       .page="${page}"
       .pages="${this.sample?.pages ?? []}"
-      .regions="${this.sample?.parts ?? []}"
+      .regions="${interactive ? (this.sample?.parts ?? []) : []}"
       .reveal="${this.showInSample}"
-      .active="${active ? regionKey({ first: active.first, index: active.index }) : null}"
+      .active="${openPart ? regionKey(openPart) : null}"
+      .hover="${hovered ? regionKey(hovered) : null}"
       @page-change="${(e: CustomEvent<number>) => {
         // the first page is the first setup, the others belong to the other: the tab follows
         this.pointed = { first: e.detail === 0, index: null };
@@ -745,6 +750,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       @region-click="${(e: CustomEvent<string>) => {
         const part = parseKey(e.detail);
         this.pointed = { ...part };
+        this.openPart = { ...part };
         this.reveal = { ...part, token: (this.reveal?.token ?? 0) + 1 };
       }}"
       hint="${this.sampleError ? `Vorschau nicht verfügbar: ${this.sampleError}` : (this.sample?.problems.map(p => p.message).join(', ') ?? 'Die Vorschau wird erzeugt…')}"
@@ -778,7 +784,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
               dieselben Beispieldaten wie bei jedem Layout.
             </span>
           </div>
-          ${this.guidesToggle()} ${this.sampleSheet()}
+          ${this.guidesToggle()} ${this.sampleSheet(false)}
         </erng-editor>
         <wa-button slot="actions" appearance="outlined" @click="${this.exportBuiltIn}">
           Exportieren
@@ -886,15 +892,20 @@ export class SettingsView extends ErngElement.withStyles(styles) {
               this.schedulePreview();
             }}"
             .guides="${this.guides}"
-            .active="${this.active}"
+            .hover="${this.overSample}"
             .reveal="${this.reveal}"
             .tab="${this.pointed && !this.pointed.first ? 'page' : 'first'}"
             @guides-change="${(e: CustomEvent<boolean>) => {
               this.guides = e.detail;
               this.schedulePreview(0);
             }}"
-            @part-focus="${(e: CustomEvent<{ first: boolean; index: number | null }>) => {
-              this.pointed = e.detail;
+            @part-focus="${(
+              e: CustomEvent<{ first: boolean; hovered: number | null; opened: number | null }>
+            ) => {
+              const { first, hovered, opened } = e.detail;
+              this.pointed = { first, index: hovered ?? opened };
+              this.overForm = hovered === null ? null : { first, index: hovered };
+              this.openPart = opened === null ? null : { first, index: opened };
             }}"
             @part-open="${(e: CustomEvent<{ first: boolean; index: number }>) => {
               this.showInSample = {

@@ -34,8 +34,11 @@ export class SheetComponent extends ErngElement.withStyles(styles) {
   /** Where the parts of a layout are: what is under the pointer is the part to edit */
   @property({ attribute: false }) regions: PartBox[] = [];
 
-  /** The region to mark, as `regionKey` says */
+  /** The selected region, as `regionKey` says */
   @property() active: string | null = null;
+
+  /** The region the pointer is over somewhere (here or in the form), as `regionKey` says */
+  @property() hover: string | null = null;
 
   /** A region to bring into view, the token tells a repeated request from the same one */
   @property({ attribute: false }) reveal: { key: string; token: number } | undefined;
@@ -98,7 +101,7 @@ export class SheetComponent extends ErngElement.withStyles(styles) {
             const height = Math.max(region.h, 4);
             return html`<button
               type="button"
-              class="region ${key === this.active ? 'active' : ''}"
+              class="region ${key === this.active ? 'active' : key === this.hover ? 'hover' : ''}"
               style="left: ${(region.x / 210) * 100}%; top: ${(region.y / 297) * 100}%; width: ${(region.w / 210) * 100}%; height: ${(height / 297) * 100}%"
               data-key="${key}"
               aria-label="Teil bearbeiten"

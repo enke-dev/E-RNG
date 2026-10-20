@@ -3,6 +3,8 @@
 
   /* what marks the same thing on both sides: a part in the form and in the sample */
   --erng-highlight: #f5a524;
+  /* what the pointer is over, as opposed to what is selected */
+  --erng-hover: var(--wa-color-brand-fill-loud);
 }
 
 /* layout helpers shared by all elements, the global utility classes do not reach into shadow roots */

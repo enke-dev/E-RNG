@@ -22,10 +22,15 @@ wa-details {
   font-weight: normal;
 }
 
-/* the part that is pointed at, here or in the sample, the same mark in both */
-wa-details:hover::part(base),
-wa-details[open]::part(base),
-wa-details[data-active]::part(base) {
+/* the open part is the selected one, orange like in the sample; what the pointer is over, here or in
+   the sample, is blue, and an open part needs no hover */
+wa-details:not([open]):hover::part(base),
+wa-details:not([open])[data-hover]::part(base) {
+  border-color: var(--erng-hover);
+  box-shadow: 0 0 0 1px var(--erng-hover);
+}
+
+wa-details[open]::part(base) {
   border-color: var(--erng-highlight);
   box-shadow: 0 0 0 1px var(--erng-highlight);
 }

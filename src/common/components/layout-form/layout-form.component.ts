@@ -28,14 +28,13 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
     this.dispatchEvent(new CustomEvent('change', { bubbles: true, composed: true }));
   }
 
-  /** Tells the sample what the user looks at: a page setup, and the part of it if there is one */
-  private pointAt(first: boolean, index: number | null) {
+  /** Tells the sample what the user looks at: a page setup, and the part pointed at or open in it */
+  private pointAt(first: boolean, parts: { hovered: number | null; opened: number | null }) {
     this.dispatchEvent(
-      new CustomEvent<{ first: boolean; index: number | null }>('part-focus', {
-        detail: { first, index },
-        bubbles: true,
-        composed: true,
-      })
+      new CustomEvent<{ first: boolean; hovered: number | null; opened: number | null }>(
+        'part-focus',
+        { detail: { first, ...parts }, bubbles: true, composed: true }
+      )
     );
   }
 
@@ -44,10 +43,10 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
     return html`<erng-page-setup-form
       .setup="${setup}"
       .families="${families}"
-      .active="${this.active?.first === first ? this.active.index : null}"
+      .hover="${this.hover?.first === first ? this.hover.index : null}"
       .reveal="${reveal}"
       @change="${() => this.changed()}"
-      @part-focus="${(e: CustomEvent<number | null>) => {
+      @part-focus="${(e: CustomEvent<{ hovered: number | null; opened: number | null }>) => {
         e.stopPropagation();
         this.pointAt(first, e.detail);
       }}"
@@ -64,8 +63,8 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
     ></erng-page-setup-form>`;
   }
 
-  /** The part to mark in the form, because it is pointed at in the sample */
-  @property({ attribute: false }) active: { first: boolean; index: number } | null = null;
+  /** The part to mark in the form, because the pointer is over it in the sample */
+  @property({ attribute: false }) hover: { first: boolean; index: number } | null = null;
 
   /** Opens a part of a page setup, the token tells a repeated request from the same one */
   @property({ attribute: false }) reveal:
@@ -147,7 +146,7 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
               @change="${(e: Event) => {
                 // the first page starts as a copy of the others, with the same tools
                 l.first = (e.target as HTMLInputElement).checked ? structuredClone(l.page) : null;
-                this.pointAt(l.first !== null, null);
+                this.pointAt(l.first !== null, { hovered: null, opened: null });
                 this.changed();
               }}"
             >
@@ -159,7 +158,7 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
                 ? html`<wa-tab-group
                     @wa-tab-show="${(e: CustomEvent<{ name: string }>) =>
                       e.target === e.currentTarget &&
-                      this.pointAt(e.detail.name === 'first', null)}"
+                      this.pointAt(e.detail.name === 'first', { hovered: null, opened: null })}"
                   >
                     <wa-tab slot="nav" panel="first">Erste Seite</wa-tab>
                     <wa-tab slot="nav" panel="page">Folgeseiten</wa-tab>

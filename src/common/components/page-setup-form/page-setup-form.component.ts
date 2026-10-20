@@ -102,8 +102,8 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
   @property({ attribute: false })
   setup!: PageSetup;
 
-  /** The part to mark, because it is pointed at in the sample */
-  @property({ type: Number }) active: number | null = null;
+  /** The part to mark, because the pointer is over it in the sample */
+  @property({ type: Number }) hover: number | null = null;
 
   /** Opens a part, the token tells a repeated request from the same one */
   @property({ attribute: false }) reveal: { index: number; token: number } | undefined;
@@ -147,8 +147,8 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
   private pointAt(change: () => void) {
     change();
     this.dispatchEvent(
-      new CustomEvent<number | null>('part-focus', {
-        detail: this.hovered ?? this.opened,
+      new CustomEvent<{ hovered: number | null; opened: number | null }>('part-focus', {
+        detail: { hovered: this.hovered, opened: this.opened },
         bubbles: true,
         composed: true,
       })
@@ -199,7 +199,7 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
           (part, index) => html`
             <wa-details
               name="part"
-              ?data-active="${this.active === index}"
+              ?data-hover="${this.hover === index}"
               @mouseenter="${() => this.pointAt(() => (this.hovered = index))}"
               @mouseleave="${() => this.pointAt(() => (this.hovered = null))}"
               @wa-show="${(e: Event) => e.target === e.currentTarget && this.opening(index)}"
