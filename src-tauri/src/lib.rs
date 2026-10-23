@@ -15,7 +15,48 @@ mod sidecar;
 mod store;
 mod utils;
 
-use tauri::Manager;
+use tauri::menu::{Menu, MenuItem, MenuItemKind};
+use tauri::{Emitter, Manager};
+
+const UPDATE_CHECK_MENU_ID: &str = "check-for-updates";
+
+/// Puts "look for updates" into the menu bar: under "About" in the app menu on macOS, at the end of
+/// the last menu elsewhere.
+fn add_update_check_to_menu(app: &tauri::App) -> tauri::Result<()> {
+    let handle = app.handle();
+    let menu = match app.menu() {
+        Some(menu) => menu,
+        None => {
+            let menu = Menu::default(handle)?;
+            app.set_menu(menu.clone())?;
+            menu
+        }
+    };
+    let item = MenuItem::with_id(
+        handle,
+        UPDATE_CHECK_MENU_ID,
+        "Nach Updates suchen…",
+        true,
+        None::<&str>,
+    )?;
+    let submenus: Vec<_> = menu
+        .items()?
+        .into_iter()
+        .filter_map(|entry| match entry {
+            MenuItemKind::Submenu(submenu) => Some(submenu),
+            _ => None,
+        })
+        .collect();
+    if cfg!(target_os = "macos") {
+        // the app menu is the first one, "About" its first entry
+        if let Some(app_menu) = submenus.first() {
+            app_menu.insert(&item, 1)?;
+        }
+    } else if let Some(last) = submenus.last() {
+        last.append(&item)?;
+    }
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -42,7 +83,14 @@ pub fn run() {
                 let _ = layout_files::prune(&dir.join("layouts"), &layouts);
             }
             app.manage(store);
+            add_update_check_to_menu(app)?;
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            // the window looks for an update and says what it found
+            if event.id() == UPDATE_CHECK_MENU_ID {
+                let _ = app.emit("check-for-updates", ());
+            }
         })
         .manage(session::Sessions::default())
         .manage(commands::opened_files_command::OpenedFiles::default())
