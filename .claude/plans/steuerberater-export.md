@@ -19,7 +19,7 @@ Status: idea, not started. Depends on [multi-context.md](multi-context.md) for t
   - a summary with totals per tax rate (helps the Umsatzsteuer-Voranmeldung).
 - Delivery: save dialog, then reveal in Finder. No mail integration.
 - GoBD: only exported (immutable) invoices are included; drafts never.
-- Check first: where the exported PDF/XML live (`package.rs`, `produce-invoice.command.rs`, `export-invoice.command.rs`). If they are not stored, either store them on export or regenerate from `frozen` settings and layout, and verify the result is byte-stable enough to be the same document. This decides the effort.
+- The files come from the invoices' stored originals (PDF and XML written on creation, with their hashes), see [invoice-creation-flow.md](invoice-creation-flow.md): build that first. Invoices created before it have none until their first output regenerates them, the export must do the same for those or list them as "without files".
 
 ### B. DATEV Buchungsstapel CSV (only if the advisor uses it)
 
