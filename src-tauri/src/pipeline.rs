@@ -1,8 +1,8 @@
 //! From invoice data to a validated ZUGFeRD PDF in a work directory:
 //! rules check → CII XML → Typst PDF/A-3b → Mustang combine → Mustang validate.
 //!
-//! Nothing here decides whether the result may leave the work directory, that is the job of
-//! `session::Sessions`, which only ever hands out files whose report was valid.
+//! Nothing here decides whether the result is kept, that is the job of `creation`, which only
+//! stores files whose report was valid.
 
 use std::path::{Path, PathBuf};
 
@@ -28,6 +28,8 @@ pub enum ProduceError {
     Input { problems: Vec<InputProblem> },
     /// The invoice breaks the profile's rules, nothing was generated
     Invalid { findings: Vec<Finding> },
+    /// The generated files did not pass the validator, nothing was kept
+    NotValid { issues: Vec<package::Issue> },
     /// A tool failed or could not be run
     Failed { message: String },
 }
@@ -41,7 +43,7 @@ impl From<anyhow::Error> for ProduceError {
 }
 
 /// File names are derived from the invoice number, so keep them harmless.
-fn safe_name(number: &str) -> String {
+pub fn safe_name(number: &str) -> String {
     let name: String = number
         .chars()
         .map(|c| {

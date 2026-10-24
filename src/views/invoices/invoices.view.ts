@@ -262,6 +262,20 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
                   ${e.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
                   ${this.all ? html`<span class="muted">${e.seller_name || '–'}</span>` : nothing}
                   ${
+                    e.status === 'exported'
+                      ? html`
+                          <wa-badge
+                            pill
+                            class="created"
+                            variant="brand"
+                            title="Erstellt und geprüft"
+                          >
+                            <wa-icon name="check" label="Erstellt und geprüft"></wa-icon>
+                          </wa-badge>
+                        `
+                      : nothing
+                  }
+                  ${
                     e.paid_at
                       ? html`
                           <wa-badge

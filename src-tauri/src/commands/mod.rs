@@ -4,10 +4,8 @@ pub mod check_invoice_command;
 pub mod contexts_command;
 #[path = "customers.command.rs"]
 pub mod customers_command;
-#[path = "discard-work-dir.command.rs"]
-pub mod discard_work_dir_command;
-#[path = "export-invoice.command.rs"]
-pub mod export_invoice_command;
+#[path = "invoice-files.command.rs"]
+pub mod invoice_files_command;
 #[path = "invoices.command.rs"]
 pub mod invoices_command;
 #[path = "layouts.command.rs"]
@@ -16,7 +14,5 @@ pub mod layouts_command;
 pub mod opened_files_command;
 #[path = "preview-invoice.command.rs"]
 pub mod preview_invoice_command;
-#[path = "produce-invoice.command.rs"]
-pub mod produce_invoice_command;
 #[path = "templates.command.rs"]
 pub mod templates_command;

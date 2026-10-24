@@ -4,6 +4,8 @@ import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import '@awesome.me/webawesome/dist/components/card/card.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
+import '@awesome.me/webawesome/dist/components/dropdown/dropdown.js';
+import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
@@ -34,7 +36,6 @@ import type {
   PositionTemplate,
   Preview,
   ProduceError,
-  ProduceResult,
   Settings,
   StoredInvoice,
 } from '../../common/utils/api.utils.js';
@@ -47,19 +48,6 @@ import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { startReorder } from '../../common/utils/reorder.utils.js';
 import { goto } from '../../common/utils/routing.utils.js';
 import styles from './invoice-edit.view.css';
-
-/** What the export dialog is doing */
-type Export =
-  | { phase: 'busy' }
-  | { phase: 'failed'; error: ProduceError | string }
-  | {
-      phase: 'ready';
-      result: ProduceResult;
-      pdf: boolean;
-      xml: boolean;
-      saving: boolean;
-      error?: string;
-    };
 
 const blankCustomer = (): Customer => ({
   id: null,
@@ -86,7 +74,14 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   @state() private check: Check | undefined;
   @state() private busy = false;
   @state() private newCustomer: Customer | undefined;
-  @state() private exporting: Export | undefined;
+  /** An invoice is being created: checked, numbered, locked, its files kept */
+  @state() private creating = false;
+  /** Why the last attempt to create the invoice was refused, shown above the findings */
+  @state() private createError: ProduceError | string | undefined;
+  /** The originals are being copied out, or made again for an older invoice */
+  @state() private outputting = false;
+  /** What "Exportieren als" writes: the PDF, or for an XRechnung the XML */
+  @state() private outputKind: 'pdf' | 'xml' = 'pdf';
   @state() private templates: PositionTemplate[] | undefined;
   @state() private templateQuery = '';
   @state() private preview: Preview | undefined;
@@ -185,6 +180,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       } else {
         this.stored = stored;
         this.draft = stored.draft;
+        this.outputKind = stored.draft.profile === 'xrechnung' ? 'xml' : 'pdf';
       }
       await this.runCheck();
       void this.renderPreview();
@@ -226,6 +222,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   /** Call after every edit: re-renders now, asks the backend for totals and findings shortly after */
   private changed() {
     this.#dirty = true;
+    this.createError = undefined;
     this.requestUpdate();
     clearTimeout(this.#timer);
     this.#timer = setTimeout(() => void this.runCheck().catch(() => undefined), 300);
@@ -389,81 +386,76 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
   }
 
-  private async startExport() {
-    this.exporting = { phase: 'busy' };
+  /** The draft becomes an invoice: the user confirms the number, then it is checked, numbered, locked and its files are kept */
+  private async create() {
+    if (!this.draft || this.locked || this.creating) {
+      return;
+    }
+    this.createError = undefined;
+    this.creating = true;
     try {
       const stored = await this.persist();
       this.announce();
       if (!stored) {
         throw new Error('Die Rechnung konnte nicht gespeichert werden.');
       }
-      const result = await api.produce(stored.id);
-      this.exporting = {
-        phase: 'ready',
-        result,
-        pdf: true,
-        xml: this.draft?.profile === 'xrechnung',
-        saving: false,
-      };
-    } catch (error) {
-      this.exporting = { phase: 'failed', error: isProduceError(error) ? error : errorText(error) };
-    }
-  }
-
-  private async closeExport() {
-    const exporting = this.exporting;
-    this.exporting = undefined;
-    if (exporting?.phase === 'ready') {
-      await api.discardWorkDir(exporting.result.work_dir).catch(() => undefined);
-    }
-  }
-
-  private async saveFiles() {
-    const exporting = this.exporting;
-    const stored = this.stored;
-    if (exporting?.phase !== 'ready' || !stored) {
-      return;
-    }
-    const { result } = exporting;
-    if (!exporting.pdf && !exporting.xml) {
-      exporting.error = 'Bitte mindestens eine Datei wählen.';
-      this.requestUpdate();
-      return;
-    }
-
-    exporting.error = undefined;
-    exporting.saving = true;
-    this.requestUpdate();
-    try {
-      const pdf = exporting.pdf
-        ? await save({
-            defaultPath: `${result.number}.pdf`,
-            filters: [{ name: 'PDF', extensions: ['pdf'] }],
-          })
-        : null;
-      const xml = exporting.xml
-        ? await save({
-            defaultPath: `${result.number}.xml`,
-            filters: [{ name: 'XML', extensions: ['xml'] }],
-          })
-        : null;
-      // cancelling a dialog means "not now", nothing is written and the invoice stays a draft
-      if ((exporting.pdf && !pdf) || (exporting.xml && !xml)) {
-        exporting.saving = false;
-        this.requestUpdate();
+      const number = await api.invoiceNextNumber(stored.id);
+      const sure = await ask(`Rechnung ${number} erstellen? Danach ist sie gesperrt.`, {
+        title: 'Rechnung erstellen',
+        okLabel: 'Erstellen',
+        cancelLabel: 'Abbrechen',
+      });
+      if (!sure) {
         return;
       }
-      this.stored = await api.exportInvoice(stored.id, result.work_dir, pdf, xml);
-      this.draft = this.stored.draft;
+      const created = await api.invoiceCreate(stored.id);
+      this.stored = created.invoice;
+      this.draft = created.invoice.draft;
       this.#dirty = false;
       this.announce();
-      this.exporting = undefined;
-      notify(`Gespeichert als ${this.stored.number}. Die Rechnung ist jetzt gesperrt.`);
+      notify(`Rechnung ${created.invoice.number} erstellt und gesperrt.`);
+      if (created.warnings.length > 0) {
+        notify(
+          `Hinweise: ${created.warnings.map(w => w.message.slice(0, 120)).join(' ')}`,
+          'neutral'
+        );
+      }
       await this.runCheck();
+      void this.renderPreview();
     } catch (error) {
-      exporting.saving = false;
-      exporting.error = errorText(error);
-      this.requestUpdate();
+      this.createError = isProduceError(error) ? error : errorText(error);
+    } finally {
+      this.creating = false;
+    }
+  }
+
+  /** Hands the kept originals out: where to put them is asked, nothing is written when a picker is cancelled */
+  private async output(kind: 'pdf' | 'xml') {
+    const stored = this.stored;
+    if (!stored || !this.locked || this.outputting) {
+      return;
+    }
+    const number = stored.number ?? 'Rechnung';
+    try {
+      const target = await save({
+        defaultPath: `${number}.${kind}`,
+        filters: [{ name: kind.toUpperCase(), extensions: [kind] }],
+      });
+      // cancelling the picker means "not now": nothing is written
+      if (!target) {
+        return;
+      }
+      this.outputting = true;
+      this.stored = await api.invoiceOutput(
+        stored.id,
+        kind === 'pdf' ? target : null,
+        kind === 'xml' ? target : null
+      );
+      notify(`Als ${kind.toUpperCase()} gespeichert.`);
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      this.outputting = false;
     }
   }
 
@@ -854,44 +846,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  private renderExport() {
-    const exporting = this.exporting;
-    return html`
-      <wa-dialog
-        ?open="${exporting !== undefined}"
-        label="Rechnung erstellen und prüfen"
-        light-dismiss
-        @wa-after-hide="${(e: Event) => e.target === e.currentTarget && void this.closeExport()}"
-      >
-        ${
-          exporting?.phase === 'busy'
-            ? html`<div class="row"><wa-spinner></wa-spinner> Wird erstellt und geprüft…</div>`
-            : nothing
-        }
-        ${exporting?.phase === 'failed' ? this.renderFailure(exporting.error) : nothing}
-        ${exporting?.phase === 'ready' ? this.renderReady(exporting) : nothing}
-        <div slot="footer" class="dialog-footer">
-          <wa-button appearance="outlined" @click="${() => void this.closeExport()}">
-            ${exporting?.phase === 'ready' && exporting.result.report.valid ? 'Abbrechen' : 'Schließen'}
-          </wa-button>
-          ${
-            exporting?.phase === 'ready' && exporting.result.report.valid
-              ? html`
-                  <wa-button
-                    variant="brand"
-                    ?loading="${exporting.saving}"
-                    @click="${() => void this.saveFiles()}"
-                  >
-                    Speichern unter…
-                  </wa-button>
-                `
-              : nothing
-          }
-        </div>
-      </wa-dialog>
-    `;
-  }
-
   private renderFailure(error: ProduceError | string) {
     if (typeof error === 'string') {
       return html`<wa-callout variant="danger">${error}</wa-callout>`;
@@ -909,9 +863,19 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         </wa-callout>
       `;
     }
+    if (error.kind === 'not-valid') {
+      return html`
+        <wa-callout variant="danger">
+          Die erzeugte Datei hat die Prüfung nicht bestanden, die Rechnung wurde nicht erstellt:
+          <ul>
+            ${error.issues.map(i => html`<li><strong>${i.code}</strong> ${i.message.slice(0, 300)}</li>`)}
+          </ul>
+        </wa-callout>
+      `;
+    }
     return html`
       <wa-callout variant="danger">
-        Die Rechnung verstößt gegen Regeln:
+        Die Rechnung verstößt gegen Regeln, sie wurde nicht erstellt:
         <ul>
           ${error.findings.map(f => html`<li><strong>${f.rule}</strong> ${f.message}</li>`)}
         </ul>
@@ -919,63 +883,23 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  private renderReady(exporting: Extract<Export, { phase: 'ready' }>) {
-    const { result } = exporting;
-    if (!result.report.valid) {
-      const errors = result.report.issues.filter(i => i.level === 'error');
-      return html`
-        <wa-callout variant="danger">
-          Die erzeugte Datei hat die Prüfung nicht bestanden und kann nicht gespeichert werden:
-          <ul>
-            ${errors.map(i => html`<li class="issue"><strong>${i.code}</strong> ${i.message.slice(0, 300)}</li>`)}
-          </ul>
-        </wa-callout>
-      `;
+  /** What the invoice is: a draft, or created (numbered, checked) and perhaps paid */
+  private renderStatus() {
+    const stored = this.stored;
+    if (!stored) {
+      return nothing;
     }
-    const warnings = result.report.issues.filter(i => i.level === 'warning');
+    if (stored.status === 'draft') {
+      return html`<div class="status"><wa-tag>Entwurf</wa-tag></div>`;
+    }
     return html`
-      <div class="stack">
-        <wa-callout variant="success">
-          Die Prüfung (PDF/A-3, ZUGFeRD und
-          EN&nbsp;16931${this.draft?.profile === 'xrechnung' ? ', XRechnung' : ''}) wurde bestanden.
-          ${
-            this.stored?.status === 'draft'
-              ? html`Die Rechnung erhält beim Speichern die Nummer
-                  <strong>${result.number}</strong> und wird gesperrt.`
-              : nothing
-          }
-        </wa-callout>
+      <div class="status">
+        <wa-tag>${stored.number}</wa-tag>
         ${
-          warnings.length > 0
-            ? html`<wa-callout variant="neutral"
-                >Hinweise:
-                <ul>
-                  ${warnings.map(i => html`<li class="issue">${i.message.slice(0, 200)}</li>`)}
-                </ul></wa-callout
-              >`
+          stored.paid_at
+            ? html`<wa-tag variant="success">Bezahlt am ${formatDate(stored.paid_at)}</wa-tag>`
             : nothing
         }
-        <div class="stack">
-          <wa-checkbox
-            ?checked="${exporting.pdf}"
-            @change="${(e: Event) => {
-              exporting.pdf = (e.target as HTMLInputElement).checked;
-              this.requestUpdate();
-            }}"
-          >
-            PDF (ZUGFeRD / Factur-X)
-          </wa-checkbox>
-          <wa-checkbox
-            ?checked="${exporting.xml}"
-            @change="${(e: Event) => {
-              exporting.xml = (e.target as HTMLInputElement).checked;
-              this.requestUpdate();
-            }}"
-          >
-            ${this.draft?.profile === 'xrechnung' ? 'XRechnung (XML)' : 'XML (Factur-X)'}
-          </wa-checkbox>
-        </div>
-        ${exporting.error ? html`<wa-callout variant="danger">${exporting.error}</wa-callout>` : nothing}
       </div>
     `;
   }
@@ -998,9 +922,9 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
             locked
               ? html`
                   <wa-callout variant="neutral">
-                    Exportiert als <strong>${stored?.number}</strong> am
+                    Erstellt als <strong>${stored?.number}</strong> am
                     ${formatDate(stored?.exported_at ?? '', true)}.<br>
-                    <em>Exportierte Rechnungen sind für alle Änderungen gesperrt.</em>
+                    <em>Erstellte Rechnungen sind für alle Änderungen gesperrt.</em>
                   </wa-callout>
                 `
               : nothing
@@ -1121,7 +1045,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
             </div>
           </wa-card>
 
-          ${this.renderCheck()}
+          ${this.createError ? this.renderFailure(this.createError) : nothing} ${this.renderCheck()}
         </section>
 
         ${this.renderPreviewSheet()}
@@ -1137,6 +1061,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 </wa-button>`
           }
         </div>
+        ${this.renderStatus()}
         <nav>
           ${
             stored
@@ -1160,32 +1085,58 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 </wa-button-group>`
               : nothing
           }
-          <wa-button-group label="Speichern">
-            ${
-              !locked
-                ? html`
+          ${
+            locked
+              ? html`<wa-button-group label="Exportieren">
+                  <wa-button
+                    variant="brand"
+                    ?loading="${this.outputting}"
+                    @click="${() => void this.output(this.outputKind)}"
+                  >
+                    Exportieren als
+                  </wa-button>
+                  <wa-dropdown
+                    placement="top-end"
+                    @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) => {
+                      this.outputKind = e.detail.item.value === 'xml' ? 'xml' : 'pdf';
+                    }}"
+                  >
                     <wa-button
-                      ?loading="${this.busy}"
-                      @click="${this.saveDraft}"
-                      appearance="outlined"
+                      slot="trigger"
+                      variant="brand"
+                      with-caret
+                      ?disabled="${this.outputting}"
+                      aria-label="Format zum Exportieren"
                     >
-                      Entwurf speichern
+                      ${this.outputKind.toUpperCase()}
                     </wa-button>
-                  `
-                : nothing
-            }
-            <wa-button
-              variant="brand"
-              ?disabled="${blocked && !locked}"
-              @click="${this.startExport}"
-            >
-              ${locked ? 'Erneut speichern' : 'Erstellen und prüfen'}
-            </wa-button>
-          </wa-button-group>
+                    <wa-dropdown-item value="pdf">PDF</wa-dropdown-item>
+                    <wa-dropdown-item value="xml">XML</wa-dropdown-item>
+                  </wa-dropdown>
+                </wa-button-group>`
+              : html`<wa-button-group label="Speichern">
+                  <wa-button
+                    ?loading="${this.busy}"
+                    ?disabled="${this.creating}"
+                    @click="${this.saveDraft}"
+                    appearance="outlined"
+                  >
+                    Entwurf speichern
+                  </wa-button>
+                  <wa-button
+                    variant="brand"
+                    ?loading="${this.creating}"
+                    ?disabled="${blocked}"
+                    @click="${this.create}"
+                  >
+                    Prüfen und erstellen
+                  </wa-button>
+                </wa-button-group>`
+          }
         </nav>
       </footer>
 
-      ${this.renderExport()} ${this.renderTemplates()}
+      ${this.renderTemplates()}
 
       <wa-dialog
         ?open="${this.newCustomer !== undefined}"

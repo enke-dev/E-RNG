@@ -9,12 +9,13 @@
   text-align: center;
 }
 
-span[slot='sub']:has(.payed) {
+span[slot='sub']:has(.created, .payed) {
   display: inline-flex;
   align-items: center;
   gap: var(--wa-space-xs);
 }
 
+.created,
 .payed {
   aspect-ratio: 1;
   padding: var(--wa-space-3xs);

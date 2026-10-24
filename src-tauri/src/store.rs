@@ -13,14 +13,14 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::context::{Context, ContextUsage, Disposition, BRANDS};
 use crate::model::{
-    CustomLayout, Customer, InvoiceDraft, LayoutUsage, ListEntry, PositionTemplate, Settings,
-    Status, StoredInvoice,
+    CustomLayout, Customer, InvoiceDraft, InvoiceFiles, LayoutUsage, ListEntry, PositionTemplate,
+    Settings, Status, StoredInvoice,
 };
 use crate::numbering::Pattern;
 
 pub struct Store(Mutex<Connection>);
 
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -69,6 +69,13 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 5 {
         migrate_to_contexts(conn)?;
+    }
+    if version < 6 {
+        // the originals of an invoice, see `InvoiceFiles`
+        if !has_column(conn, "invoices", "files")? {
+            conn.execute_batch("ALTER TABLE invoices ADD COLUMN files TEXT;")?;
+        }
+        conn.execute_batch("PRAGMA user_version = 6;")?;
     }
     Ok(())
 }
@@ -206,8 +213,12 @@ fn put(conn: &Connection, layout: &CustomLayout) -> Result<i64> {
     }
 }
 
-fn stored(row: &Row) -> rusqlite::Result<(StoredInvoice, String)> {
+/// A row of `invoices`, with what is still JSON text: the draft and the files
+type StoredRow = (StoredInvoice, String, Option<String>);
+
+fn stored(row: &Row) -> rusqlite::Result<StoredRow> {
     let draft: String = row.get("draft")?;
+    let files: Option<String> = row.get("files")?;
     let status: String = row.get("status")?;
     Ok((
         StoredInvoice {
@@ -225,8 +236,10 @@ fn stored(row: &Row) -> rusqlite::Result<(StoredInvoice, String)> {
             exported_at: row.get("exported_at")?,
             paid_at: row.get("paid_at")?,
             updated_at: row.get("updated_at")?,
+            files: None,
         },
         draft,
+        files,
     ))
 }
 
@@ -752,13 +765,13 @@ impl Store {
             .collect();
         let conn = self.conn();
         let mut statement = conn.prepare(
-            "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at
+            "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at, files
              FROM invoices WHERE archived_at IS NULL AND (?1 IS NULL OR context_id = ?1)
              ORDER BY updated_at DESC, id DESC",
         )?;
         let rows = statement.query_map([context], stored)?;
         rows.map(|row| {
-            let (invoice, draft) = row?;
+            let (invoice, draft, _) = row?;
             let draft: InvoiceDraft = serde_json::from_str(&draft)?;
             // an exported invoice shows the seller it was made with
             let seller_name = draft
@@ -785,15 +798,16 @@ impl Store {
 
     pub fn invoice(&self, id: i64) -> Result<StoredInvoice> {
         let conn = self.conn();
-        let (mut invoice, draft) = conn
+        let (mut invoice, draft, files) = conn
             .query_row(
-                "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at FROM invoices WHERE id = ?1",
+                "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at, files FROM invoices WHERE id = ?1",
                 [id],
                 stored,
             )
             .optional()?
             .ok_or_else(|| anyhow!("unknown invoice"))?;
         invoice.draft = serde_json::from_str(&draft)?;
+        invoice.files = files.map(|f| serde_json::from_str(&f)).transpose()?;
         Ok(invoice)
     }
 
@@ -873,6 +887,26 @@ impl Store {
         self.save_draft(None, source.context_id, &draft, None)
     }
 
+    /// As if the invoice had been exported by a version that did not keep files
+    #[cfg(test)]
+    pub fn forget_files(&self, id: i64) {
+        self.conn()
+            .execute("UPDATE invoices SET files = NULL WHERE id = ?1", [id])
+            .unwrap();
+    }
+
+    /// Keeps the originals that were made again for an invoice exported without them
+    pub fn set_files(&self, id: i64, files: &InvoiceFiles) -> Result<StoredInvoice> {
+        let changed = self.conn().execute(
+            "UPDATE invoices SET files = ?1 WHERE id = ?2 AND status = 'exported' AND files IS NULL",
+            params![serde_json::to_string(files)?, id],
+        )?;
+        if changed == 0 {
+            bail!("the invoice is not exported or has its files already");
+        }
+        self.invoice(id)
+    }
+
     /// Takes an exported invoice out of the list, it stays as it is (and counts for its numbers).
     /// Drafts are deleted instead.
     pub fn archive_invoice(&self, id: i64) -> Result<()> {
@@ -908,15 +942,22 @@ impl Store {
         frozen: &Settings,
         frozen_layout: Option<&CustomLayout>,
         total: &str,
+        files: &InvoiceFiles,
     ) -> Result<StoredInvoice> {
         let mut draft = self.invoice(id)?.draft;
         draft.frozen = Some(frozen.clone());
         draft.frozen_layout = frozen_layout.cloned();
         let changed = self.conn().execute(
             "UPDATE invoices SET number = ?1, status = 'exported', draft = ?2, total = ?3,
-                 exported_at = datetime('now'), updated_at = datetime('now')
-             WHERE id = ?4 AND status = 'draft'",
-            params![number, serde_json::to_string(&draft)?, total, id],
+                 files = ?4, exported_at = datetime('now'), updated_at = datetime('now')
+             WHERE id = ?5 AND status = 'draft'",
+            params![
+                number,
+                serde_json::to_string(&draft)?,
+                total,
+                serde_json::to_string(files)?,
+                id
+            ],
         );
         match changed {
             Ok(1) => self.invoice(id),
@@ -935,7 +976,20 @@ impl Store {
 mod tests {
     use super::*;
     use crate::draft::fixtures::{customer, draft, settings};
-    use crate::model::Position;
+    use crate::model::{Position, StoredFile};
+
+    /// Files as a created invoice has them, the store only keeps what it is told
+    fn files() -> InvoiceFiles {
+        let file = |path: &str| StoredFile {
+            path: path.into(),
+            sha256: "0".repeat(64),
+        };
+        InvoiceFiles {
+            pdf: file("invoices/1/x.pdf"),
+            xml: file("invoices/1/x.xml"),
+            regenerated: false,
+        }
+    }
 
     fn context(store: &Store, seller: &str) -> Context {
         let mut settings = settings();
@@ -1234,7 +1288,14 @@ mod tests {
 
         let exported = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
-            .finalize(exported, "RE-2026-001", &settings(), Some(&layout), "1.00")
+            .finalize(
+                exported,
+                "RE-2026-001",
+                &settings(),
+                Some(&layout),
+                "1.00",
+                &files(),
+            )
             .unwrap();
         assert_eq!(store.layout_usages(id).unwrap().len(), 2);
     }
@@ -1249,7 +1310,7 @@ mod tests {
         );
 
         store
-            .finalize(id, "RE-2026-001", &settings(), None, "1.00")
+            .finalize(id, "RE-2026-001", &settings(), None, "1.00", &files())
             .unwrap();
         assert!(
             store.set_paid(id, Some("20.10.2026")).is_err(),
@@ -1313,11 +1374,11 @@ mod tests {
 
         let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
-            .finalize(id, "RE-2026-001", &settings(), None, "1.00")
+            .finalize(id, "RE-2026-001", &settings(), None, "1.00", &files())
             .unwrap();
         let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
-            .finalize(id, "RE-2026-007", &settings(), None, "1.00")
+            .finalize(id, "RE-2026-007", &settings(), None, "1.00", &files())
             .unwrap();
 
         assert_eq!(
@@ -1349,7 +1410,7 @@ mod tests {
         let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
 
         let done = store
-            .finalize(id, "RE-2026-001", &settings(), None, "1181.08")
+            .finalize(id, "RE-2026-001", &settings(), None, "1181.08", &files())
             .unwrap();
 
         assert_eq!(done.status, Status::Exported);
@@ -1359,7 +1420,7 @@ mod tests {
         assert!(store.save_draft(Some(id), 1, &draft(), None).is_err());
         assert!(store.delete_draft(id).is_err());
         assert!(store
-            .finalize(id, "RE-2026-002", &settings(), None, "1.00")
+            .finalize(id, "RE-2026-002", &settings(), None, "1.00", &files())
             .is_err());
     }
 
@@ -1369,11 +1430,11 @@ mod tests {
         let a = store.save_draft(None, 1, &draft(), None).unwrap().id;
         let b = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
-            .finalize(a, "RE-2026-001", &settings(), None, "1.00")
+            .finalize(a, "RE-2026-001", &settings(), None, "1.00", &files())
             .unwrap();
 
         let error = store
-            .finalize(b, "RE-2026-001", &settings(), None, "1.00")
+            .finalize(b, "RE-2026-001", &settings(), None, "1.00", &files())
             .unwrap_err();
 
         assert!(error.to_string().contains("already taken"));
@@ -1385,7 +1446,7 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         let done = store
-            .finalize(id, "RE-2026-001", &settings(), None, "1181.08")
+            .finalize(id, "RE-2026-001", &settings(), None, "1181.08", &files())
             .unwrap();
 
         let copy = store.duplicate(done.id, "2026-11-02").unwrap();
@@ -1502,7 +1563,7 @@ mod tests {
 
         let first = store.save_draft(None, a, &draft(), None).unwrap();
         store
-            .finalize(first.id, "RE-2026-001", &settings(), None, "1.00")
+            .finalize(first.id, "RE-2026-001", &settings(), None, "1.00", &files())
             .unwrap();
         assert_eq!(store.next_number(a, pattern, day).unwrap(), "RE-2026-002");
         assert_eq!(store.next_number(b, pattern, day).unwrap(), "RE-2026-001");
@@ -1510,11 +1571,11 @@ mod tests {
         // the same number in another context is fine, inside one it is not
         let other = store.save_draft(None, b, &draft(), None).unwrap();
         store
-            .finalize(other.id, "RE-2026-001", &settings(), None, "1.00")
+            .finalize(other.id, "RE-2026-001", &settings(), None, "1.00", &files())
             .unwrap();
         let again = store.save_draft(None, a, &draft(), None).unwrap();
         assert!(store
-            .finalize(again.id, "RE-2026-001", &settings(), None, "1.00")
+            .finalize(again.id, "RE-2026-001", &settings(), None, "1.00", &files())
             .is_err());
     }
 
@@ -1536,7 +1597,7 @@ mod tests {
             "drafts are deleted, not archived"
         );
         store
-            .finalize(in_a.id, "RE-2026-001", &settings(), None, "1.00")
+            .finalize(in_a.id, "RE-2026-001", &settings(), None, "1.00", &files())
             .unwrap();
         store.archive_invoice(in_a.id).unwrap();
         assert!(store.invoices(Some(a)).unwrap().is_empty());
@@ -1568,7 +1629,14 @@ mod tests {
         assert_eq!(updated.context_id, b);
 
         let done = store
-            .finalize(draft_in_b.id, "RE-2026-001", &settings(), None, "1.00")
+            .finalize(
+                draft_in_b.id,
+                "RE-2026-001",
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap();
         assert_eq!(
             store.duplicate(done.id, "2026-11-02").unwrap().context_id,
@@ -1728,5 +1796,49 @@ mod tests {
 
         store.archive_context(a.id.unwrap()).unwrap();
         assert!(!store.is_default_layout("custom-7").unwrap());
+    }
+
+    #[test]
+    fn the_files_of_a_created_invoice_are_kept_with_it() {
+        let store = Store::in_memory().unwrap();
+        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        assert_eq!(store.invoice(id).unwrap().files, None);
+
+        let done = store
+            .finalize(id, "RE-2026-001", &settings(), None, "1.00", &files())
+            .unwrap();
+
+        assert_eq!(done.files, Some(files()));
+        assert_eq!(store.invoice(id).unwrap().files, Some(files()));
+    }
+
+    #[test]
+    fn files_that_were_made_again_are_only_added_to_an_exported_invoice_without_any() {
+        let store = Store::in_memory().unwrap();
+        let draft_id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        assert!(
+            store.set_files(draft_id, &files()).is_err(),
+            "a draft has none"
+        );
+
+        // an invoice exported before the files were kept
+        store
+            .conn()
+            .execute(
+                "UPDATE invoices SET status = 'exported', number = 'RE-1' WHERE id = ?1",
+                [draft_id],
+            )
+            .unwrap();
+        let again = InvoiceFiles {
+            regenerated: true,
+            ..files()
+        };
+        let done = store.set_files(draft_id, &again).unwrap();
+
+        assert_eq!(done.files, Some(again.clone()));
+        assert!(
+            store.set_files(draft_id, &files()).is_err(),
+            "kept originals stay"
+        );
     }
 }

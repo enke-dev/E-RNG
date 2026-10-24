@@ -1,5 +1,6 @@
 mod commands;
 mod context;
+mod creation;
 mod draft;
 mod invoice;
 mod layout;
@@ -7,10 +8,10 @@ mod layout_bundle;
 mod layout_files;
 mod model;
 mod numbering;
+mod originals;
 mod package;
 mod pipeline;
 mod render;
-mod session;
 mod sidecar;
 mod store;
 mod utils;
@@ -92,7 +93,7 @@ pub fn run() {
                 let _ = app.emit("check-for-updates", ());
             }
         })
-        .manage(session::Sessions::default())
+        .manage(creation::Creating::default())
         .manage(commands::opened_files_command::OpenedFiles::default())
         .invoke_handler(tauri::generate_handler![
             commands::check_invoice_command::check_invoice,
@@ -108,8 +109,9 @@ pub fn run() {
             commands::customers_command::customer_delete,
             commands::customers_command::customer_save,
             commands::customers_command::customers_list,
-            commands::discard_work_dir_command::discard_work_dir,
-            commands::export_invoice_command::export_invoice,
+            commands::invoice_files_command::invoice_create,
+            commands::invoice_files_command::invoice_next_number,
+            commands::invoice_files_command::invoice_output,
             commands::invoices_command::invoice_archive,
             commands::invoices_command::invoice_blank,
             commands::invoices_command::invoice_delete,
@@ -131,21 +133,18 @@ pub fn run() {
             commands::layouts_command::layouts_list,
             commands::opened_files_command::opened_files,
             commands::preview_invoice_command::preview_invoice,
-            commands::produce_invoice_command::produce_invoice,
             commands::templates_command::template_delete,
             commands::templates_command::template_save,
             commands::templates_command::templates_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            // work directories hold unsaved invoices, none of them outlives the app
+        .run(|_app, event| {
             match event {
-                tauri::RunEvent::Exit => app.state::<session::Sessions>().discard_all(),
                 // a layout file was opened with the app (macOS says so with an event)
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
                 tauri::RunEvent::Opened { urls } => {
-                    commands::opened_files_command::offer(app, &urls);
+                    commands::opened_files_command::offer(_app, &urls);
                 }
                 _ => {}
             }

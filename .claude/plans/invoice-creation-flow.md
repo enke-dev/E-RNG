@@ -1,8 +1,8 @@
 # Invoice creation flow – Plan
 
-Goal: make the end of an invoice's life cycle explicit. Today "Erstellen und prüfen" does many things at once and the lock happens as a side effect of picking file names. Instead: **Prüfen und erstellen** turns a draft into a real invoice (validate, number, freeze, lock, store the files), **Ausgeben** hands the stored files out.
+Goal: make the end of an invoice's life cycle explicit. Today "Erstellen und prüfen" does many things at once and the lock happens as a side effect of picking file names. Instead: **Prüfen und erstellen** turns a draft into a real invoice (validate, number, freeze, lock, store the files), **Exportieren als** hands the stored files out.
 
-Status: decisions made (2026-10-23), not started. Related: [steuerberater-export.md](steuerberater-export.md) needs the stored files as well.
+Status: implemented 2026-10-23 (backend with tests incl. the real tools, frontend checked by type check and lint, not yet clicked through in the app). Related: [steuerberater-export.md](steuerberater-export.md) needs the stored files as well.
 
 ## How it works today (for reference)
 
@@ -14,14 +14,14 @@ Problems: lock, number and file output are one step triggered by file names; the
 
 ## Decisions
 
-- **Two steps.** `Prüfen und erstellen` (irreversible) and `Ausgeben` (repeatable).
+- **Two steps.** `Prüfen und erstellen` (irreversible) and `Exportieren als` (repeatable).
 - **Confirm before creating**: a small dialog "Rechnung RE-2026-004 erstellen? Danach ist sie gesperrt." (`ask`, buttons "Erstellen" and "Abbrechen"), showing the number the invoice will get.
 - **The originals are stored on creation**: PDF and XML are written into the app's data folder in the same step, with a SHA-256 each. Outputs copy these files, nothing is regenerated, so what was sent is what is archived (and what the Steuerberater export hands out).
 - **Failure keeps the draft**: if the rule check or Mustang refuses, nothing is stored: no number, no lock, no files. The problems show in the invoice view, above the preview where the live findings are now, not in a modal.
-- **Locked invoice**: `Erneut speichern` goes away, `Ausgeben` is all it has.
+- **Locked invoice**: `Erneut speichern` goes away, `Exportieren als` is all it has.
 - **Live check stays as it is** (totals and rule findings while editing); PDF/A and Mustang validation only run on creation, they are slow.
-- **Status display**: `Entwurf` tag while a draft. Once created: the invoice number as tag with a blue check for "validated", no red state (a failed validation never produces an invoice). Paid: an extra tag `Bezahlt am <date>` in the detail view, the green check stays in the list. The status sits in the detail footer, centered between the leaving button on the left and the actions on the right (a three-column footer again: `minmax(0, 1fr) auto minmax(0, 1fr)`, so it stays centered when a side is empty). A new, unsaved invoice shows no status, the placeholder entry in the list says it is new.
-- **Ausgeben** is a split button: the main action `Speichern unter…`, a caret menu with `PDF speichern…`, `XML speichern…`, `PDF und XML speichern…`. The profile decides the default (XRechnung: XML and PDF). Later items: `Per E-Mail…`, `Drucken`. File names default to `<number>.pdf` / `.xml`. No dialog, there is nothing left to show.
+- **Status display**: in the list a created invoice carries a blue check badge (created and validated; no red state, a failed validation never produces an invoice), next to the existing green check badge for paid. The detail footer shows the status centered between the leaving button on the left and the actions on the right (a three-column footer: `minmax(0, 1fr) auto minmax(0, 1fr)`, so it stays centered when a side is empty): the `Entwurf` tag for a draft, the number tag for a created invoice, plus a `Bezahlt am <date>` tag when paid. No check in the footer, the number says the same. A new, unsaved invoice shows no status, the placeholder entry in the list says it is new.
+- **Exportieren als** is a split button that reads "Exportieren als | PDF": the left part exports, the right part is a dropdown that holds the format and switches between `PDF` (default) and `XML` (default for an XRechnung). One format per export, PDF and XML together are not needed. No dialog, there is nothing left to show. Later items: `Per E-Mail…`, `Drucken`. File names default to `<number>.pdf` / `.xml`.
 
 ## Data model
 
@@ -29,7 +29,7 @@ Migration **v6** on `invoices`:
 - `files TEXT` (JSON): `{ "pdf": {"path", "sha256"}, "xml": {"path", "sha256"} }`, paths relative to the data folder, NULL for drafts and for exported invoices that predate this.
 - Folder `<data>/invoices/<context_id>/<safe number>.pdf|.xml` (`safe_name` in `pipeline.rs` already makes harmless names). Never deleted by the app: archiving an invoice keeps its files, removing a context needs no invoices.
 
-Invoices exported before this change have no files. The first `Ausgeben` regenerates them from the frozen settings and layout, validates, stores them (and marks them as regenerated in the JSON), then hands them out as everyone else. Do not backfill in the migration: it needs the sidecars.
+Invoices exported before this change have no files. The first `Exportieren als` regenerates them from the frozen settings and layout, validates, stores them (and marks them as regenerated in the JSON), then hands them out as everyone else. Do not backfill in the migration: it needs the sidecars.
 
 ## Backend (src-tauri)
 
@@ -48,8 +48,8 @@ Invoices exported before this change have no files. The first `Ausgeben` regener
 - `invoice-edit.view.ts`: drop the `Export` state machine and the dialog (`renderReady`, `renderFailure`, `closeExport`, `saveFiles`).
   - Draft footer: `Abbrechen`/`Schließen` left; right: `Entwurf löschen`, `Entwurf speichern`, brand button `Prüfen und erstellen` (disabled while the live check has blocking problems, as now).
   - Click: save the draft, ask for the number (`invoice_next_number`), confirm, `invoice_create` with the button in loading state. Success: toast "Rechnung <number> erstellt", the view switches to the locked state. Failure: callout in the view with the same rendering as the old failure dialog (`problems`, `findings`, Mustang issues).
-  - Locked footer: `Schließen` left; right: `Duplizieren`, `Archivieren`, `Ausgeben` (split button).
-- Status in the middle of the footer: tag, the blue check (`wa-icon`, registered in `icon.utils.ts` if missing), and `Bezahlt am`; the existing paid control keeps working. The footer grid goes back to three columns (it was reduced to two when its label was dropped).
+  - Locked footer: `Schließen` left; right: `Duplizieren`, `Archivieren`, `Exportieren als` (split button).
+- Status in the middle of the footer: the tag and `Bezahlt am`; the blue check badge is in the list (`invoices.view.ts`); the existing paid control keeps working. The footer grid goes back to three columns (it was reduced to two when its label was dropped).
 - `api.utils.ts`, `mock.utils.ts`: the new commands, the old ones removed.
 
 ## Tests
@@ -59,7 +59,7 @@ Invoices exported before this change have no files. The first `Ausgeben` regener
 
 ## Manual checks
 
-Draft: `Prüfen und erstellen` with the confirm dialog (cancel keeps the draft), with a failing rule (callout in the view, still editable), with a valid one (locked, number, check tag). Locked: `Ausgeben` for PDF, XML and both, file picker cancelled, an existing file overwritten. Open an old exported invoice and `Ausgeben` (regeneration). Mark paid and see the tag and the list check. Two contexts: numbers per context, files in separate folders.
+Draft: `Prüfen und erstellen` with the confirm dialog (cancel keeps the draft), with a failing rule (callout in the view, still editable), with a valid one (locked, number, check tag). Locked: `Exportieren als` for PDF and XML, file picker cancelled, an existing file overwritten. Open an old exported invoice and `Exportieren als` (regeneration). Mark paid and see the tag and the list check. Two contexts: numbers per context, files in separate folders.
 
 ## Later
 

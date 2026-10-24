@@ -213,15 +213,22 @@ footer {
   min-height: var(--footer-height);
   z-index: 2;
 
-  /* what leaves the invoice on the left, the actions on the right */
-  display: flex;
+  /* what leaves the invoice on the left, what it is in the middle, the actions on the right */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: var(--wa-space-s);
   align-items: center;
-  justify-content: space-between;
   padding: var(--wa-space-m) var(--wa-space-l);
 
   background: var(--wa-color-surface-default);
   border-top: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    justify-self: center;
+  }
 
   .start {
     display: flex;

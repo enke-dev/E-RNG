@@ -222,6 +222,7 @@ const invoices: StoredInvoice[] = [
     exported_at: '2026-10-02 08:00:00',
     paid_at: null,
     updated_at: '2026-10-02 08:00:00',
+    files: null,
   },
   {
     id: 2,
@@ -233,6 +234,7 @@ const invoices: StoredInvoice[] = [
     exported_at: null,
     paid_at: null,
     updated_at: '2026-10-05 09:00:00',
+    files: null,
   },
 ];
 
@@ -552,6 +554,7 @@ export function installMocks() {
             exported_at: null,
             paid_at: null,
             updated_at: '',
+            files: null,
           };
           stored.draft = draft;
           stored.total = check(draft).totals?.gross ?? null;
@@ -583,24 +586,38 @@ export function installMocks() {
           return null;
         case 'check_invoice':
           return check(args['draft']);
-        case 'produce_invoice':
-          return {
-            work_dir: '/tmp/erng-mock',
-            number: find(args['id']).number ?? 'RE-2026-002',
-            report: { valid: true, issues: [] },
-          };
-        case 'export_invoice': {
+        case 'invoice_next_number':
+          return `RE-2026-${String(invoices.filter(i => i.number).length + 1).padStart(3, '0')}`;
+        case 'invoice_create': {
           const stored = find(args['id']);
+          // what the backend refuses: an XRechnung without buyer reference
+          if (stored.draft.profile === 'xrechnung' && !stored.draft.buyer_reference) {
+            throw {
+              kind: 'invalid',
+              findings: [
+                {
+                  rule: 'BR-DE-15',
+                  severity: 'Fatal',
+                  message: 'Für XRechnung ist die Leitweg-ID (Käuferreferenz) erforderlich.',
+                },
+              ],
+            };
+          }
           stored.status = 'exported';
-          stored.number ??= 'RE-2026-002';
+          stored.number = `RE-2026-${String(invoices.filter(i => i.number).length + 1).padStart(3, '0')}`;
           stored.exported_at = `${today()} 12:00:00`;
           stored.draft.frozen = settings;
-          return stored;
+          stored.files = {
+            pdf: { path: `invoices/1/${stored.number}.pdf`, sha256: '0'.repeat(64) },
+            xml: { path: `invoices/1/${stored.number}.xml`, sha256: '0'.repeat(64) },
+            regenerated: false,
+          };
+          return { invoice: { ...stored }, warnings: [] };
         }
+        case 'invoice_output':
+          return find(args['id']);
         case 'opened_files':
           return [];
-        case 'discard_work_dir':
-          return null;
         case 'plugin:dialog|save':
           return '/tmp/mock-export';
         case 'plugin:updater|check':

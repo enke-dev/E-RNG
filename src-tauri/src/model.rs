@@ -241,6 +241,25 @@ pub enum Status {
     Exported,
 }
 
+/// One of the files made when an invoice was created, kept in the app's data folder
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredFile {
+    /// Relative to the data folder
+    pub path: String,
+    /// What the file must still be, checked before it is handed out
+    pub sha256: String,
+}
+
+/// The originals of an invoice: what was validated is what is archived and what gets sent
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvoiceFiles {
+    pub pdf: StoredFile,
+    pub xml: StoredFile,
+    /// Made again from the frozen data, for an invoice that was exported before files were kept
+    #[serde(default)]
+    pub regenerated: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StoredInvoice {
     pub id: i64,
@@ -255,6 +274,8 @@ pub struct StoredInvoice {
     /// ISO date the invoice was paid on, set by hand after the export
     pub paid_at: Option<String>,
     pub updated_at: String,
+    /// The originals, none for a draft and for an invoice exported before they were kept
+    pub files: Option<InvoiceFiles>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

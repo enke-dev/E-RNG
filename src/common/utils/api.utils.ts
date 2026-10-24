@@ -128,6 +128,29 @@ export interface StoredInvoice {
   /** ISO date the exported invoice was paid on */
   paid_at: string | null;
   updated_at: string;
+  /** The originals made when it was created, none for a draft and for an invoice from before */
+  files: InvoiceFiles | null;
+}
+
+export interface StoredFile {
+  /** Relative to the app's data folder */
+  path: string;
+  sha256: string;
+}
+
+/** The PDF and XML that were validated on creation, handed out as they are */
+export interface InvoiceFiles {
+  pdf: StoredFile;
+  xml: StoredFile;
+  /** Made again from the frozen data, for an invoice created before originals were kept */
+  regenerated: boolean;
+}
+
+/** What creating an invoice came to */
+export interface Created {
+  invoice: StoredInvoice;
+  /** What the validator said without refusing the invoice */
+  warnings: Issue[];
 }
 
 export interface ListEntry {
@@ -366,18 +389,13 @@ export interface ValidationReport {
   issues: Issue[];
 }
 
-export interface ProduceResult {
-  work_dir: string;
-  number: string;
-  report: ValidationReport;
-}
-
 export type ProduceError =
   | { kind: 'input'; problems: InputProblem[] }
   | { kind: 'invalid'; findings: Finding[] }
+  | { kind: 'not-valid'; issues: Issue[] }
   | { kind: 'failed'; message: string };
 
-/** Commands reject with a string, `produce_invoice` with a `ProduceError` */
+/** Commands reject with a string, creating and handing out an invoice with a `ProduceError` */
 export function errorText(error: unknown): string {
   if (typeof error === 'string') {
     return error;
@@ -392,6 +410,9 @@ export function errorText(error: unknown): string {
     }
     if (failure.kind === 'input') {
       return failure.problems.map(p => p.message).join(', ');
+    }
+    if (failure.kind === 'not-valid') {
+      return failure.issues.map(i => `${i.code}: ${i.message}`).join(', ');
     }
     return failure.findings.map(f => `${f.rule}: ${f.message}`).join(', ');
   }
@@ -450,19 +471,12 @@ export const api = {
   invoicePreview: (draft: InvoiceDraft, id: number | null, contextId: number) =>
     invoke<Preview>('preview_invoice', { draft, id, contextId }),
 
-  produce: (id: number) => invoke<ProduceResult>('produce_invoice', { id }),
-  exportInvoice: (
-    id: number,
-    workDir: string,
-    pdfTarget: string | null,
-    xmlTarget: string | null
-  ) =>
-    invoke<StoredInvoice>('export_invoice', {
-      id,
-      workDir,
-      pdfTarget,
-      xmlTarget,
-    }),
+  /** The number a draft would get if it were created now */
+  invoiceNextNumber: (id: number) => invoke<string>('invoice_next_number', { id }),
+  /** Checks, numbers, freezes and locks a draft and keeps its PDF and XML; rejects with a `ProduceError` */
+  invoiceCreate: (id: number) => invoke<Created>('invoice_create', { id }),
+  /** Copies the kept originals to the picked places */
+  invoiceOutput: (id: number, pdfTarget: string | null, xmlTarget: string | null) =>
+    invoke<StoredInvoice>('invoice_output', { id, pdfTarget, xmlTarget }),
   openedFiles: () => invoke<string[]>('opened_files'),
-  discardWorkDir: (workDir: string) => invoke<null>('discard_work_dir', { workDir }),
 };
