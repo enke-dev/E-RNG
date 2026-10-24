@@ -6,6 +6,7 @@ import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
+import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
 import '../../common/components/scope-select/scope-select.component.js';
 import '../../common/layouts/cards/cards.layout.js';
@@ -17,10 +18,11 @@ import { customElement, state } from 'lit/decorators.js';
 import type { PositionTemplate } from '../../common/utils/api.utils.js';
 import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
-import { activeContext, contextById, label } from '../../common/utils/context.utils.js';
+import { activeContext, contextsOf, label } from '../../common/utils/context.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
 import { UNITS } from '../../common/utils/format.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
+import styles from './templates.view.css';
 
 const blank = (): PositionTemplate => ({
   id: null,
@@ -35,7 +37,7 @@ const unitLabel = (code: string | null) => UNITS.find(u => u.code === (code ?? '
 
 /** Saved positions the invoice form can start from, as cards like the customers */
 @customElement('erng-templates')
-export class TemplatesView extends ErngElement {
+export class TemplatesView extends ErngElement.withStyles(styles) {
   @state() private templates: PositionTemplate[] = [];
   @state() private editing: PositionTemplate | undefined;
   @state() private query = '';
@@ -153,9 +155,17 @@ export class TemplatesView extends ErngElement {
                         ${t.quantity ?? '1'} ${unitLabel(t.unit)} × ${t.price} €
                       </div>
                       ${
-                        t.context_id === null
-                          ? nothing
-                          : html`<div class="muted">Nur ${label(contextById(t.context_id))}</div>`
+                        contextsOf(t.context_id).length > 0
+                          ? html`
+                              <div class="contexts">
+                                ${contextsOf(t.context_id).map(
+                                  context => html`
+                                    <wa-tag size="s" variant="neutral">${label(context)}</wa-tag>
+                                  `
+                                )}
+                              </div>
+                            `
+                          : nothing
                       }
                     </wa-card>
                   `

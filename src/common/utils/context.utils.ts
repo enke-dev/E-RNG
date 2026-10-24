@@ -58,6 +58,19 @@ export const label = (context: Pick<Context, 'settings'> | undefined) =>
 export const contextById = (id: number | null | undefined) =>
   id == null ? undefined : (contexts.get() ?? []).find(c => c.id === id);
 
+/**
+ * The contexts an entry is for, to show as tags: the one it is scoped to, or all of them when it is
+ * shared. Nothing with one context, there is nothing to tell apart.
+ */
+export function contextsOf(scope: number | null): Context[] {
+  const list = available.get();
+  if (list.length < 2) {
+    return [];
+  }
+  const own = contextById(scope);
+  return scope === null ? list : own ? [own] : [];
+}
+
 /** Tints the UI with the brand color: one class re-derives every brand token of the UI library */
 export function applyBrand(brand: string | undefined) {
   const classes = document.documentElement.classList;

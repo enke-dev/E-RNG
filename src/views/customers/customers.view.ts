@@ -5,6 +5,7 @@ import '@awesome.me/webawesome/dist/components/card/card.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
+import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '../../common/components/customer-form/customer-form.component.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
 import '../../common/components/scope-select/scope-select.component.js';
@@ -17,8 +18,9 @@ import { customElement, state } from 'lit/decorators.js';
 import type { Customer } from '../../common/utils/api.utils.js';
 import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
-import { activeContext, contextById, label } from '../../common/utils/context.utils.js';
+import { activeContext, contextsOf, label } from '../../common/utils/context.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
+import styles from './customers.view.css';
 
 const blank = (): Customer => ({
   id: null,
@@ -37,7 +39,7 @@ const GROUPS = [
 ];
 
 @customElement('erng-customers')
-export class CustomersView extends ErngElement {
+export class CustomersView extends ErngElement.withStyles(styles) {
   @state() private customers: Customer[] = [];
   @state() private editing: Customer | undefined;
   @state() private query = '';
@@ -148,9 +150,17 @@ export class CustomersView extends ErngElement {
                         ${c.address.street}<br>${c.address.post_code} ${c.address.city}
                       </div>
                       ${
-                        c.context_id === null
-                          ? nothing
-                          : html`<div class="muted">Nur ${label(contextById(c.context_id))}</div>`
+                        contextsOf(c.context_id).length > 0
+                          ? html`
+                              <div class="contexts">
+                                ${contextsOf(c.context_id).map(
+                                  context => html`
+                                    <wa-tag size="s" variant="neutral">${label(context)}</wa-tag>
+                                  `
+                                )}
+                              </div>
+                            `
+                          : nothing
                       }
                     </wa-card>
                   `

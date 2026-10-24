@@ -23,7 +23,7 @@ export class ScopeSelectComponent extends ErngElement {
   value: number | null = null;
 
   @property()
-  heading = 'Gilt für';
+  heading = 'Kontext';
 
   override render() {
     const list = available.get();
@@ -47,8 +47,8 @@ export class ScopeSelectComponent extends ErngElement {
         );
       }}"
     >
-      <wa-option value="${SHARED}">Alle Kontexte</wa-option>
-      ${options.map(c => html`<wa-option value="${String(c.id)}">Nur ${label(c)}</wa-option>`)}
+      <wa-option value="${SHARED}">Alle</wa-option>
+      ${options.map(c => html`<wa-option value="${String(c.id)}">${label(c)}</wa-option>`)}
     </wa-select>`;
   }
 }
