@@ -137,6 +137,11 @@ fn style_name(bytes: &[u8]) -> Option<String> {
         })
 }
 
+/// The style of a font that is kept already, for fonts that were stored before it was read
+pub fn style_of(path: &Path) -> Option<String> {
+    style_name(&std::fs::read(path).ok()?)
+}
+
 /// Removes the picture and font files no layout points at any more: those of deleted layouts and
 /// of files that were replaced. Only files this module made are touched, and only when nothing is
 /// being edited (at start), a freshly picked file is not in any layout yet.

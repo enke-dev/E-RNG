@@ -670,6 +670,19 @@ impl Store {
             layout.updated_at = now();
             put(&conn, layout)?;
         }
+        // fonts stored before their style was read get it from their file, once
+        for layout in &mut layouts {
+            let mut found = false;
+            for font in layout.fonts.iter_mut().filter(|f| f.style.is_empty()) {
+                if let Some(style) = crate::layout_files::style_of(&font.path) {
+                    font.style = style;
+                    found = true;
+                }
+            }
+            if found {
+                put(&conn, layout)?;
+            }
+        }
         layouts.sort_by_key(|l| l.name.to_lowercase());
         Ok(layouts)
     }
@@ -1839,6 +1852,38 @@ mod tests {
         assert!(
             store.set_files(draft_id, &files()).is_err(),
             "kept originals stay"
+        );
+    }
+
+    #[test]
+    fn fonts_stored_without_their_style_get_it_from_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let font = crate::layout_files::import_font(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/OpenSans.ttf"),
+            dir.path(),
+        )
+        .unwrap();
+        assert_eq!(font.style, "Regular");
+        let store = Store::in_memory().unwrap();
+        // as an older version stored it
+        let old = crate::model::FontFile {
+            style: String::new(),
+            ..font
+        };
+        store
+            .save_custom_layout(&CustomLayout {
+                fonts: vec![old],
+                ..own_layout("Alt")
+            })
+            .unwrap();
+
+        let layouts = store.custom_layouts(1).unwrap();
+
+        assert_eq!(layouts[0].fonts[0].style, "Regular");
+        // and it stays: the second read finds nothing to do
+        assert_eq!(
+            store.custom_layouts(1).unwrap()[0].fonts[0].style,
+            "Regular"
         );
     }
 }
