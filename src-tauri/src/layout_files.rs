@@ -167,8 +167,13 @@ pub fn prune(dir: &Path, layouts: &[CustomLayout]) -> Result<usize> {
             .and_then(|n| n.to_str())
             .unwrap_or_default();
         let in_fonts = path.parent().is_some_and(|p| p.ends_with("fonts"));
-        let is = |extensions: &[&str]| extensions.iter().any(|e| name.ends_with(&format!(".{e}")));
-        (name.starts_with("background-") && name.ends_with(".svg"))
+        let is = |extensions: &[&str]| {
+            Path::new(name)
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| extensions.iter().any(|x| e.eq_ignore_ascii_case(x)))
+        };
+        (name.starts_with("background-") && is(&["svg"]))
             || (name.starts_with("image-") && is(&IMAGE_EXTENSIONS))
             || (in_fonts && is(&FONT_EXTENSIONS))
     };

@@ -44,3 +44,14 @@ tauri-plugin-window-state = "2"
 [dev-dependencies]
 rust_decimal = "1"
 rust_decimal_macros = "1"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# `#[tauri::command]` hands `State` and the arguments over by value
+needless_pass_by_value = "allow"
+# settings and layout formats are flat sets of switches the UI stores one by one
+struct_excessive_bools = "allow"
+# array methods over loops, also for side effects
+needless_for_each = "allow"
+# `assert!(!x.is_empty())` has nothing more to show when it fails
+assert_is_empty = "allow"

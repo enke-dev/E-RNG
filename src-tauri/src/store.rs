@@ -5,7 +5,7 @@
 //! invoice cannot be changed or deleted any more (it can be duplicated).
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use en16931::Date;
@@ -192,24 +192,21 @@ fn put(conn: &Connection, layout: &CustomLayout) -> Result<i64> {
         context_id: None,
         ..layout.clone()
     })?;
-    match layout.id {
-        Some(id) => {
-            let changed = conn.execute(
-                "UPDATE layouts SET json = ?1, context_id = ?2 WHERE id = ?3",
-                params![json, layout.context_id, id],
-            )?;
-            if changed == 0 {
-                bail!("unknown layout");
-            }
-            Ok(id)
+    if let Some(id) = layout.id {
+        let changed = conn.execute(
+            "UPDATE layouts SET json = ?1, context_id = ?2 WHERE id = ?3",
+            params![json, layout.context_id, id],
+        )?;
+        if changed == 0 {
+            bail!("unknown layout");
         }
-        None => {
-            conn.execute(
-                "INSERT INTO layouts (json, context_id) VALUES (?1, ?2)",
-                params![json, layout.context_id],
-            )?;
-            Ok(conn.last_insert_rowid())
-        }
+        Ok(id)
+    } else {
+        conn.execute(
+            "INSERT INTO layouts (json, context_id) VALUES (?1, ?2)",
+            params![json, layout.context_id],
+        )?;
+        Ok(conn.last_insert_rowid())
     }
 }
 
@@ -262,7 +259,8 @@ impl Store {
     }
 
     fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.0.lock().expect("database lock")
+        // a panic elsewhere leaves SQLite itself consistent (it rolls back), so keep serving
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     // contexts
@@ -314,40 +312,37 @@ impl Store {
     /// Creates a context (`id` is `None`) or updates one. A new one without a brand gets the default
     /// for the first, a random one that is not in use for the others. Archiving is its own step.
     pub fn save_context(&self, context: &Context) -> Result<Context> {
-        let id = match context.id {
-            Some(id) => {
-                let brand = if context.brand.is_empty() {
-                    BRANDS[0].to_owned()
-                } else {
-                    context.brand.clone()
-                };
-                let json = serde_json::to_string(&ContextBody {
-                    brand,
-                    settings: context.settings.clone(),
-                })?;
-                let changed = self.conn().execute(
-                    "UPDATE contexts SET json = ?1 WHERE id = ?2",
-                    params![json, id],
-                )?;
-                if changed == 0 {
-                    bail!("unknown context");
-                }
-                id
+        let id = if let Some(id) = context.id {
+            let brand = if context.brand.is_empty() {
+                BRANDS[0].to_owned()
+            } else {
+                context.brand.clone()
+            };
+            let json = serde_json::to_string(&ContextBody {
+                brand,
+                settings: context.settings.clone(),
+            })?;
+            let changed = self.conn().execute(
+                "UPDATE contexts SET json = ?1 WHERE id = ?2",
+                params![json, id],
+            )?;
+            if changed == 0 {
+                bail!("unknown context");
             }
-            None => {
-                let brand = if context.brand.is_empty() {
-                    self.fresh_brand()?
-                } else {
-                    context.brand.clone()
-                };
-                let json = serde_json::to_string(&ContextBody {
-                    brand,
-                    settings: context.settings.clone(),
-                })?;
-                let conn = self.conn();
-                conn.execute("INSERT INTO contexts (json) VALUES (?1)", [json])?;
-                conn.last_insert_rowid()
-            }
+            id
+        } else {
+            let brand = if context.brand.is_empty() {
+                self.fresh_brand()?
+            } else {
+                context.brand.clone()
+            };
+            let json = serde_json::to_string(&ContextBody {
+                brand,
+                settings: context.settings.clone(),
+            })?;
+            let conn = self.conn();
+            conn.execute("INSERT INTO contexts (json) VALUES (?1)", [json])?;
+            conn.last_insert_rowid()
         };
         self.context(id)
     }
@@ -396,7 +391,9 @@ impl Store {
     pub fn context_usage(&self, id: i64) -> Result<ContextUsage> {
         let conn = self.conn();
         let count = |sql: &str| -> Result<usize> {
-            Ok(conn.query_row(sql, [id], |r| r.get::<_, i64>(0))? as usize)
+            Ok(usize::try_from(
+                conn.query_row(sql, [id], |r| r.get::<_, i64>(0))?,
+            )?)
         };
         Ok(ContextUsage {
             drafts: count(
@@ -498,24 +495,21 @@ impl Store {
             context_id: None,
             ..customer.clone()
         })?;
-        let id = match customer.id {
-            Some(id) => {
-                let changed = conn.execute(
-                    "UPDATE customers SET json = ?1, context_id = ?2 WHERE id = ?3",
-                    params![json, customer.context_id, id],
-                )?;
-                if changed == 0 {
-                    bail!("unknown customer");
-                }
-                id
+        let id = if let Some(id) = customer.id {
+            let changed = conn.execute(
+                "UPDATE customers SET json = ?1, context_id = ?2 WHERE id = ?3",
+                params![json, customer.context_id, id],
+            )?;
+            if changed == 0 {
+                bail!("unknown customer");
             }
-            None => {
-                conn.execute(
-                    "INSERT INTO customers (json, context_id) VALUES (?1, ?2)",
-                    params![json, customer.context_id],
-                )?;
-                conn.last_insert_rowid()
-            }
+            id
+        } else {
+            conn.execute(
+                "INSERT INTO customers (json, context_id) VALUES (?1, ?2)",
+                params![json, customer.context_id],
+            )?;
+            conn.last_insert_rowid()
         };
         Ok(Customer {
             id: Some(id),
@@ -581,24 +575,21 @@ impl Store {
             context_id: None,
             ..template.clone()
         })?;
-        let id = match template.id {
-            Some(id) => {
-                let changed = conn.execute(
-                    "UPDATE templates SET json = ?1, context_id = ?2 WHERE id = ?3",
-                    params![json, template.context_id, id],
-                )?;
-                if changed == 0 {
-                    bail!("unknown template");
-                }
-                id
+        let id = if let Some(id) = template.id {
+            let changed = conn.execute(
+                "UPDATE templates SET json = ?1, context_id = ?2 WHERE id = ?3",
+                params![json, template.context_id, id],
+            )?;
+            if changed == 0 {
+                bail!("unknown template");
             }
-            None => {
-                conn.execute(
-                    "INSERT INTO templates (json, context_id) VALUES (?1, ?2)",
-                    params![json, template.context_id],
-                )?;
-                conn.last_insert_rowid()
-            }
+            id
+        } else {
+            conn.execute(
+                "INSERT INTO templates (json, context_id) VALUES (?1, ?2)",
+                params![json, template.context_id],
+            )?;
+            conn.last_insert_rowid()
         };
         Ok(PositionTemplate {
             id: Some(id),
@@ -828,7 +819,8 @@ impl Store {
     /// locked, this is the one thing that happens to it afterwards.
     pub fn set_paid(&self, id: i64, paid_at: Option<&str>) -> Result<StoredInvoice> {
         if let Some(date) = paid_at {
-            en16931::Date::parse(date).map_err(|_| anyhow!("the date of payment is not a date"))?;
+            en16931::Date::parse(date)
+                .with_context(|| format!("the date of payment {date:?} is not a date"))?;
         }
         let changed = self.conn().execute(
             "UPDATE invoices SET paid_at = ?1 WHERE id = ?2 AND status = 'exported'",
@@ -852,26 +844,23 @@ impl Store {
         let json = serde_json::to_string(draft)?;
         let id = {
             let conn = self.conn();
-            match id {
-                Some(id) => {
-                    let changed = conn.execute(
-                        "UPDATE invoices SET draft = ?1, total = ?2, updated_at = datetime('now')
-                         WHERE id = ?3 AND status = 'draft'",
-                        params![json, total, id],
-                    )?;
-                    if changed == 0 {
-                        bail!("an exported invoice cannot be changed, duplicate it instead");
-                    }
-                    id
+            if let Some(id) = id {
+                let changed = conn.execute(
+                    "UPDATE invoices SET draft = ?1, total = ?2, updated_at = datetime('now')
+                     WHERE id = ?3 AND status = 'draft'",
+                    params![json, total, id],
+                )?;
+                if changed == 0 {
+                    bail!("an exported invoice cannot be changed, duplicate it instead");
                 }
-                None => {
-                    conn.execute(
-                        "INSERT INTO invoices (context_id, status, draft, total, updated_at)
-                         VALUES (?1, 'draft', ?2, ?3, datetime('now'))",
-                        params![context_id, json, total],
-                    )?;
-                    conn.last_insert_rowid()
-                }
+                id
+            } else {
+                conn.execute(
+                    "INSERT INTO invoices (context_id, status, draft, total, updated_at)
+                     VALUES (?1, 'draft', ?2, ?3, datetime('now'))",
+                    params![context_id, json, total],
+                )?;
+                conn.last_insert_rowid()
             }
         };
         self.invoice(id)
@@ -1013,11 +1002,11 @@ mod tests {
     #[test]
     fn contexts_are_created_updated_and_checked() {
         let store = Store::in_memory().unwrap();
-        assert!(store.contexts().unwrap().is_empty());
+        assert_eq!(store.contexts().unwrap(), Vec::new());
 
         let first = context(&store, "Alpha GmbH");
         assert_eq!(first.brand, "blue");
-        assert!(first.missing.is_empty());
+        assert_eq!(first.missing, Vec::<String>::new());
 
         let mut changed = first.clone();
         changed.settings.payment_days = Some(30);
@@ -1195,7 +1184,7 @@ mod tests {
 
         let store = Store::init(conn).unwrap();
 
-        assert!(store.templates(1).unwrap().is_empty());
+        assert_eq!(store.templates(1).unwrap(), Vec::new());
     }
 
     fn own_layout(name: &str) -> CustomLayout {
@@ -1484,7 +1473,7 @@ mod tests {
 
         store.delete_draft(id).unwrap();
 
-        assert!(store.invoices(None).unwrap().is_empty());
+        assert_eq!(store.invoices(None).unwrap(), Vec::new());
         assert!(store.delete_draft(id).is_err());
     }
 
@@ -1563,7 +1552,7 @@ mod tests {
     #[test]
     fn a_fresh_database_has_no_context() {
         let store = Store::in_memory().unwrap();
-        assert!(store.contexts().unwrap().is_empty());
+        assert_eq!(store.contexts().unwrap(), Vec::new());
     }
 
     #[test]
@@ -1613,7 +1602,7 @@ mod tests {
             .finalize(in_a.id, "RE-2026-001", &settings(), None, "1.00", &files())
             .unwrap();
         store.archive_invoice(in_a.id).unwrap();
-        assert!(store.invoices(Some(a)).unwrap().is_empty());
+        assert_eq!(store.invoices(Some(a)).unwrap(), Vec::new());
         // it still counts for the numbers
         assert_eq!(
             store

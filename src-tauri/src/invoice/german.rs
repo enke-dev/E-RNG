@@ -1,5 +1,5 @@
 //! German texts for the rule findings. The rule library speaks the standards' English (the
-//! KoSIT ones partly German), the user of this app should not have to.
+//! `KoSIT` ones partly German), the user of this app should not have to.
 //!
 //! Only rules the form can actually trigger are covered, each text says where to fix the problem.
 //! Anything else keeps its original wording, and the original always stays available as `hint`.

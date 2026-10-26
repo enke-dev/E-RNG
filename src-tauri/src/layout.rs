@@ -410,7 +410,7 @@ mod tests {
         let old = r#"{"id":1,"name":"Alt","background":null,"margins":{"top":1,"right":1,"bottom":1,"left":1},
             "first_margins":null,"fonts":[]}"#;
         let layout: CustomLayout = serde_json::from_str(old).unwrap();
-        assert!(layout.page.parts.is_empty());
+        assert_eq!(layout.page.parts, Vec::new());
         assert!(layout.first.is_none());
     }
 

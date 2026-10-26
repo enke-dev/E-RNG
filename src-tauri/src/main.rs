@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    e_rng_lib::run()
+    e_rng_lib::run();
 }

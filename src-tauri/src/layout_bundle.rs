@@ -246,7 +246,7 @@ mod tests {
             .unwrap();
         assert_eq!((image.0.as_str(), image.2), ("logo.png", 300));
         assert!(image.1.starts_with(to.path()) && image.1.exists());
-        assert!(imported.missing_fonts.is_empty());
+        assert_eq!(imported.missing_fonts, Vec::<String>::new());
     }
 
     #[test]
@@ -257,7 +257,7 @@ mod tests {
 
         assert!(!text.contains("font-0"));
         let imported = install(parse(&text).unwrap(), None, to.path()).unwrap();
-        assert!(imported.layout.fonts.is_empty());
+        assert_eq!(imported.layout.fonts, Vec::new());
         assert_eq!(imported.missing_fonts, vec!["Open Sans".to_string()]);
     }
 

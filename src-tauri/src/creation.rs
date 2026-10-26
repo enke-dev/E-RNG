@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use serde::Serialize;
 
@@ -30,9 +30,14 @@ pub struct CreatingGuard<'a> {
 }
 
 impl Creating {
+    // a set of numbers stays valid when a holder panicked, so a poisoned lock is no reason to fail
+    fn waiting(&self) -> std::sync::MutexGuard<'_, HashSet<i64>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn start(&self, context: i64) -> Option<CreatingGuard<'_>> {
         // the lock is let go before a guard exists: dropping a guard takes it again
-        let inserted = self.0.lock().expect("creating lock").insert(context);
+        let inserted = self.waiting().insert(context);
         inserted.then(|| CreatingGuard {
             creating: self,
             context,
@@ -42,11 +47,7 @@ impl Creating {
 
 impl Drop for CreatingGuard<'_> {
     fn drop(&mut self) {
-        self.creating
-            .0
-            .lock()
-            .expect("creating lock")
-            .remove(&self.context);
+        self.creating.waiting().remove(&self.context);
     }
 }
 

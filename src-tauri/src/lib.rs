@@ -26,13 +26,12 @@ const SETTINGS_MENU_ID: &str = "open-settings";
 /// (settings with the usual shortcut), at the end of the last menu elsewhere.
 fn add_entries_to_menu(app: &tauri::App) -> tauri::Result<()> {
     let handle = app.handle();
-    let menu = match app.menu() {
-        Some(menu) => menu,
-        None => {
-            let menu = Menu::default(handle)?;
-            app.set_menu(menu.clone())?;
-            menu
-        }
+    let menu = if let Some(menu) = app.menu() {
+        menu
+    } else {
+        let menu = Menu::default(handle)?;
+        app.set_menu(menu.clone())?;
+        menu
     };
     let item = MenuItem::with_id(
         handle,
@@ -69,6 +68,11 @@ fn add_entries_to_menu(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Starts the app and blocks until the last window is closed.
+///
+/// # Panics
+///
+/// When the window or the plugins cannot be set up: the app is of no use then.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -152,14 +156,13 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, event| {
-            match event {
-                // a layout file was opened with the app (macOS says so with an event)
-                #[cfg(any(target_os = "macos", target_os = "ios"))]
-                tauri::RunEvent::Opened { urls } => {
-                    commands::opened_files_command::offer(_app, &urls);
-                }
-                _ => {}
+        .run(|app, event| {
+            // a layout file was opened with the app (macOS says so with an event)
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let tauri::RunEvent::Opened { urls } = event {
+                commands::opened_files_command::offer(app, &urls);
             }
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            let _ = (app, event);
         });
 }

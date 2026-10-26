@@ -6,7 +6,7 @@ use crate::model::InvoiceDraft;
 use crate::render::{self, Branding};
 use crate::sidecar::Sidecars;
 use crate::store::Store;
-use crate::utils::{issue_day, message};
+use crate::utils::{issue_day, CommandResult};
 
 #[derive(Debug, Serialize)]
 pub struct Preview {
@@ -27,25 +27,22 @@ pub async fn preview_invoice(
     draft: InvoiceDraft,
     id: Option<i64>,
     context_id: i64,
-) -> Result<Preview, String> {
-    let current = store.settings(context_id).map_err(message)?;
+) -> CommandResult<Preview> {
+    let current = store.settings(context_id)?;
     let settings = draft.frozen.clone().unwrap_or(current.clone());
 
     // an exported invoice shows its number, a draft the one it would get
     let stored_number = id
         .map(|id| store.invoice(id))
-        .transpose()
-        .map_err(message)?
+        .transpose()?
         .and_then(|invoice| invoice.number);
     let number = match stored_number {
         Some(number) => number,
-        None => store
-            .next_number(
-                context_id,
-                &current.number_pattern,
-                issue_day(&draft.issue_date),
-            )
-            .map_err(message)?,
+        None => store.next_number(
+            context_id,
+            &current.number_pattern,
+            issue_day(&draft.issue_date),
+        )?,
     };
 
     let invoice = match build_invoice(&for_preview(&draft), &current, &number) {
@@ -58,17 +55,15 @@ pub async fn preview_invoice(
             })
         }
     };
-    let customs = store.all_custom_layouts().map_err(message)?;
+    let customs = store.all_custom_layouts()?;
     let branding = Branding::for_draft(&draft, &settings, &customs);
-    let sidecars = Sidecars::locate(&app).map_err(message)?;
+    let sidecars = Sidecars::locate(&app)?;
 
     let pages = tauri::async_runtime::spawn_blocking(move || {
         let dir = tempfile::tempdir()?;
         render::render_preview(&sidecars, dir.path(), &invoice, &branding)
     })
-    .await
-    .map_err(message)?
-    .map_err(message)?;
+    .await??;
     Ok(Preview {
         pages,
         problems: Vec::new(),

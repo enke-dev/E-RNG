@@ -24,7 +24,7 @@ pub(crate) mod golden;
 
 /// What the invoice has to conform to.
 ///
-/// EN 16931 is the default (a plain ZUGFeRD/Factur-X invoice). XRechnung adds the German
+/// EN 16931 is the default (a plain ZUGFeRD/Factur-X invoice). `XRechnung` adds the German
 /// public-sector rules (`BR-DE-*`), e.g. a buyer reference (Leitweg-ID) and a seller contact.
 /// MINIMUM and BASIC WL are deliberately absent: they are not valid e-invoices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -63,7 +63,7 @@ pub fn validate(invoice: &Invoice, profile: ProfileKind) -> Vec<Finding> {
         .collect()
 }
 
-/// Serializes the invoice as UN/CEFACT CII (`factur-x.xml`, or the XRechnung file).
+/// Serializes the invoice as UN/CEFACT CII (`factur-x.xml`, or the `XRechnung` file).
 ///
 /// Only an invoice that passes the profile's rules is written, BT-24 is stamped from the profile.
 pub fn to_cii(invoice: Invoice, profile: ProfileKind) -> Result<String, Vec<Finding>> {

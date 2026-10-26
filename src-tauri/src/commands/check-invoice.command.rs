@@ -5,7 +5,7 @@ use crate::draft::{build_invoice, totals, InputProblem, Totals};
 use crate::invoice::{validate, Finding};
 use crate::model::InvoiceDraft;
 use crate::store::Store;
-use crate::utils::message;
+use crate::utils::CommandResult;
 
 #[derive(Debug, Serialize)]
 pub struct Check {
@@ -23,8 +23,8 @@ pub fn check_invoice(
     store: State<'_, Store>,
     context_id: i64,
     draft: InvoiceDraft,
-) -> Result<Check, String> {
-    let settings = store.settings(context_id).map_err(message)?;
+) -> CommandResult<Check> {
+    let settings = store.settings(context_id)?;
     Ok(match build_invoice(&draft, &settings, "ENTWURF") {
         Ok(invoice) => Check {
             problems: Vec::new(),

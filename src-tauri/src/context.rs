@@ -25,7 +25,7 @@ pub struct Context {
     /// What is missing before an invoice can be issued under it, as field paths of the form
     #[serde(default)]
     pub missing: Vec<String>,
-    /// What only the XRechnung profile asks for on top
+    /// What only the `XRechnung` profile asks for on top
     #[serde(default)]
     pub missing_for_xrechnung: Vec<String>,
 }
@@ -123,7 +123,7 @@ impl Settings {
         missing
     }
 
-    /// What XRechnung wants of the seller on top: a contact (BR-DE-2) and its email
+    /// What `XRechnung` wants of the seller on top: a contact (BR-DE-2) and its email
     pub fn missing_for_xrechnung(&self) -> Vec<String> {
         let seller = &self.seller;
         [
@@ -146,8 +146,8 @@ mod tests {
     #[test]
     fn a_complete_seller_misses_nothing() {
         let settings = settings();
-        assert!(settings.missing().is_empty());
-        assert!(settings.missing_for_xrechnung().is_empty());
+        assert_eq!(settings.missing(), Vec::<String>::new());
+        assert_eq!(settings.missing_for_xrechnung(), Vec::<String>::new());
     }
 
     #[test]
@@ -179,11 +179,11 @@ mod tests {
             ("seller.name", |s| s.seller.name = " ".into()),
             ("seller.address.street", |s| s.seller.address.street.clear()),
             ("seller.address.post_code", |s| {
-                s.seller.address.post_code.clear()
+                s.seller.address.post_code.clear();
             }),
             ("seller.address.city", |s| s.seller.address.city.clear()),
             ("seller.address.country", |s| {
-                s.seller.address.country = "Deutschland".into()
+                s.seller.address.country = "Deutschland".into();
             }),
             ("seller.iban", |s| s.seller.iban.clear()),
             ("number_pattern", |s| s.number_pattern = "RE".into()),
@@ -205,7 +205,7 @@ mod tests {
         let mut only_tax = settings();
         only_tax.seller.vat_id = None;
         only_tax.seller.tax_number = Some("123/456/78901".into());
-        assert!(only_tax.missing().is_empty());
+        assert_eq!(only_tax.missing(), Vec::<String>::new());
 
         only_tax.seller.tax_number = Some("  ".into());
         assert_eq!(only_tax.missing(), ["seller.vat_id"]);
@@ -218,7 +218,7 @@ mod tests {
         no_contact.seller.phone.clear();
         no_contact.seller.email.clear();
 
-        assert!(no_contact.missing().is_empty());
+        assert_eq!(no_contact.missing(), Vec::<String>::new());
         assert_eq!(
             no_contact.missing_for_xrechnung(),
             ["seller.contact_name", "seller.phone", "seller.email"]

@@ -14,19 +14,19 @@ use crate::render::{self, Branding};
 use crate::render::{layouts, LayoutInfo};
 use crate::sidecar::Sidecars;
 use crate::store::Store;
-use crate::utils::{message, today};
+use crate::utils::{today, CommandError, CommandResult};
 
 /// Where the pictures and fonts of own layouts are kept
-fn files_dir(app: &AppHandle) -> Result<PathBuf, String> {
+fn files_dir(app: &AppHandle) -> CommandResult<PathBuf> {
     crate::utils::data_dir(app)
         .map(|dir| dir.join("layouts"))
-        .map_err(message)
+        .map_err(CommandError::from)
 }
 
 /// The invoice layouts a context and its invoice form can choose from: built in, shared and its own.
 #[tauri::command]
-pub fn layouts_list(store: State<'_, Store>, context_id: i64) -> Result<Vec<LayoutInfo>, String> {
-    Ok(layouts(&store.custom_layouts(context_id).map_err(message)?))
+pub fn layouts_list(store: State<'_, Store>, context_id: i64) -> CommandResult<Vec<LayoutInfo>> {
+    Ok(layouts(&store.custom_layouts(context_id)?))
 }
 
 /// The own layouts of a context, for the layout settings: shared ones and those only it can use
@@ -34,49 +34,48 @@ pub fn layouts_list(store: State<'_, Store>, context_id: i64) -> Result<Vec<Layo
 pub fn layouts_custom(
     store: State<'_, Store>,
     context_id: i64,
-) -> Result<Vec<CustomLayout>, String> {
-    store.custom_layouts(context_id).map_err(message)
+) -> CommandResult<Vec<CustomLayout>> {
+    store.custom_layouts(context_id).map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn layout_save(store: State<'_, Store>, layout: CustomLayout) -> Result<CustomLayout, String> {
+pub fn layout_save(store: State<'_, Store>, layout: CustomLayout) -> CommandResult<CustomLayout> {
     if layout.name.trim().is_empty() {
         return Err("Bitte dem Layout einen Namen geben.".into());
     }
-    if layout.archived && store.is_default_layout(&layout.key()).map_err(message)? {
+    if layout.archived && store.is_default_layout(&layout.key())? {
         return Err("Das Standard-Layout kann nicht archiviert werden.".into());
     }
-    store.save_custom_layout(&layout).map_err(message)
+    store
+        .save_custom_layout(&layout)
+        .map_err(CommandError::from)
 }
 
 /// The invoices made with the layout, drafts included
 #[tauri::command]
-pub fn layout_usage(store: State<'_, Store>, id: i64) -> Result<Vec<LayoutUsage>, String> {
-    store.layout_usages(id).map_err(message)
+pub fn layout_usage(store: State<'_, Store>, id: i64) -> CommandResult<Vec<LayoutUsage>> {
+    store.layout_usages(id).map_err(CommandError::from)
 }
 
 /// Only a layout nothing depends on is deleted: not the default, not used by an invoice (those
 /// archive it instead).
 #[tauri::command]
-pub fn layout_delete(store: State<'_, Store>, id: i64) -> Result<(), String> {
-    if store
-        .is_default_layout(&format!("custom-{id}"))
-        .map_err(message)?
-    {
+pub fn layout_delete(store: State<'_, Store>, id: i64) -> CommandResult<()> {
+    if store.is_default_layout(&format!("custom-{id}"))? {
         return Err("Das Standard-Layout kann nicht gelöscht werden.".into());
     }
-    if !store.layout_usages(id).map_err(message)?.is_empty() {
+    if !store.layout_usages(id)?.is_empty() {
         return Err(
             "Das Layout wird von Rechnungen verwendet, es kann nur archiviert werden.".into(),
         );
     }
-    store.delete_custom_layout(id).map_err(message)
+    store.delete_custom_layout(id).map_err(CommandError::from)
 }
 
 /// Copies a picture for an image part, refuses what is too big or no picture.
 #[tauri::command]
-pub fn layout_import_image(app: AppHandle, path: PathBuf) -> Result<ImageFile, String> {
-    layout_files::import_image(&path, &files_dir(&app)?).map_err(message)
+pub fn layout_import_image(app: AppHandle, path: PathBuf) -> CommandResult<ImageFile> {
+    layout_files::import_image(&path, &files_dir(&app)?).map_err(CommandError::from)
 }
 
 /// What a new layout starts as: the built-in one, parts and all.
@@ -86,8 +85,8 @@ pub fn layout_builtin() -> CustomLayout {
 }
 
 #[tauri::command]
-pub fn layout_import_font(app: AppHandle, path: PathBuf) -> Result<FontFile, String> {
-    layout_files::import_font(&path, &files_dir(&app)?.join("fonts")).map_err(message)
+pub fn layout_import_font(app: AppHandle, path: PathBuf) -> CommandResult<FontFile> {
+    layout_files::import_font(&path, &files_dir(&app)?.join("fonts")).map_err(CommandError::from)
 }
 
 /// Writes a layout, as it is in the form, with its files into a file the user picked.
@@ -97,9 +96,9 @@ pub fn layout_export(
     layout: CustomLayout,
     with_fonts: bool,
     path: PathBuf,
-) -> Result<(), String> {
-    let text = layout_bundle::export(&layout, with_fonts, &files_dir(&app)?).map_err(message)?;
-    std::fs::write(path, text).map_err(message)
+) -> CommandResult<()> {
+    let text = layout_bundle::export(&layout, with_fonts, &files_dir(&app)?)?;
+    std::fs::write(path, text).map_err(CommandError::from)
 }
 
 /// What the user decided about an import, the answers to what it asked for so far
@@ -204,14 +203,13 @@ pub fn layout_import(
     store: State<'_, Store>,
     path: PathBuf,
     choice: Option<ImportChoice>,
-) -> Result<ImportOutcome, String> {
-    let size = std::fs::metadata(&path).map_err(message)?.len();
+) -> CommandResult<ImportOutcome> {
+    let size = std::fs::metadata(&path)?.len();
     if size > layout_bundle::MAX_BUNDLE_BYTES {
         return Err("Die Datei ist zu groß für ein Layout.".into());
     }
-    let parsed =
-        layout_bundle::parse(&std::fs::read_to_string(&path).map_err(message)?).map_err(message)?;
-    let layouts = store.all_custom_layouts().map_err(message)?;
+    let parsed = layout_bundle::parse(&std::fs::read_to_string(&path)?)?;
+    let layouts = store.all_custom_layouts()?;
     let find = |id: i64| layouts.iter().find(|l| l.id == Some(id));
 
     let (name, replacing) = match plan(
@@ -222,8 +220,8 @@ pub fn layout_import(
     ) {
         Plan::AskReplace(id) => {
             let existing = find(id).ok_or("Das Layout gibt es nicht mehr.")?;
-            let uses = store.layout_usages(id).map_err(message)?.len();
-            let is_default = store.is_default_layout(&existing.key()).map_err(message)?;
+            let uses = store.layout_usages(id)?.len();
+            let is_default = store.is_default_layout(&existing.key())?;
             return Ok(ImportOutcome::Replace {
                 existing: Stored {
                     name: existing.name.clone(),
@@ -245,8 +243,7 @@ pub fn layout_import(
         Plan::Replace(id, name) => (name, find(id)),
     };
 
-    let imported =
-        layout_bundle::install(parsed, Some(&name), &files_dir(&app)?).map_err(message)?;
+    let imported = layout_bundle::install(parsed, Some(&name), &files_dir(&app)?)?;
     let mut layout = imported.layout;
     if let Some(existing) = replacing {
         // the same layout, so what points at it keeps doing so
@@ -255,7 +252,7 @@ pub fn layout_import(
         layout.archived = existing.archived;
     }
     Ok(ImportOutcome::Done {
-        layout: Box::new(store.store_imported_layout(&layout).map_err(message)?),
+        layout: Box::new(store.store_imported_layout(&layout)?),
         missing_fonts: imported.missing_fonts,
     })
 }
@@ -304,7 +301,7 @@ pub async fn layout_preview(
     layout: Option<CustomLayout>,
     guides: bool,
     context_id: Option<i64>,
-) -> Result<Preview, String> {
+) -> CommandResult<Preview> {
     // the sample shows the seller of the context the layout is edited for, if there is one yet
     let settings = context_id
         .and_then(|id| store.settings(id).ok())
@@ -324,15 +321,13 @@ pub async fn layout_preview(
         guides,
         ..Branding::for_draft(&draft, &settings, &[])
     };
-    let sidecars = Sidecars::locate(&app).map_err(message)?;
+    let sidecars = Sidecars::locate(&app)?;
 
     let (pages, parts) = tauri::async_runtime::spawn_blocking(move || {
         let dir = tempfile::tempdir()?;
         render::render_sample(&sidecars, dir.path(), &invoice, &branding)
     })
-    .await
-    .map_err(message)?
-    .map_err(message)?;
+    .await??;
     Ok(Preview {
         pages,
         problems: Vec::new(),

@@ -1,5 +1,5 @@
-//! Turns the Typst PDF and the CII XML into a ZUGFeRD / Factur-X PDF and checks the result.
-//! Both are done by Mustang, which also carries veraPDF (PDF/A) and the EN 16931 / XRechnung rule
+//! Turns the Typst PDF and the CII XML into a `ZUGFeRD` / Factur-X PDF and checks the result.
+//! Both are done by Mustang, which also carries veraPDF (PDF/A) and the EN 16931 / `XRechnung` rule
 //! sets, so no PDF/A, XMP or business rule logic lives in this app.
 
 use std::ffi::OsString;
@@ -67,7 +67,7 @@ fn mustang(sidecars: &Sidecars, dir: &Path, args: &[&str]) -> Result<sidecar::Ou
     sidecar::run(&sidecars.java(), &all, dir, Duration::from_secs(120))
 }
 
-/// Attaches `xml` to `pdf` as Factur-X / ZUGFeRD 2 (profile EN 16931 or XRechnung) into `out`.
+/// Attaches `xml` to `pdf` as Factur-X / `ZUGFeRD` 2 (profile EN 16931 or `XRechnung`) into `out`.
 ///
 /// Mustang rewrites the XMP and sets the attachment relationship, the file must not be touched
 /// after this: none of the validators checks the relationship.
@@ -134,7 +134,7 @@ pub(crate) fn parse_report(xml: &str) -> Result<ValidationReport> {
         .context("the report has no overall status")?;
 
     let mut issues = Vec::new();
-    for node in root.descendants().filter(|n| n.is_element()) {
+    for node in root.descendants().filter(roxmltree::Node::is_element) {
         let level = match node.tag_name().name() {
             "error" | "exception" => Level::Error,
             "warning" => Level::Warning,

@@ -1,4 +1,4 @@
-//! Renders the invoice with Typst: a PDF/A-3b for the document, SVG pages for the live preview. The ZUGFeRD parts (XML attachment, Factur-X XMP)
+//! Renders the invoice with Typst: a PDF/A-3b for the document, SVG pages for the live preview. The `ZUGFeRD` parts (XML attachment, Factur-X XMP)
 //! are not added here, that is what the packaging step does with the result.
 
 pub(crate) mod format;
@@ -142,13 +142,19 @@ pub fn render_sample(
     Ok((pages, boxes))
 }
 
+fn has_svg_extension(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+}
+
 fn read_pages(dir: &Path) -> Result<Vec<String>> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .filter(|path| {
             path.file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("page-") && n.ends_with(".svg"))
+                .is_some_and(|n| n.starts_with("page-") && has_svg_extension(n))
         })
         .collect();
     // `{0p}` pads the number, so the names sort like the pages

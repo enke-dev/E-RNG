@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::invoice::{line_from_unit_price, Invoice, ProfileKind};
 use crate::model::{Address, Customer, InvoiceDraft, Position, Seller, Settings};
 
-/// The Peppol business process XRechnung asks for (BT-23)
+/// The Peppol business process `XRechnung` asks for (BT-23)
 const BUSINESS_PROCESS: &str = "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0";
 
 /// Totals as the invoice will show them, for the form's live summary.
@@ -40,8 +40,13 @@ fn problem(field: impl Into<String>, message: impl Into<String>) -> InputProblem
     }
 }
 
-fn blank(text: &Option<String>) -> Option<&str> {
-    text.as_deref().map(str::trim).filter(|t| !t.is_empty())
+/// The value of a parse that went well; what went wrong is noted for the user.
+fn noted<T>(result: Result<T, InputProblem>, problems: &mut Vec<InputProblem>) -> Option<T> {
+    result.map_err(|p| problems.push(p)).ok()
+}
+
+fn blank(text: Option<&str>) -> Option<&str> {
+    text.map(str::trim).filter(|t| !t.is_empty())
 }
 
 /// Accepts `1.234,50` and `1234.50` alike, the webview may hand over either.
@@ -76,18 +81,19 @@ fn electronic(field: &str, email: &str) -> Result<Identifier, InputProblem> {
 
 fn seller_party(seller: &Seller) -> Result<Party, Vec<InputProblem>> {
     let mut problems = Vec::new();
-    let postal = address("seller.address", &seller.address)
-        .map_err(|p| problems.push(p))
-        .ok();
+    let postal = noted(address("seller.address", &seller.address), &mut problems);
     let mut party = Party::new(seller.name.trim(), postal.unwrap_or_default());
-    match (blank(&seller.vat_id), blank(&seller.tax_number)) {
+    match (
+        blank(seller.vat_id.as_deref()),
+        blank(seller.tax_number.as_deref()),
+    ) {
         (Some(vat), _) => party = party.with_vat_identifier(vat),
         // BR-CO-26 wants a seller identifier or a VAT id, a tax number (BT-32) alone does not count
         (None, Some(tax)) => party.identifiers.push(Identifier::new(tax)),
         (None, None) => {}
     }
-    party.tax_registration = blank(&seller.tax_number).map(str::to_owned);
-    party.additional_legal_information = blank(&seller.legal_info).map(str::to_owned);
+    party.tax_registration = blank(seller.tax_number.as_deref()).map(str::to_owned);
+    party.additional_legal_information = blank(seller.legal_info.as_deref()).map(str::to_owned);
     party = party.with_contact(Contact {
         name: Some(seller.contact_name.trim().to_owned()).filter(|n| !n.is_empty()),
         phone: Some(seller.phone.trim().to_owned()).filter(|n| !n.is_empty()),
@@ -108,14 +114,15 @@ fn seller_party(seller: &Seller) -> Result<Party, Vec<InputProblem>> {
 
 fn buyer_party(customer: &Customer) -> Result<Party, Vec<InputProblem>> {
     let mut problems = Vec::new();
-    let postal = address("customer.address", &customer.address)
-        .map_err(|p| problems.push(p))
-        .ok();
+    let postal = noted(
+        address("customer.address", &customer.address),
+        &mut problems,
+    );
     let mut party = Party::new(customer.name.trim(), postal.unwrap_or_default());
-    if let Some(vat) = blank(&customer.vat_id) {
+    if let Some(vat) = blank(customer.vat_id.as_deref()) {
         party = party.with_vat_identifier(vat);
     }
-    if let Some(email) = blank(&customer.email) {
+    if let Some(email) = blank(customer.email.as_deref()) {
         match electronic("customer.email", email) {
             Ok(id) => party = party.with_electronic_address(id),
             Err(p) => problems.push(p),
@@ -129,11 +136,13 @@ fn buyer_party(customer: &Customer) -> Result<Party, Vec<InputProblem>> {
 }
 
 fn payment(seller: &Seller) -> PaymentInstructions {
-    let mut payment =
-        PaymentInstructions::sepa_credit_transfer(seller.iban.replace(' ', ""), blank(&seller.bic));
+    let mut payment = PaymentInstructions::sepa_credit_transfer(
+        seller.iban.replace(' ', ""),
+        blank(seller.bic.as_deref()),
+    );
     if let Some(PaymentMeans::CreditTransfer(transfers)) = &mut payment.means {
         for transfer in transfers {
-            transfer.account_name = blank(&seller.account_holder).map(str::to_owned);
+            transfer.account_name = blank(seller.account_holder.as_deref()).map(str::to_owned);
         }
     }
     payment
@@ -148,7 +157,7 @@ fn line(
     let field = |name: &str| format!("positions[{index}].{name}");
     let mut problems = Vec::new();
 
-    let quantity = match blank(&position.quantity) {
+    let quantity = match blank(position.quantity.as_deref()) {
         None => Some(Decimal::ONE),
         Some(text) => {
             let parsed = decimal(text).filter(|q| !q.is_zero());
@@ -179,7 +188,7 @@ fn line(
         &(index + 1).to_string(),
         position.description.trim(),
         Quantity::new(quantity),
-        blank(&position.unit).unwrap_or("C62"),
+        blank(position.unit.as_deref()).unwrap_or("C62"),
         UnitPriceAmount::new(price),
         if vat_free { "E" } else { "S" },
         Some(rate),
@@ -198,12 +207,15 @@ pub fn build_invoice(
     let settings = draft.frozen.as_ref().unwrap_or(current);
     let mut problems = Vec::new();
 
-    let issue = Date::parse(&draft.issue_date)
-        .map_err(|_| problems.push(problem("issue_date", "Kein gültiges Datum")))
-        .ok();
-    let delivery = Date::parse(&draft.delivery_date)
-        .map_err(|_| problems.push(problem("delivery_date", "Kein gültiges Datum")))
-        .ok();
+    let mut date = |field: &str, text: &str| {
+        let parsed = Date::parse(text).ok();
+        if parsed.is_none() {
+            problems.push(problem(field, "Kein gültiges Datum"));
+        }
+        parsed
+    };
+    let issue = date("issue_date", &draft.issue_date);
+    let delivery = date("delivery_date", &draft.delivery_date);
     // no rate is no VAT: exempt (E) with 0 %, and the reason on the invoice
     let vat_free = settings.vat_free();
     let rate = if vat_free {
@@ -268,13 +280,13 @@ pub fn build_invoice(
             .payment_terms(format!("Zahlbar innerhalb von {days} Tagen ohne Abzug")),
         None => builder.due_in_days(0),
     };
-    if let Some(reference) = blank(&draft.buyer_reference) {
+    if let Some(reference) = blank(draft.buyer_reference.as_deref()) {
         builder = builder.buyer_reference(reference);
     }
     if draft.profile == ProfileKind::XRechnung {
         builder = builder.business_process(BUSINESS_PROCESS);
     }
-    if let Some(note) = blank(&draft.note) {
+    if let Some(note) = blank(draft.note.as_deref()) {
         builder = builder.note(InvoiceNote::new(note));
     }
     for line in lines {
@@ -307,7 +319,7 @@ pub fn for_preview(draft: &InvoiceDraft) -> InvoiceDraft {
         draft.issue_date = today;
     }
     if Date::parse(&draft.delivery_date).is_err() {
-        draft.delivery_date = draft.issue_date.clone();
+        draft.delivery_date.clone_from(&draft.issue_date);
     }
     if draft.positions.is_empty() {
         draft.positions.push(Position::default());
@@ -316,7 +328,9 @@ pub fn for_preview(draft: &InvoiceDraft) -> InvoiceDraft {
         if decimal(&position.price).is_none() {
             position.price = "0".into();
         }
-        if blank(&position.quantity).is_some_and(|q| decimal(q).is_none_or(|q| q.is_zero())) {
+        if blank(position.quantity.as_deref())
+            .is_some_and(|q| decimal(q).is_none_or(|q| q.is_zero()))
+        {
             position.quantity = None;
         }
         if position.description.trim().is_empty() {
@@ -421,7 +435,7 @@ mod tests {
     fn a_complete_draft_becomes_a_valid_invoice() {
         let invoice = build_invoice(&draft(), &settings(), "RE-2026-001").unwrap();
 
-        assert!(validate(&invoice, ProfileKind::En16931).is_empty());
+        assert_eq!(validate(&invoice, ProfileKind::En16931), Vec::new());
         // 10 × 95,00 + 1 × 42,50 = 992,50 net, 19 % = 188,58 (rounded), gross 1.181,08
         let t = totals(&invoice);
         assert_eq!(
@@ -440,7 +454,7 @@ mod tests {
 
         let invoice = build_invoice(&draft(), &free, "RE-1").unwrap();
 
-        assert!(validate(&invoice, ProfileKind::En16931).is_empty());
+        assert_eq!(validate(&invoice, ProfileKind::En16931), Vec::new());
         let t = totals(&invoice);
         assert_eq!(
             (t.net.as_str(), t.vat.as_str(), t.gross.as_str()),
@@ -473,7 +487,7 @@ mod tests {
         // EN 16931 wants a due date or terms (BR-CO-25), so the date is there, the terms are not
         assert_eq!(invoice.due_date, invoice.issue_date);
         assert_eq!(invoice.payment_terms, None);
-        assert!(validate(&invoice, ProfileKind::En16931).is_empty());
+        assert_eq!(validate(&invoice, ProfileKind::En16931), Vec::new());
 
         let with = build_invoice(&draft(), &settings(), "RE-1").unwrap();
         assert!(with.payment_terms.is_some() && with.due_date != with.issue_date);
@@ -589,7 +603,7 @@ mod tests {
 
         let invoice = build_invoice(&draft(), &both, "RE-1").unwrap();
 
-        assert!(invoice.seller.identifiers.is_empty());
+        assert_eq!(invoice.seller.identifiers, Vec::new());
         assert_eq!(
             invoice.seller.vat_identifier.as_deref(),
             Some("DE123456789")

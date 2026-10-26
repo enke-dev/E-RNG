@@ -1,4 +1,4 @@
-//! From invoice data to a validated ZUGFeRD PDF in a work directory:
+//! From invoice data to a validated `ZUGFeRD` PDF in a work directory:
 //! rules check → CII XML → Typst PDF/A-3b → Mustang combine → Mustang validate.
 //!
 //! Nothing here decides whether the result is kept, that is the job of `creation`, which only
@@ -474,7 +474,7 @@ mod tests {
                         render::render_preview(&sidecars, dir.path(), &invoice, &guided).unwrap();
                     pages.iter().enumerate().for_each(|(i, svg)| {
                         std::fs::write(format!("{keep}/own-{base}-{name}-{}.svg", i + 1), svg)
-                            .unwrap()
+                            .unwrap();
                     });
                     std::fs::create_dir_all(&keep).unwrap();
                     std::fs::copy(&produced.pdf, format!("{keep}/own-{base}-{name}.pdf")).unwrap();

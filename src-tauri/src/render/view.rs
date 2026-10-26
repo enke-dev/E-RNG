@@ -36,11 +36,10 @@ impl Branding {
     pub fn for_draft(draft: &InvoiceDraft, settings: &Settings, customs: &[CustomLayout]) -> Self {
         // what the invoice has is its own, even when it is empty (no text for this one); only an
         // invoice that never had a text (made before the texts existed) takes the settings
-        let pick = |own: &Option<String>, default: &Option<String>| {
-            own.as_ref()
-                .or(default.as_ref())
+        let pick = |own: Option<&str>, default: Option<&str>| {
+            own.or(default)
                 .filter(|text| !text.trim().is_empty())
-                .cloned()
+                .map(str::to_owned)
         };
         let wanted = draft
             .layout
@@ -64,8 +63,8 @@ impl Branding {
             custom,
             guides: false,
             marks: false,
-            intro: pick(&draft.intro, &settings.intro),
-            closing: pick(&draft.closing, &settings.closing),
+            intro: pick(draft.intro.as_deref(), settings.intro.as_deref()),
+            closing: pick(draft.closing.as_deref(), settings.closing.as_deref()),
         }
     }
 }
@@ -321,15 +320,9 @@ fn payment_lines(
     out
 }
 
-pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> InvoiceView {
-    let fmt = &Formatter::new(format);
-    let currency = invoice.currency.as_ref().map_or("EUR", |c| c.as_str());
-    let totals = &invoice.totals;
+/// The facts about the document, as the infos part lists them.
+fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Date) -> Vec<Info> {
     let credit = invoice.kind == DocumentKind::CreditNote;
-    let issue = invoice
-        .issue_date
-        .unwrap_or_else(|| Date::new(1970, 1, 1).unwrap());
-
     let date = |key: &'static str, label: &str, date: Date| Info {
         key,
         label: label.into(),
@@ -383,8 +376,17 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
     if let Some(id) = &invoice.seller.vat_identifier {
         infos.push(text("vat-id", "USt-IdNr.", id.clone()));
     }
+    infos
+}
 
-    let lines = invoice
+/// The positions of the table.
+fn line_views(
+    invoice: &Invoice,
+    branding: &Branding,
+    fmt: &Formatter,
+    currency: &str,
+) -> Vec<LineView> {
+    invoice
         .lines
         .iter()
         .map(|l| {
@@ -418,8 +420,18 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
                 net: fmt.money(l.net_amount, currency),
             }
         })
-        .collect();
+        .collect()
+}
 
+/// The sums below the table, down to the amount to pay.
+fn total_rows(
+    invoice: &Invoice,
+    branding: &Branding,
+    fmt: &Formatter,
+    currency: &str,
+) -> Vec<Total> {
+    let totals = &invoice.totals;
+    let credit = invoice.kind == DocumentKind::CreditNote;
     let mut rows = vec![Total {
         label: "Summe der Positionen".into(),
         value: fmt.money(totals.line_total, currency),
@@ -490,6 +502,20 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         value: fmt.money(totals.due, currency),
         strong: true,
     });
+    rows
+}
+
+pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> InvoiceView {
+    let fmt = &Formatter::new(format);
+    let currency = invoice.currency.as_ref().map_or("EUR", |c| c.as_str());
+    let credit = invoice.kind == DocumentKind::CreditNote;
+    let issue = invoice
+        .issue_date
+        .unwrap_or_else(|| Date::new(1970, 1, 1).unwrap());
+
+    let infos = info_rows(invoice, branding, fmt, issue);
+    let lines = line_views(invoice, branding, fmt, currency);
+    let rows = total_rows(invoice, branding, fmt, currency);
 
     let mut vat_notes: Vec<String> = invoice
         .vat_breakdown

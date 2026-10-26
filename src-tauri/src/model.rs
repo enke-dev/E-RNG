@@ -52,7 +52,7 @@ pub struct Seller {
 #[serde(default)]
 pub struct Settings {
     pub seller: Seller,
-    /// VAT rate in percent, one for the whole app; blank: no VAT is charged (e.g. § 19 UStG), the
+    /// VAT rate in percent, one for the whole app; blank: no VAT is charged (e.g. § 19 `UStG`), the
     /// invoices show none and say why with `vat_note`
     pub tax_rate: String,
     /// Why no VAT is charged, on invoices without it (the reason of the exemption, BT-120)
@@ -110,8 +110,8 @@ impl Settings {
             };
         }
         if let Some(footer) = self.footer.take() {
-            let empty = |text: &Option<String>| text.as_deref().is_none_or(|t| t.trim().is_empty());
-            if empty(&self.seller.legal_info) {
+            let empty = |text: Option<&str>| text.is_none_or(|t| t.trim().is_empty());
+            if empty(self.seller.legal_info.as_deref()) {
                 self.seller.legal_info = Some(footer).filter(|f| !f.trim().is_empty());
             }
         }
