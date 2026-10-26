@@ -53,7 +53,7 @@ export function activate(id: number) {
 
 /** The seller name labels a context everywhere, a new one has none yet */
 export const label = (context: Pick<Context, 'settings'> | undefined) =>
-  context?.settings.seller.name.trim() || 'Neuer Kontext';
+  context?.settings.seller.name.trim() || 'Unbenannt';
 
 export const contextById = (id: number | null | undefined) =>
   id == null ? undefined : (contexts.get() ?? []).find(c => c.id === id);

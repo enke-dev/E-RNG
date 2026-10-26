@@ -15,10 +15,18 @@ header {
   color: var(--wa-color-text-quiet);
   font-size: var(--wa-font-size-s);
   text-transform: uppercase;
+
+  span {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* a new group that does not exist yet: the form next to the list is for it */
-:host([placeholder]) header {
+:host([placeholder]) header span {
   font-style: italic;
 }
 

@@ -458,22 +458,26 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     required = false
   ) {
     const settings = (this.context as Context).settings;
-    return html`<wa-input
-      label="${caption}"
-      type="${type as WaInput['type']}"
-      ?required="${required}"
-      .value="${settings.seller[key]}"
-      @input="${(e: Event) => this.edit(s => (s.seller[key] = text(e)))}"
-    ></wa-input>`;
+    return html`
+      <wa-input
+        label="${caption}"
+        type="${type as WaInput['type']}"
+        ?required="${required}"
+        .value="${settings.seller[key]}"
+        @input="${(e: Event) => this.edit(s => (s.seller[key] = text(e)))}"
+      ></wa-input>
+    `;
   }
 
   private optional(key: 'vat_id' | 'tax_number' | 'bic' | 'account_holder', caption: string) {
     const settings = (this.context as Context).settings;
-    return html`<wa-input
-      label="${caption}"
-      .value="${settings.seller[key] ?? ''}"
-      @input="${(e: Event) => this.edit(s => (s.seller[key] = nullable(text(e))))}"
-    ></wa-input>`;
+    return html`
+      <wa-input
+        label="${caption}"
+        .value="${settings.seller[key] ?? ''}"
+        @input="${(e: Event) => this.edit(s => (s.seller[key] = nullable(text(e))))}"
+      ></wa-input>
+    `;
   }
 
   private async showNumberExample() {
@@ -742,32 +746,34 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     >
       ${
         question?.kind === 'replace'
-          ? html`<div class="stack">
-              <span>
-                „${question.existing.name}“ gibt es schon (gespeichert
-                ${this.when(question.existing.updated_at)}). Die Datei
+          ? html`
+              <div class="stack">
+                <span>
+                  „${question.existing.name}“ gibt es schon (gespeichert
+                  ${this.when(question.existing.updated_at)}). Die Datei
+                  ${
+                    question.incoming_updated_at > question.existing.updated_at
+                      ? 'ist neuer'
+                      : question.incoming_updated_at < question.existing.updated_at
+                        ? 'ist älter'
+                        : 'hat denselben Stand'
+                  }
+                  (${this.when(question.incoming_updated_at)}).
+                </span>
                 ${
-                  question.incoming_updated_at > question.existing.updated_at
-                    ? 'ist neuer'
-                    : question.incoming_updated_at < question.existing.updated_at
-                      ? 'ist älter'
-                      : 'hat denselben Stand'
+                  question.existing.uses > 0 || question.existing.is_default
+                    ? html`<span class="muted">
+                        ${question.existing.is_default ? 'Es ist das Standard-Layout. ' : ''}
+                        ${
+                          question.existing.uses > 0
+                            ? `${question.existing.uses} Rechnungen und Entwürfe verwenden es, bereits exportierte behalten ihr Aussehen.`
+                            : ''
+                        }
+                      </span>`
+                    : nothing
                 }
-                (${this.when(question.incoming_updated_at)}).
-              </span>
-              ${
-                question.existing.uses > 0 || question.existing.is_default
-                  ? html`<span class="muted">
-                      ${question.existing.is_default ? 'Es ist das Standard-Layout. ' : ''}
-                      ${
-                        question.existing.uses > 0
-                          ? `${question.existing.uses} Rechnungen und Entwürfe verwenden es, bereits exportierte behalten ihr Aussehen.`
-                          : ''
-                      }
-                    </span>`
-                  : nothing
-              }
-            </div>`
+              </div>
+            `
           : question?.kind === 'name-taken'
             ? html`<div class="stack">
                 <span>
@@ -917,27 +923,37 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     const active = activeContext.get()?.id;
     // on the pages of the layouts the active context stays open, its pages remain reachable
     const open = this.contextRoute?.id ?? active;
-    const status = (c: Context) => html`
-      ${c.missing.length > 0 ? html`<wa-tag size="s" variant="warning">unvollständig</wa-tag>` : nothing}
-      ${
-        // with one context there is nothing to tell apart or to switch to
-        available.get().length < 2
-          ? nothing
-          : c.id === active
-            ? html`<wa-tag size="s" variant="brand">Aktiv</wa-tag>`
-            : html`
-                <wa-button
-                  size="xs"
-                  appearance="outlined"
-                  variant="neutral"
-                  class="tag"
-                  @click="${() => void switchContext(c.id as number)}"
-                >
-                  Wechseln
-                </wa-button>
-              `
+    const status = (c: Context | undefined) => {
+      if (c === undefined) {
+        return nothing;
       }
-    `;
+      if (c.id === null) {
+        return html`<wa-tag size="s" appearance="outlined">Neu</wa-tag>`;
+      }
+      if (c.missing.length > 0) {
+        return html`<wa-tag size="s" variant="warning">unvollständig</wa-tag>`;
+      }
+      return html`
+        ${
+          // with one context there is nothing to tell apart or to switch to
+          available.get().length < 2
+            ? nothing
+            : c.id === active
+              ? html`<wa-tag size="s" variant="brand">Aktiv</wa-tag>`
+              : html`
+                  <wa-button
+                    size="xs"
+                    appearance="outlined"
+                    variant="neutral"
+                    class="tag"
+                    @click="${() => void switchContext(c.id as number)}"
+                  >
+                    Wechseln
+                  </wa-button>
+                `
+        }
+      `;
+    };
     const group = (id: number | 'new', heading: string, extra: unknown = nothing) => html`
       <erng-list-group heading="${heading}" ?placeholder="${id === 'new'}">
         <span slot="action" class="row">${extra}</span>
@@ -959,16 +975,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     `;
     return html`
       ${available.get().map(c => group(c.id as number, label(c), status(c)))}
-      ${open === 'new' ? group('new', label(this.context)) : nothing}
+      ${open === 'new' ? group('new', label(this.context), status(this.context)) : nothing}
       ${
         open === 'new'
           ? nothing
-          : html`<erng-list-item
-              class="add"
-              @click="${() => goto('/settings/context-new-company')}"
-            >
-              + Kontext hinzufügen
-            </erng-list-item>`
+          : html`
+              <erng-list-item class="add" @click="${() => goto('/settings/context-new-company')}">
+                + Kontext hinzufügen
+              </erng-list-item>
+            `
       }
     `;
   }
@@ -1219,13 +1234,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     const back = activeContext.get()?.id;
     return back == null
       ? nothing
-      : html`<wa-button
-          slot="actions"
-          appearance="outlined"
-          @click="${() => goto(`/settings/context-${back}-company`)}"
-        >
-          Abbrechen
-        </wa-button>`;
+      : html`
+          <wa-button
+            slot="actions"
+            appearance="outlined"
+            @click="${() => goto(`/settings/context-${back}-company`)}"
+          >
+            Abbrechen
+          </wa-button>
+        `;
   }
 
   private contextPage(context: Context, page: Page) {
