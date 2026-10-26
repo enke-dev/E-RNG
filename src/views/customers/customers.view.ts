@@ -104,7 +104,15 @@ export class CustomersView extends ErngElement.withStyles(styles) {
         (this.groups === 'all' ||
           (this.groups === 'public' && c.buyer_reference !== null) ||
           (this.groups === 'private' && c.buyer_reference === null)) &&
-        [c.name, c.address.city, c.address.post_code, c.email ?? '', c.vat_id ?? '']
+        [
+          c.name,
+          c.address.city,
+          c.address.post_code,
+          c.email ?? '',
+          c.vat_id ?? '',
+          // the tags on the card are searchable too
+          ...contextsOf(c.context_id).map(label),
+        ]
           .join(' ')
           .toLowerCase()
           .includes(query)

@@ -107,7 +107,10 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
     return this.templates.filter(
       t =>
         (this.unit === 'all' || (t.unit ?? 'C62') === this.unit) &&
-        t.description.toLowerCase().includes(query)
+        [t.description, ...contextsOf(t.context_id).map(label)]
+          .join(' ')
+          .toLowerCase()
+          .includes(query)
     );
   }
 
