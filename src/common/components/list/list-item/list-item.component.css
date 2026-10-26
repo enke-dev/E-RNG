@@ -57,8 +57,13 @@ button {
   grid-row: 1;
 }
 
+/* one line only: name and end share it, centered on each other */
+:host(:not([has-sub])) button {
+  align-items: center;
+}
+
 /* nothing below it on the right: it stands beside both lines, in the middle */
-:host([has-end]:not([has-sub-end])) ::slotted([slot='end']) {
+:host([has-end][has-sub]:not([has-sub-end])) ::slotted([slot='end']) {
   grid-row: 1 / span 2;
   align-self: center;
 }

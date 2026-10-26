@@ -29,7 +29,7 @@ export class ListItemComponent extends ErngElement.withStyles(styles) {
   @property({ type: String, reflect: true })
   override readonly role = 'listitem';
 
-  /** The grid places `end` and `sub` by what is next to them: the host says which slots are filled */
+  /** The grid places the slots by what is next to them: the host says which ones are filled */
   private noted(attribute: string) {
     return (e: Event) =>
       this.toggleAttribute(attribute, (e.target as HTMLSlotElement).assignedElements().length > 0);
@@ -45,7 +45,7 @@ export class ListItemComponent extends ErngElement.withStyles(styles) {
       >
         <span class="name"><slot></slot></span>
         <slot name="end" @slotchange="${this.noted('has-end')}"></slot>
-        <slot name="sub"></slot>
+        <slot name="sub" @slotchange="${this.noted('has-sub')}"></slot>
         <slot name="sub-end" @slotchange="${this.noted('has-sub-end')}"></slot>
       </button>
     `;
