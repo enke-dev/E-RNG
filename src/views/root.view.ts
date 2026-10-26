@@ -6,6 +6,7 @@ import '@awesome.me/webawesome/dist/components/select/select.js';
 import '../common/components/updater/updater.component.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
+import { listen } from '@tauri-apps/api/event';
 import { platform } from '@tauri-apps/plugin-os';
 import { html, nothing } from 'lit';
 import { customElement, eventOptions } from 'lit/decorators.js';
@@ -25,7 +26,7 @@ import {
 import { rememberRoute } from '../common/utils/memory.utils.js';
 import { notifyError } from '../common/utils/notify.utils.js';
 import { followOpenedFiles } from '../common/utils/opened.utils.js';
-import { registerRouter } from '../common/utils/routing.utils.js';
+import { goto, registerRouter } from '../common/utils/routing.utils.js';
 import { errors, isErrored, isLoading } from '../state.js';
 import { routes } from './root.routes.js';
 import styles from './root.view.css';
@@ -48,6 +49,7 @@ const isActive = (href: string) =>
 @customElement('erng-root')
 export class RootView extends ErngElement.withStyles(styles) {
   readonly #router = registerRouter(this, routes);
+  #stopMenu: (() => void) | undefined;
 
   @eventOptions({ passive: true })
   private handleErrorClick() {
@@ -60,6 +62,23 @@ export class RootView extends ErngElement.withStyles(styles) {
     this.toggleAttribute('macos', platform() === 'macos');
     void followOpenedFiles();
     loadContexts().catch((error: unknown) => notifyError(error));
+    // the menu bar entry "Einstellungen…" (⌘,), the settings stay where they are if open already
+    void listen('open-settings', () => {
+      if (!location.pathname.startsWith('/settings')) {
+        goto('/settings');
+      }
+    }).then(stop => {
+      if (this.isConnected) {
+        this.#stopMenu = stop;
+      } else {
+        stop();
+      }
+    });
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.#stopMenu?.();
   }
 
   /** Another context: its brand color tints the UI, what shows is what it owns */

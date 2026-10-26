@@ -20,10 +20,11 @@ use tauri::menu::{Menu, MenuItem, MenuItemKind};
 use tauri::{Emitter, Manager};
 
 const UPDATE_CHECK_MENU_ID: &str = "check-for-updates";
+const SETTINGS_MENU_ID: &str = "open-settings";
 
-/// Puts "look for updates" into the menu bar: under "About" in the app menu on macOS, at the end of
-/// the last menu elsewhere.
-fn add_update_check_to_menu(app: &tauri::App) -> tauri::Result<()> {
+/// Puts "look for updates" and "settings" into the menu bar: under "About" in the app menu on macOS
+/// (settings with the usual shortcut), at the end of the last menu elsewhere.
+fn add_entries_to_menu(app: &tauri::App) -> tauri::Result<()> {
     let handle = app.handle();
     let menu = match app.menu() {
         Some(menu) => menu,
@@ -36,9 +37,16 @@ fn add_update_check_to_menu(app: &tauri::App) -> tauri::Result<()> {
     let item = MenuItem::with_id(
         handle,
         UPDATE_CHECK_MENU_ID,
-        "Nach Updates suchen…",
+        "Nach Updates suchen",
         true,
         None::<&str>,
+    )?;
+    let settings = MenuItem::with_id(
+        handle,
+        SETTINGS_MENU_ID,
+        "Einstellungen",
+        true,
+        Some("CmdOrCtrl+,"),
     )?;
     let submenus: Vec<_> = menu
         .items()?
@@ -52,9 +60,11 @@ fn add_update_check_to_menu(app: &tauri::App) -> tauri::Result<()> {
         // the app menu is the first one, "About" its first entry
         if let Some(app_menu) = submenus.first() {
             app_menu.insert(&item, 1)?;
+            app_menu.insert(&settings, 2)?;
         }
     } else if let Some(last) = submenus.last() {
         last.append(&item)?;
+        last.append(&settings)?;
     }
     Ok(())
 }
@@ -84,13 +94,16 @@ pub fn run() {
                 let _ = layout_files::prune(&dir.join("layouts"), &layouts);
             }
             app.manage(store);
-            add_update_check_to_menu(app)?;
+            add_entries_to_menu(app)?;
             Ok(())
         })
         .on_menu_event(|app, event| {
-            // the window looks for an update and says what it found
+            // the window does what the entry says: it looks for an update and says what it found, or
+            // opens the settings
             if event.id() == UPDATE_CHECK_MENU_ID {
                 let _ = app.emit("check-for-updates", ());
+            } else if event.id() == SETTINGS_MENU_ID {
+                let _ = app.emit("open-settings", ());
             }
         })
         .manage(creation::Creating::default())
