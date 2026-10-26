@@ -1,6 +1,6 @@
 [package]
 name = "e_rng"
-version = "0.5.0"
+version = "0.5.1"
 description = "Desktop app to create ZUGFeRD/Factur-X invoices and XRechnung XML"
 authors = ["David Enke <de@enke.dev>"]
 edition = "2021"
