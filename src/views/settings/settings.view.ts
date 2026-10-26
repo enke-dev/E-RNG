@@ -1017,7 +1017,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           </span>
           ${
             this.section === `${LAYOUT}new`
-              ? html`<erng-list-item placeholder selected>Neues Layout</erng-list-item>`
+              ? html`
+                  <erng-list-item placeholder selected>
+                    ${this.editing?.name.trim() || 'Unbenannt'}
+                    <span slot="end"><wa-tag size="s" appearance="outlined">Neu</wa-tag></span>
+                  </erng-list-item>
+                `
               : nothing
           }
           ${this.item(`${LAYOUT}standard`, this.builtInName, 'Eingebaut', isDefault('standard'))}
