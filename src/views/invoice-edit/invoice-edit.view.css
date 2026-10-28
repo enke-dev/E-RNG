@@ -54,6 +54,11 @@ wa-dialog::part(dialog) {
   padding-left: var(--wa-space-xs);
 }
 
+/* the positions lay themselves out by the width of their card, not of the window */
+#positions .stack {
+  container: positions / inline-size;
+}
+
 /* positions: all rows share the columns of the container (subgrid), so the labels of the head sit
    over the fields; a row is still its own element and can be dragged as a whole */
 .positions {
@@ -63,14 +68,16 @@ wa-dialog::part(dialog) {
   grid-template-columns: var(--wa-form-control-height) minmax(10rem, 1fr) 5rem 8rem 7.5rem auto;
   break-inside: auto;
 
-  /* side by side, the header row names the columns: the labels of the fields would repeat it */
-  &:not(.stacked) :is(wa-input, wa-textarea, wa-select)::part(form-control-label) {
-    display: none;
+  /* side by side, the header row names the columns: the labels of the fields would repeat it;
+     the width is what the columns above need at least, with the actions and the gaps */
+  @container positions (width >= 42rem) {
+    & :is(wa-input, wa-textarea, wa-select)::part(form-control-label) {
+      display: none;
+    }
   }
 
-  /* too narrow for the minimum widths of the fields (measured, see measurePositions): stack them,
-     the fields carry their labels then */
-  &.stacked {
+  /* narrower than that: stacked, the fields carry their labels then */
+  @container positions (width < 42rem) {
     grid-template-columns: var(--wa-form-control-height) repeat(3, minmax(0, 1fr));
 
     & .position {

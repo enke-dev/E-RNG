@@ -25,7 +25,6 @@ import { ask, save } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { ref } from 'lit/directives/ref.js';
 
 import type {
   Check,
@@ -86,8 +85,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   @state() private templateQuery = '';
   @state() private preview: Preview | undefined;
   @state() private previewError = '';
-  /** The fields of a position do not fit side by side any more: stacked, each with its label */
-  @state() private stacked = false;
 
   /** Edits that are not saved yet: a stored draft saves them shortly, a new one when it is left */
   #dirty = false;
@@ -98,11 +95,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   #previewTimer: ReturnType<typeof setTimeout> | undefined;
-
-  /** The positions grid is watched for the width its fields need, see `measurePositions` */
-  #positionsObserver: ResizeObserver | undefined;
-  #positions: Element | undefined;
-  #positionsNeed = 0;
 
   /** Answers of the renderer can arrive out of order, only the newest request counts */
   #previewRequest = 0;
@@ -124,7 +116,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
     clearTimeout(this.#timer);
     clearTimeout(this.#previewTimer);
-    this.#positionsObserver?.disconnect();
   }
 
   /** Opening another invoice keeps what was typed into a draft instead of dropping it */
@@ -675,44 +666,10 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   }
 
   /** Called with the positions grid whenever it is (re)rendered or removed */
-  private observePositions = (element?: Element) => {
-    if (element === this.#positions) {
-      return;
-    }
-    this.#positionsObserver?.disconnect();
-    this.#positions = element;
-    if (element) {
-      this.#positionsObserver = new ResizeObserver(() =>
-        this.measurePositions(element as HTMLElement)
-      );
-      this.#positionsObserver.observe(element);
-    }
-  };
-
-  /**
-   * Positions are laid out side by side as long as their fields fit with the minimum widths they
-   * declare, there is no breakpoint: the moment the grid overflows, it remembers how wide it needs
-   * to be (the resolved columns plus gaps) and stacks the fields, and it goes back as soon as that
-   * width is there again.
-   */
-  private measurePositions(positions: HTMLElement) {
-    if (!this.stacked) {
-      if (positions.scrollWidth > positions.clientWidth + 1) {
-        const style = getComputedStyle(positions);
-        const columns = style.gridTemplateColumns.split(' ').map(parseFloat);
-        const gap = parseFloat(style.columnGap) || 0;
-        this.#positionsNeed = columns.reduce((sum, c) => sum + c, 0) + gap * (columns.length - 1);
-        this.stacked = true;
-      }
-    } else if (positions.clientWidth >= this.#positionsNeed) {
-      this.stacked = false;
-    }
-  }
-
   private renderPositions(locked: boolean) {
     const draft = this.draft as InvoiceDraft;
     return html`
-      <div class="positions ${this.stacked ? 'stacked' : ''}" ${ref(this.observePositions)}>
+      <div class="positions">
         <div class="position head">
           <span></span>
           <span>Beschreibung</span>
