@@ -139,7 +139,7 @@ mod tests {
 
         assert_eq!(
             files.pdf.path,
-            PathBuf::from("invoices/3/RE_2026_001.pdf")
+            PathBuf::from("invoices/3/RE_2026-001.pdf")
                 .to_string_lossy()
                 .as_ref()
         );

@@ -49,6 +49,9 @@ pub fn safe_name(number: &str) -> String {
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
                 c
+            } else if c == '/' || c == '\\' {
+                // `12/26` reads as a number, not as a folder
+                '-'
             } else {
                 '_'
             }
@@ -111,8 +114,8 @@ mod tests {
 
     #[test]
     fn file_names_stay_harmless() {
-        assert_eq!(safe_name("RE-2026/001"), "RE-2026_001");
-        assert_eq!(safe_name("../../etc"), "______etc");
+        assert_eq!(safe_name("RE-2026/001"), "RE-2026-001");
+        assert_eq!(safe_name("../../etc"), "__-__-etc");
         assert_eq!(safe_name(""), "invoice");
     }
 

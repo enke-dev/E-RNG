@@ -151,6 +151,7 @@ pub fn run() {
             commands::layouts_command::layouts_list,
             commands::opened_files_command::opened_files,
             commands::preview_invoice_command::preview_invoice,
+            commands::preview_invoice_command::invoice_draft_pdf,
             commands::templates_command::template_delete,
             commands::templates_command::template_save,
             commands::templates_command::templates_list,

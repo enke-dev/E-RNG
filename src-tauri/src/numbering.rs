@@ -62,6 +62,16 @@ impl Pattern {
         )
     }
 
+    /// What a number of this day looks like before it is given: the counter as `#`, `RE-2026-###`.
+    pub fn masked(&self, date: Date) -> String {
+        format!(
+            "{}{}{}",
+            date_pattern(date, &self.before),
+            "#".repeat(self.width),
+            date_pattern(date, &self.after)
+        )
+    }
+
     /// The number after the highest of `existing` that the pattern could have made on this day.
     pub fn next<'a>(&self, date: Date, existing: impl IntoIterator<Item = &'a str>) -> String {
         let before = date_pattern(date, &self.before);
@@ -148,6 +158,14 @@ mod tests {
         );
         // an N in brackets is no counter
         assert_eq!(next("[NEU-]NNN", day(2026, 1, 1), &[]), "NEU-001");
+    }
+
+    #[test]
+    fn a_masked_number_shows_the_pattern_with_the_counter_left_open() {
+        let masked = |pattern: &str| Pattern::parse(pattern).unwrap().masked(day(2026, 3, 7));
+
+        assert_eq!(masked(DEFAULT_PATTERN), "RE-2026-###");
+        assert_eq!(masked("[Nr. ]N[/]YY"), "Nr. #/26");
     }
 
     #[test]

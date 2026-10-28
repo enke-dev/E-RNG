@@ -29,6 +29,8 @@ pub struct Branding {
     pub guides: bool,
     /// Marks what is wrong with a layout (a blurry image) in the sample, never in a real invoice
     pub marks: bool,
+    /// Not created yet: the title says it is a draft, the number is only the pattern
+    pub draft: bool,
 }
 
 impl Branding {
@@ -63,6 +65,7 @@ impl Branding {
             custom,
             guides: false,
             marks: false,
+            draft: false,
             intro: pick(draft.intro.as_deref(), settings.intro.as_deref()),
             closing: pick(draft.closing.as_deref(), settings.closing.as_deref()),
         }
@@ -529,7 +532,12 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
     vat_notes.dedup();
 
     InvoiceView {
-        title: if credit { "Gutschrift" } else { "Rechnung" },
+        title: match (credit, branding.draft) {
+            (true, false) => "Gutschrift",
+            (true, true) => "Gutschriftsentwurf",
+            (false, false) => "Rechnung",
+            (false, true) => "Rechnungsentwurf",
+        },
         number: invoice.number.clone().unwrap_or_default(),
         issue: YearMonthDay {
             year: issue.year(),

@@ -147,12 +147,16 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   }
 
   /** Tells the list around us that invoices changed, so it can reload */
-  private announce(options: { id?: number | null; deleted?: boolean } = {}) {
+  private announce(options: { id?: number | null; deleted?: boolean; restored?: boolean } = {}) {
     this.dispatchEvent(
       new CustomEvent('invoice-changed', {
         bubbles: true,
         composed: true,
-        detail: { id: options.id ?? this.stored?.id ?? null, deleted: options.deleted ?? false },
+        detail: {
+          id: options.id ?? this.stored?.id ?? null,
+          deleted: options.deleted ?? false,
+          restored: options.restored ?? false,
+        },
       })
     );
   }
@@ -346,6 +350,10 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       return;
     }
     try {
+      // a draft is copied as it is on screen, not as it was last saved
+      if (this.#dirty) {
+        await this.persist({ updateUrl: false });
+      }
       const copy = await api.invoiceDuplicate(this.stored.id);
       this.#dirty = false;
       this.announce({ id: copy.id });
@@ -399,6 +407,19 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       this.announce({ id, deleted: true });
       notify('Die Rechnung ist archiviert und steht nicht mehr in der Liste.');
       goto('/');
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+
+  private async restore() {
+    if (!this.stored) {
+      return;
+    }
+    try {
+      this.stored = await api.invoiceUnarchive(this.stored.id);
+      this.announce({ restored: true });
+      notify('Die Rechnung ist wiederhergestellt und steht wieder in der Liste.');
     } catch (error) {
       notifyError(error);
     }
@@ -471,7 +492,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     const number = stored.number ?? 'Rechnung';
     try {
       const target = await save({
-        defaultPath: `${number}.${kind}`,
+        defaultPath: `${fileName(number)}.${kind}`,
         filters: [{ name: kind.toUpperCase(), extensions: [kind] }],
       });
       // cancelling the picker means "not now": nothing is written
@@ -485,6 +506,31 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         kind === 'xml' ? target : null
       );
       notify(`Als ${kind.toUpperCase()} gespeichert.`);
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      this.outputting = false;
+    }
+  }
+
+  /** The draft as a PDF to show around before it is created: it says draft and has no number */
+  private async saveDraftPdf() {
+    const stored = this.stored;
+    if (!stored || !this.draft || this.locked || this.outputting) {
+      return;
+    }
+    const customer = this.draft.customer.name.trim();
+    try {
+      const target = await save({
+        defaultPath: `${fileName(`Rechnungsentwurf${customer ? ` ${customer}` : ''}`)}.pdf`,
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      });
+      if (!target) {
+        return;
+      }
+      this.outputting = true;
+      await api.invoiceDraftPdf(this.draft, stored.id, this.contextId as number, target);
+      notify('Der Entwurf ist als PDF gespeichert.');
     } catch (error) {
       notifyError(error);
     } finally {
@@ -920,7 +966,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   private renderStatus() {
     const stored = this.stored;
     if (!stored) {
-      return nothing;
+      return html`<div class="status"><wa-tag appearance="outlined">Neu</wa-tag></div>`;
     }
     if (stored.status === 'draft') {
       return html`<div class="status"><wa-tag>Entwurf</wa-tag></div>`;
@@ -928,6 +974,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     return html`
       <div class="status">
         <wa-tag>${stored.number}</wa-tag>
+        ${stored.archived_at ? html`<wa-tag variant="neutral">Archiviert</wa-tag>` : nothing}
         ${
           stored.paid_at
             ? html`<wa-tag variant="success">Bezahlt am ${formatDate(stored.paid_at)}</wa-tag>`
@@ -1118,82 +1165,116 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
           ${
             stored
               ? html`<wa-button appearance="outlined" @click="${this.close}">Schließen</wa-button>`
-              : html`<wa-button appearance="outlined" @click="${this.cancelNew}">
-                  Abbrechen
-                </wa-button>`
+              : html`
+                  <wa-button appearance="outlined" @click="${this.cancelNew}">
+                    Abbrechen
+                  </wa-button>
+                `
           }
         </div>
         ${this.renderStatus()}
         <nav>
           ${
             stored
-              ? html`<wa-button-group label="Rechnung">
-                  ${
-                    locked
-                      ? html`<wa-button appearance="outlined" @click="${this.duplicate}">
-                            Duplizieren
-                          </wa-button>
-                          <wa-button appearance="outlined" @click="${this.archive}">
-                            Archivieren
-                          </wa-button>`
-                      : html`<wa-button
-                          appearance="outlined"
-                          variant="danger"
-                          @click="${this.deleteDraft}"
-                        >
-                          Entwurf löschen
-                        </wa-button>`
-                  }
-                </wa-button-group>`
+              ? html`
+                  <wa-button-group label="Rechnung">
+                    <wa-button appearance="outlined" @click="${this.duplicate}">
+                      Duplizieren
+                    </wa-button>
+                    ${
+                      locked
+                        ? stored.archived_at
+                          ? html`
+                              <wa-button appearance="outlined" @click="${this.restore}">
+                                Wiederherstellen
+                              </wa-button>
+                            `
+                          : html`
+                              <wa-button appearance="outlined" @click="${this.archive}">
+                                Archivieren
+                              </wa-button>
+                            `
+                        : html`
+                            <wa-button
+                              appearance="outlined"
+                              variant="danger"
+                              @click="${this.deleteDraft}"
+                            >
+                              Entwurf löschen
+                            </wa-button>
+                          `
+                    }
+                  </wa-button-group>
+                `
               : nothing
           }
           ${
             locked
-              ? html`<wa-button-group label="Exportieren">
-                  <wa-button
-                    variant="brand"
-                    ?loading="${this.outputting}"
-                    @click="${() => void this.output(this.outputKind)}"
-                  >
-                    Exportieren als
-                  </wa-button>
-                  <wa-dropdown
-                    placement="top-end"
-                    @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) => {
-                      this.outputKind = e.detail.item.value === 'xml' ? 'xml' : 'pdf';
-                    }}"
-                  >
+              ? html`
+                  <wa-button-group label="Exportieren">
                     <wa-button
-                      slot="trigger"
                       variant="brand"
-                      with-caret
-                      ?disabled="${this.outputting}"
-                      aria-label="Format zum Exportieren"
+                      ?loading="${this.outputting}"
+                      @click="${() => void this.output(this.outputKind)}"
                     >
-                      ${this.outputKind.toUpperCase()}
+                      Exportieren als
                     </wa-button>
-                    <wa-dropdown-item value="pdf">PDF</wa-dropdown-item>
-                    <wa-dropdown-item value="xml">XML</wa-dropdown-item>
-                  </wa-dropdown>
-                </wa-button-group>`
-              : html`<wa-button-group label="Speichern">
-                  <wa-button
-                    ?loading="${this.busy}"
-                    ?disabled="${this.creating}"
-                    @click="${this.saveDraft}"
-                    appearance="outlined"
-                  >
-                    Entwurf speichern
-                  </wa-button>
-                  <wa-button
-                    variant="brand"
-                    ?loading="${this.creating}"
-                    ?disabled="${blocked}"
-                    @click="${this.create}"
-                  >
-                    Prüfen und erstellen
-                  </wa-button>
-                </wa-button-group>`
+                    <wa-dropdown
+                      placement="top-end"
+                      @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) => {
+                        this.outputKind = e.detail.item.value === 'xml' ? 'xml' : 'pdf';
+                      }}"
+                    >
+                      <wa-button
+                        slot="trigger"
+                        variant="brand"
+                        with-caret
+                        ?disabled="${this.outputting}"
+                        aria-label="Format zum Exportieren"
+                      >
+                        ${this.outputKind.toUpperCase()}
+                      </wa-button>
+                      <wa-dropdown-item value="pdf">PDF</wa-dropdown-item>
+                      <wa-dropdown-item value="xml">XML</wa-dropdown-item>
+                    </wa-dropdown>
+                  </wa-button-group>
+                `
+              : html`
+                  <wa-button-group label="Speichern">
+                    ${
+                      // a stored draft saves itself, what it can still be saved as is a PDF to show
+                      stored
+                        ? html`
+                            <wa-button
+                              ?loading="${this.outputting}"
+                              ?disabled="${this.creating}"
+                              @click="${this.saveDraftPdf}"
+                              appearance="outlined"
+                            >
+                              Exportieren als PDF
+                            </wa-button>
+                          `
+                        : html`
+                            <wa-button
+                              ?loading="${this.busy}"
+                              ?disabled="${this.creating}"
+                              @click="${this.saveDraft}"
+                              appearance="outlined"
+                            >
+                              Entwurf speichern
+                            </wa-button>
+                          `
+                    }
+                    <wa-button
+                      variant="brand"
+                      ?loading="${this.creating}"
+                      ?disabled="${blocked}"
+                      @click="${this.create}"
+                    >
+                      Prüfen und erstellen
+                    </wa-button>
+                  </wa-button-group>
+                `
           }
         </nav>
       </footer>
@@ -1224,6 +1305,11 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       </wa-dialog>
     `;
   }
+}
+
+/** A number like `12/26` is a name, not a folder: what a file name cannot hold becomes a dash */
+function fileName(name: string): string {
+  return name.replace(/[/\\:*?"<>|]/g, '-');
 }
 
 function unitLabel(code: string | null): string {

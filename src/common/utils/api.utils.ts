@@ -480,6 +480,10 @@ export const api = {
   invoicePreview: (draft: InvoiceDraft, id: number | null, contextId: number) =>
     invoke<Preview>('preview_invoice', { draft, id, contextId }),
 
+  /** The draft as a plain PDF like the preview: marked as a draft, no number, no XML, not checked */
+  invoiceDraftPdf: (draft: InvoiceDraft, id: number | null, contextId: number, target: string) =>
+    invoke<null>('invoice_draft_pdf', { draft, id, contextId, target }),
+
   /** The number a draft would get if it were created now */
   invoiceNextNumber: (id: number) => invoke<string>('invoice_next_number', { id }),
   /** Checks, numbers, freezes and locks a draft and keeps its PDF and XML; rejects with a `ProduceError` */

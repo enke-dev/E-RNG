@@ -492,6 +492,8 @@ export function installMocks() {
             1
           );
           return null;
+        case 'invoice_draft_pdf':
+          return null;
         case 'preview_invoice': {
           const draft = args['draft'] as InvoiceDraft;
           const lines = draft.positions.map(
