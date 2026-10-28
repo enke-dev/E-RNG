@@ -37,7 +37,7 @@ this list is the index of what is still open.
 - [x] Invoice list filters: status (all, drafts, exported, open, paid), year, customer, plus the search
 - [ ] Invoice list sort options
 - [ ] Position templates: use counts or favourites, templates with several lines
-- [ ] Unsaved edits are saved as a draft when another invoice is opened, but not when the window closes: save on quit
+- [x] Unsaved edits are saved as a draft when another invoice is opened, when the view is left and half a second after typing (quitting during that half second loses it: macOS ends the app from its menu without a callback)
 - [ ] A readable maximum width for single-line inputs on very wide windows
 - [ ] Frontend tests (flows were only checked by hand in the browser mock)
 - [ ] Some rule texts may read oddly (e.g. `BR-CO-26` when only a tax number is set): collect and reword

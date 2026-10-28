@@ -89,8 +89,13 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   /** The fields of a position do not fit side by side any more: stacked, each with its label */
   @state() private stacked = false;
 
-  /** Edits that are not saved yet: a draft in this state is saved when another invoice is opened */
+  /** Edits that are not saved yet: a stored draft saves them shortly, a new one when it is left */
   #dirty = false;
+
+  /** Counts the edits, a save only makes the form clean when nothing was typed while it ran */
+  #revision = 0;
+
+  #saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   #previewTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -112,6 +117,11 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    // leaving the view for another one keeps what was typed, like opening another invoice
+    clearTimeout(this.#saveTimer);
+    if (this.#dirty && this.draft && !this.locked) {
+      void this.persist({ updateUrl: false }).catch(notifyError);
+    }
     clearTimeout(this.#timer);
     clearTimeout(this.#previewTimer);
     this.#positionsObserver?.disconnect();
@@ -119,6 +129,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   /** Opening another invoice keeps what was typed into a draft instead of dropping it */
   private async switchTo() {
+    clearTimeout(this.#saveTimer);
     if (this.#dirty && this.draft && !this.locked) {
       try {
         await this.persist({ updateUrl: false });
@@ -222,6 +233,11 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   /** Call after every edit: re-renders now, asks the backend for totals and findings shortly after */
   private changed() {
     this.#dirty = true;
+    this.#revision++;
+    clearTimeout(this.#saveTimer);
+    if (this.stored && !this.locked) {
+      this.#saveTimer = setTimeout(() => void this.autosave(), 500);
+    }
     this.createError = undefined;
     this.requestUpdate();
     clearTimeout(this.#timer);
@@ -282,17 +298,34 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       return this.stored;
     }
     const isNew = this.stored === undefined;
+    const revision = this.#revision;
     this.stored = await api.invoiceSave(
       this.stored?.id ?? null,
       this.contextId ?? null,
       this.draft
     );
-    this.#dirty = false;
+    // typed while saving: that is for the next save
+    if (revision === this.#revision) {
+      this.#dirty = false;
+    }
     // the first save gives the new invoice its address, without reloading the form
     if (updateUrl && isNew && this.invoiceId === 'new') {
       history.replaceState({}, '', `/invoices/${this.stored.id}`);
     }
     return this.stored;
+  }
+
+  /** A stored draft keeps every edit by itself, shortly after the typing stops */
+  private async autosave() {
+    if (!this.#dirty || !this.stored || this.locked) {
+      return;
+    }
+    try {
+      await this.persist({ updateUrl: false });
+      this.announce();
+    } catch (error) {
+      notifyError(error);
+    }
   }
 
   private async saveDraft() {
