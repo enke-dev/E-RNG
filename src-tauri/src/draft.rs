@@ -4,7 +4,7 @@
 use std::str::FromStr;
 
 use en16931::invoice::{
-    Contact, Delivery, InvoiceNote, Party, PaymentInstructions, PaymentMeans, PostalAddress,
+    Contact, Delivery, InvoiceNote, Party, PaymentInstructions, PaymentMeans, Period, PostalAddress,
 };
 use en16931::{Date, Identifier, Percentage, Quantity, Reconciler, UnitPriceAmount};
 use rust_decimal::Decimal;
@@ -207,15 +207,8 @@ pub fn build_invoice(
     let settings = draft.frozen.as_ref().unwrap_or(current);
     let mut problems = Vec::new();
 
-    let mut date = |field: &str, text: &str| {
-        let parsed = Date::parse(text).ok();
-        if parsed.is_none() {
-            problems.push(problem(field, "Kein gültiges Datum"));
-        }
-        parsed
-    };
-    let issue = date("issue_date", &draft.issue_date);
-    let delivery = date("delivery_date", &draft.delivery_date);
+    let issue = date("issue_date", &draft.issue_date, &mut problems);
+    let service = service_time(draft, &mut problems);
     // no rate is no VAT: exempt (E) with 0 %, and the reason on the invoice
     let vat_free = settings.vat_free();
     let rate = if vat_free {
@@ -250,7 +243,8 @@ pub fn build_invoice(
             }
         }
     }
-    let (Some(issue), Some(delivery), Some(seller), Some(buyer)) = (issue, delivery, seller, buyer)
+    let (Some(issue), Some((delivery, delivery_end)), Some(seller), Some(buyer)) =
+        (issue, service, seller, buyer)
     else {
         return Err(problems);
     };
@@ -267,11 +261,18 @@ pub fn build_invoice(
     )
     .seller(seller)
     .buyer(buyer)
-    .delivery(Delivery {
-        date: Some(delivery),
-        ..Delivery::default()
-    })
     .payment(payment(&settings.seller));
+    // one day is the date of service (BT-72), a period the invoicing period (BG-14)
+    builder = match delivery_end {
+        Some(end) => builder.invoicing_period(Period {
+            start: Some(delivery),
+            end: Some(end),
+        }),
+        None => builder.delivery(Delivery {
+            date: Some(delivery),
+            ..Delivery::default()
+        }),
+    };
     // EN 16931 wants a due date or payment terms (BR-CO-25): without terms the invoice is due when
     // it is issued, which the document does not need to say
     builder = match settings.payment_days {
@@ -309,6 +310,38 @@ pub fn build_invoice(
     })
 }
 
+/// The date of a field, `None` with the problem noted.
+fn date(field: &str, text: &str, problems: &mut Vec<InputProblem>) -> Option<Date> {
+    let parsed = Date::parse(text).ok();
+    if parsed.is_none() {
+        problems.push(problem(field, "Kein gültiges Datum"));
+    }
+    parsed
+}
+
+/// When the service was: one day (BT-72), or a period (BG-14) with its end; `None` with the
+/// problems noted.
+fn service_time(
+    draft: &InvoiceDraft,
+    problems: &mut Vec<InputProblem>,
+) -> Option<(Date, Option<Date>)> {
+    let start = date("delivery_date", &draft.delivery_date, problems);
+    // a period chosen but its end not given yet is a missing date, not a single day
+    let end = match draft.delivery_end.as_deref() {
+        Some(end) => Some(date("delivery_end", end, problems)?),
+        None => None,
+    };
+    let start = start?;
+    if end.is_some_and(|end| end < start) {
+        problems.push(problem(
+            "delivery_end",
+            "Das Ende des Leistungszeitraums liegt vor seinem Beginn",
+        ));
+        return None;
+    }
+    Some((start, end))
+}
+
 /// A draft the template can show while it is still being filled in: whatever would stop the invoice
 /// from being built (an empty price, no description, a half typed date) gets a harmless stand-in.
 /// Only for the preview, nothing built from this is ever stored or exported.
@@ -320,6 +353,12 @@ pub fn for_preview(draft: &InvoiceDraft) -> InvoiceDraft {
     }
     if Date::parse(&draft.delivery_date).is_err() {
         draft.delivery_date.clone_from(&draft.issue_date);
+    }
+    let start = Date::parse(&draft.delivery_date).ok();
+    if let Some(end) = &mut draft.delivery_end {
+        if Date::parse(end).ok().is_none_or(|e| Some(e) < start) {
+            end.clone_from(&draft.delivery_date);
+        }
     }
     if draft.positions.is_empty() {
         draft.positions.push(Position::default());
@@ -399,6 +438,7 @@ pub(crate) mod fixtures {
             customer: customer(),
             issue_date: "2026-10-17".into(),
             delivery_date: "2026-10-17".into(),
+            delivery_end: None,
             positions: vec![
                 Position {
                     description: "Beratung".into(),
@@ -563,6 +603,41 @@ mod tests {
         assert_eq!(invoice.lines[0].net_amount.to_string(), "0.00");
         assert_eq!(invoice.lines[1].item.name.as_deref(), Some("–"));
         assert_eq!(invoice.lines[0].quantity.to_string(), "1");
+    }
+
+    #[test]
+    fn a_service_period_is_the_invoicing_period_instead_of_a_date() {
+        let mut d = draft();
+        d.delivery_date = "2026-09-01".into();
+        d.delivery_end = Some("2026-09-30".into());
+
+        let invoice = build_invoice(&d, &settings(), "RE-1").unwrap();
+
+        let period = invoice.invoicing_period.unwrap();
+        assert_eq!(period.start, Date::parse("2026-09-01").ok());
+        assert_eq!(period.end, Date::parse("2026-09-30").ok());
+        assert!(invoice.delivery.and_then(|d| d.date).is_none());
+    }
+
+    #[test]
+    fn a_service_period_needs_an_end_on_or_after_its_start() {
+        let refused = |end: &str| {
+            let mut d = draft();
+            d.delivery_date = "2026-09-10".into();
+            d.delivery_end = Some(end.into());
+            build_invoice(&d, &settings(), "X")
+                .err()
+                .is_some_and(|problems| problems.iter().any(|p| p.field == "delivery_end"))
+        };
+
+        assert!(refused(""));
+        assert!(refused("2026-09-09"));
+        assert!(!refused("2026-09-10"));
+
+        // the preview shows the half typed period as one day
+        let mut d = draft();
+        d.delivery_end = Some(String::new());
+        assert!(build_invoice(&for_preview(&d), &settings(), "X").is_ok());
     }
 
     #[test]

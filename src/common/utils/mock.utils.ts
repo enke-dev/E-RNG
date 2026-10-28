@@ -201,6 +201,7 @@ const draftOf = (customer: Customer): InvoiceDraft => ({
   customer,
   issue_date: '2026-10-01',
   delivery_date: '2026-10-01',
+  delivery_end: null,
   positions: [{ description: 'Beratung', quantity: '10', unit: 'HUR', price: '95,00' }],
   profile: 'en16931',
   buyer_reference: null,
@@ -545,6 +546,7 @@ export function installMocks() {
             ...draftOf({ ...(customers[0] as Customer), id: null, name: '' }),
             issue_date: today(),
             delivery_date: today(),
+            delivery_end: null,
           };
         case 'invoice_save': {
           const draft = args['draft'] as InvoiceDraft;
@@ -581,6 +583,7 @@ export function installMocks() {
           };
           copy.draft.issue_date = today();
           copy.draft.delivery_date = today();
+          copy.draft.delivery_end = copy.draft.delivery_end === null ? null : today();
           copy.draft.frozen = null;
           invoices.push(copy);
           return copy;

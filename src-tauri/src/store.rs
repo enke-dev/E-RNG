@@ -889,6 +889,8 @@ impl Store {
         let mut draft = source.draft;
         draft.issue_date = today.into();
         draft.delivery_date = today.into();
+        // a period stays a period, of today until changed
+        draft.delivery_end = draft.delivery_end.map(|_| today.into());
         draft.frozen = None;
         draft.frozen_layout = None;
         self.save_draft(None, source.context_id, &draft, None)

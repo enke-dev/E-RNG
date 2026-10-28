@@ -102,7 +102,10 @@ export type Profile = 'en16931' | 'xrechnung';
 export interface InvoiceDraft {
   customer: Customer;
   issue_date: string;
+  /** The start, when there is an end */
   delivery_date: string;
+  /** End of the service period, null: one day; blank while it is being typed */
+  delivery_end: string | null;
   positions: Position[];
   profile: Profile;
   buyer_reference: string | null;

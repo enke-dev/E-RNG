@@ -192,8 +192,12 @@ pub struct InvoiceDraft {
     pub customer: Customer,
     /// ISO date, `2026-10-17`
     pub issue_date: String,
-    /// Date of service, ISO date
+    /// Date of service, ISO date; the start when there is an end
     pub delivery_date: String,
+    /// End of the service period, ISO date; none: the service was on one day. Blank while it is
+    /// being typed, the period is still chosen.
+    #[serde(default)]
+    pub delivery_end: Option<String>,
     pub positions: Vec<Position>,
     pub profile: ProfileKind,
     pub buyer_reference: Option<String>,
@@ -221,6 +225,7 @@ impl InvoiceDraft {
             customer: Customer::default(),
             issue_date: today.into(),
             delivery_date: today.into(),
+            delivery_end: None,
             positions: vec![Position::default()],
             profile: ProfileKind::default(),
             buyer_reference: None,

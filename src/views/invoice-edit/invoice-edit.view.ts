@@ -978,15 +978,44 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                   .value="${draft.issue_date}"
                   @input="${(e: Event) => this.edit(d => (d.issue_date = text(e)))}"
                 ></wa-input>
+              </div>
+              <div class="grid">
                 <wa-input
                   type="date"
-                  label="Leistungsdatum"
+                  label="${draft.delivery_end === null ? 'Leistungsdatum' : 'Leistungszeitraum vom'}"
                   ?disabled="${locked}"
                   required
                   .value="${draft.delivery_date}"
                   @input="${(e: Event) => this.edit(d => (d.delivery_date = text(e)))}"
                 ></wa-input>
+                ${
+                  draft.delivery_end === null
+                    ? nothing
+                    : html`
+                        <wa-input
+                          type="date"
+                          label="bis"
+                          ?disabled="${locked}"
+                          required
+                          .value="${draft.delivery_end}"
+                          @input="${(e: Event) => this.edit(d => (d.delivery_end = text(e)))}"
+                        ></wa-input>
+                      `
+                }
               </div>
+              <wa-switch
+                ?disabled="${locked}"
+                ?checked="${draft.delivery_end !== null}"
+                @change="${(e: Event) =>
+                  this.edit(d => {
+                    // a new period starts and ends on the day of service, the user moves its end
+                    d.delivery_end = (e.target as WaSwitch).checked
+                      ? (d.delivery_end ?? d.delivery_date)
+                      : null;
+                  })}"
+              >
+                Zeitraum
+              </wa-switch>
               <wa-switch
                 ?disabled="${locked}"
                 ?checked="${draft.profile === 'xrechnung'}"
