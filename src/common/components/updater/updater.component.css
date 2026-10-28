@@ -1,3 +1,16 @@
 :host {
   display: contents;
 }
+
+wa-button {
+  font-variant-numeric: tabular-nums;
+}
+
+/* the square around the spinner: the label would not fit while the width animates */
+wa-button::part(base) {
+  overflow: hidden;
+}
+
+wa-button.spinning::part(base) {
+  padding: 0;
+}

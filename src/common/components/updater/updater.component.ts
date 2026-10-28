@@ -32,6 +32,26 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
 
   #stopListening: (() => void) | undefined;
 
+  /** How wide the button was before its shape changed, to animate from */
+  #width: number | undefined;
+
+  get #button() {
+    return this.renderRoot.querySelector('wa-button') ?? undefined;
+  }
+
+  get #busy() {
+    return this.status === 'downloading' || this.status === 'installing';
+  }
+
+  /** Busy with nothing to count: only the spinner shows */
+  get #spinning() {
+    return (
+      this.status === 'installing' || (this.status === 'downloading' && this.progress === undefined)
+    );
+  }
+
+  #wasSpinning = false;
+
   /** Looks for an update, silent by default: failures (offline, dev build) only reach the log */
   async checkUpdate({ silent = true } = {}) {
     this.status = 'checking';
@@ -50,7 +70,7 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
 
   @eventOptions({ passive: true })
   private async handleInstall() {
-    if (!this.#update) {
+    if (!this.#update || this.#busy) {
       return;
     }
     this.status = 'downloading';
@@ -115,25 +135,54 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
     this.#stopListening?.();
   }
 
+  protected override willUpdate() {
+    this.#width = this.#button?.getBoundingClientRect().width;
+  }
+
+  /** Only the spinner left, the button shrinks to a square around it; a label that counts stays */
+  protected override updated() {
+    const button = this.#button;
+    const spinning = this.#spinning;
+    if (!button || spinning === this.#wasSpinning) {
+      return;
+    }
+    this.#wasSpinning = spinning;
+    button.style.width = spinning ? `${button.offsetHeight}px` : '';
+    const from = this.#width;
+    const to = button.getBoundingClientRect().width;
+    if (from && from !== to && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      button.animate([{ width: `${from}px` }, { width: `${to}px` }], {
+        duration: 200,
+        easing: 'ease-out',
+      });
+    }
+  }
+
   override render() {
-    if (
-      this.status !== 'available' &&
-      this.status !== 'downloading' &&
-      this.status !== 'installing'
-    ) {
+    if (this.status !== 'available' && !this.#busy) {
       return nothing;
     }
-    const busy = this.status !== 'available';
+    // figure spaces keep `5 %` as wide as `45 %`, so the button does not jump while it counts
+    const percent = String(this.progress ?? 0).padStart(3, '\u2007');
     const label =
       this.status === 'downloading'
-        ? `Wird geladen${this.progress === undefined ? '…' : ` ${this.progress} %`}`
+        ? `Wird geladen ${percent} %`
         : this.status === 'installing'
           ? 'Wird installiert…'
           : `Auf ${this.#update?.version} aktualisieren`;
 
     return html`
-      <wa-button size="s" variant="brand" ?loading="${busy}" @click="${this.handleInstall}">
-        ${label}
+      <wa-button
+        size="s"
+        variant="brand"
+        class="${this.#spinning ? 'spinning' : ''}"
+        title="${this.#spinning ? label : ''}"
+        aria-label="${label}"
+        ?loading="${this.#spinning}"
+        ?disabled="${this.#busy && !this.#spinning}"
+        @click="${this.handleInstall}"
+      >
+        ${this.#spinning ? nothing : label}
       </wa-button>
     `;
   }
