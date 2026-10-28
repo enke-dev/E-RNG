@@ -61,7 +61,7 @@ pub(crate) fn decimal(text: &str) -> Option<Decimal> {
 }
 
 fn address(field: &str, address: &Address) -> Result<PostalAddress, InputProblem> {
-    PostalAddress::new(
+    let mut postal = PostalAddress::new(
         address.street.trim(),
         address.city.trim(),
         address.post_code.trim(),
@@ -72,7 +72,13 @@ fn address(field: &str, address: &Address) -> Result<PostalAddress, InputProblem
             format!("{field}.country"),
             "Kein gültiger Ländercode (z. B. DE)",
         )
-    })
+    })?;
+    // what was not given is left out: an empty element in the XML is an error of its own
+    // (PEPPOL-EN16931-R008)
+    for part in [&mut postal.line1, &mut postal.city, &mut postal.post_code] {
+        part.take_if(|p| p.is_empty());
+    }
+    Ok(postal)
 }
 
 fn electronic(field: &str, email: &str) -> Result<Identifier, InputProblem> {
@@ -638,6 +644,22 @@ mod tests {
         let mut d = draft();
         d.delivery_end = Some(String::new());
         assert!(build_invoice(&for_preview(&d), &settings(), "X").is_ok());
+    }
+
+    #[test]
+    fn a_customer_without_an_address_writes_no_empty_elements() {
+        let mut d = draft();
+        d.customer.address = Address::default();
+
+        let invoice = build_invoice(&d, &settings(), "RE-1").unwrap();
+        let xml = crate::invoice::to_cii(invoice, d.profile).unwrap();
+
+        // an opening tag right before its closing one, `<ram:CityName></ram:CityName>`
+        let empty = xml.match_indices("></").any(|(at, _)| {
+            let open = xml[..at].rfind('<').unwrap();
+            !xml[open..].starts_with("</")
+        });
+        assert!(!empty, "{xml}");
     }
 
     #[test]

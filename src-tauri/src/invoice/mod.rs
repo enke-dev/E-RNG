@@ -19,6 +19,8 @@ use en16931::{AmountError, InvoiceAmount, InvoiceLine, Percentage, Quantity, Uni
 use rust_decimal::RoundingStrategy;
 
 mod german;
+
+pub use german::localize_issue;
 #[cfg(test)]
 pub(crate) mod golden;
 

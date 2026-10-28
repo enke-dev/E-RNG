@@ -7,6 +7,10 @@
 use en16931::validation::Finding;
 
 const TEXTS: &[(&str, &str)] = &[
+    (
+        "PEPPOL-EN16931-R008",
+        "Die Rechnung enthält leere Angaben, z. B. eine Adresse ohne Straße oder Ort.",
+    ),
     ("BR-06", "Der Name des Unternehmens fehlt (Einstellungen)."),
     ("BR-07", "Der Kunde hat keinen Namen."),
     ("BR-27", "Der Preis einer Position darf nicht negativ sein."),
@@ -85,6 +89,18 @@ pub fn localize(finding: Finding) -> Finding {
             ..finding
         },
         None => finding,
+    }
+}
+
+/// A finding of the validator with a German message where one is known: its code is the rule id
+/// when the message names one.
+pub fn localize_issue(issue: crate::package::Issue) -> crate::package::Issue {
+    match text(&issue.code) {
+        Some(german) => crate::package::Issue {
+            message: german.to_owned(),
+            ..issue
+        },
+        None => issue,
     }
 }
 

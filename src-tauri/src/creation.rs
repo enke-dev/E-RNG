@@ -66,6 +66,18 @@ fn failed(error: impl std::fmt::Display) -> ProduceError {
     }
 }
 
+/// What the validator said at one level, as the user reads it: in German where known, and each
+/// thing once (the validator repeats a rule for every element it finds it in).
+fn for_the_user(issues: Vec<Issue>, level: Level) -> Vec<Issue> {
+    let mut seen = HashSet::new();
+    issues
+        .into_iter()
+        .filter(|i| i.level == level)
+        .map(crate::invoice::localize_issue)
+        .filter(|i| seen.insert((i.code.clone(), i.message.clone())))
+        .collect()
+}
+
 /// What came out of creating an invoice
 #[derive(Debug, Serialize)]
 pub struct Created {
@@ -106,12 +118,7 @@ fn make(
     let produced = pipeline::produce(sidecars, &work.0, &invoice, stored.draft.profile, &branding)?;
     if !produced.report.valid {
         return Err(ProduceError::NotValid {
-            issues: produced
-                .report
-                .issues
-                .into_iter()
-                .filter(|i| i.level == Level::Error)
-                .collect(),
+            issues: for_the_user(produced.report.issues, Level::Error),
         });
     }
     Ok(Made {
@@ -168,13 +175,7 @@ pub fn create(
     ) {
         Ok(invoice) => Ok(Created {
             invoice,
-            warnings: made
-                .produced
-                .report
-                .issues
-                .into_iter()
-                .filter(|i| i.level == Level::Warning)
-                .collect(),
+            warnings: for_the_user(made.produced.report.issues, Level::Warning),
         }),
         Err(error) => {
             originals::discard(data, &files);
@@ -228,6 +229,31 @@ pub fn output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_validator_says_each_thing_once_and_in_german_where_known() {
+        let issue = |level, code: &str, message: &str| Issue {
+            section: crate::package::Section::Xml,
+            level,
+            code: code.into(),
+            message: message.into(),
+        };
+        let empty = "[PEPPOL-EN16931-R008]-Document MUST not contain empty elements.";
+        let issues = vec![
+            issue(Level::Warning, "PEPPOL-EN16931-R008", empty),
+            issue(Level::Warning, "PEPPOL-EN16931-R008", empty),
+            issue(Level::Warning, "XX-1", "something else"),
+            issue(Level::Notice, "BR-DE-21", "only a notice"),
+        ];
+
+        let shown = for_the_user(issues, Level::Warning);
+
+        assert_eq!(shown.len(), 2);
+        assert!(shown[0]
+            .message
+            .starts_with("Die Rechnung enthält leere Angaben"));
+        assert_eq!(shown[1].message, "something else");
+    }
 
     #[test]
     fn a_context_creates_one_invoice_at_a_time() {
