@@ -88,7 +88,7 @@ src-tauri/test-fixtures/   a font file for the layout tests (Open Sans, OFL)
 
 The database and the layout files live in the app data directory (`~/Library/Application Support/dev.enke.e-rng`). A
 debug build (`tauri dev`) uses `dev.enke.e-rng.dev` next to it, so a development run never migrates the data of an
-installed app: an older version refuses a database a newer one has migrated ("written by a newer version").
+installed app: an older version refuses a database a newer one has migrated ("written by a newer version"). To start a debug build empty (a fresh setup, someone else's case) without moving that folder away, point it elsewhere: `ERNG_DATA_DIR=/some/dir bun run dev`.
 
 ## Messages
 

@@ -8,11 +8,15 @@ use tauri::{AppHandle, Manager};
 
 /// Where the app keeps its database and files. A debug build (`tauri dev`) gets a folder of its
 /// own: an installed older version refuses a database that a newer one has migrated, so trying
-/// things must never touch the data of the installed app.
+/// things must never touch the data of the installed app. `ERNG_DATA_DIR` points a debug build
+/// somewhere else, to start empty without moving the development data away.
 pub fn data_dir(app: &AppHandle) -> tauri::Result<PathBuf> {
     let dir = app.path().app_data_dir()?;
     if !cfg!(debug_assertions) {
         return Ok(dir);
+    }
+    if let Some(own) = std::env::var_os("ERNG_DATA_DIR").filter(|d| !d.is_empty()) {
+        return Ok(PathBuf::from(own));
     }
     let name = dir
         .file_name()
