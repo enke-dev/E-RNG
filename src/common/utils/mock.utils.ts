@@ -222,6 +222,7 @@ const invoices: StoredInvoice[] = [
     exported_at: '2026-10-02 08:00:00',
     paid_at: null,
     updated_at: '2026-10-02 08:00:00',
+    archived_at: null,
     files: null,
   },
   {
@@ -234,6 +235,7 @@ const invoices: StoredInvoice[] = [
     exported_at: null,
     paid_at: null,
     updated_at: '2026-10-05 09:00:00',
+    archived_at: null,
     files: null,
   },
 ];
@@ -279,9 +281,6 @@ function check(draft: InvoiceDraft) {
       : [];
   return { problems, findings, totals: problems.length === 0 ? totals(draft) : null };
 }
-
-/** Invoices taken out of the list */
-const archived = new Set<number>();
 
 const find = (id: number) => invoices.find(i => i.id === id) as StoredInvoice;
 
@@ -512,7 +511,7 @@ export function installMocks() {
         case 'invoices_list':
           return invoices
             .filter(i => args['contextId'] == null || i.context_id === args['contextId'])
-            .filter(i => !archived.has(i.id))
+            .filter(i => i.archived_at === null || Boolean(args['withArchived']))
             .map((i): ListEntry => ({
               id: i.id,
               context_id: i.context_id,
@@ -524,10 +523,16 @@ export function installMocks() {
               total: i.total,
               paid_at: i.paid_at,
               updated_at: i.updated_at,
+              archived_at: i.archived_at,
             }));
         case 'invoice_archive':
-          archived.add(args['id']);
+          find(args['id']).archived_at = new Date().toISOString();
           return null;
+        case 'invoice_unarchive': {
+          const stored = find(args['id']);
+          stored.archived_at = null;
+          return { ...stored };
+        }
         case 'invoice_set_paid': {
           const stored = find(args['id']);
           stored.paid_at = (args['paidAt'] as string | null) ?? null;
@@ -554,6 +559,7 @@ export function installMocks() {
             exported_at: null,
             paid_at: null,
             updated_at: '',
+            archived_at: null,
             files: null,
           };
           stored.draft = draft;
@@ -571,6 +577,7 @@ export function installMocks() {
             status: 'draft',
             exported_at: null,
             paid_at: null,
+            archived_at: null,
           };
           copy.draft.issue_date = today();
           copy.draft.delivery_date = today();

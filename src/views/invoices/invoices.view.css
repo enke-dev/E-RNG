@@ -9,14 +9,26 @@
   text-align: center;
 }
 
-span[slot='sub']:has(.created, .payed) {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wa-space-xs);
-}
-
 .created,
 .payed {
   aspect-ratio: 1;
   padding: var(--wa-space-3xs);
+}
+
+/* the trigger of the status menu is as wide as the menu, which the filter bar sizes like a select */
+wa-dropdown > wa-button[slot='trigger'] {
+  width: 100%;
+}
+
+/* label left and caret right, like the selects */
+wa-dropdown > wa-button[slot='trigger']::part(label) {
+  flex: 1 1 auto;
+  text-align: start;
+}
+
+/* an outlined button is quiet (grey text), the trigger looks like the selects beside it */
+wa-dropdown > wa-button[slot='trigger']::part(base) {
+  color: var(--wa-form-control-value-color);
+  background-color: var(--wa-form-control-background-color);
+  border-color: var(--wa-form-control-border-color);
 }

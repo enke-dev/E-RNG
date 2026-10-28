@@ -128,6 +128,8 @@ export interface StoredInvoice {
   /** ISO date the exported invoice was paid on */
   paid_at: string | null;
   updated_at: string;
+  /** Taken out of the list, it can be put back */
+  archived_at: string | null;
   /** The originals made when it was created, none for a draft and for an invoice from before */
   files: InvoiceFiles | null;
 }
@@ -165,6 +167,7 @@ export interface ListEntry {
   total: string | null;
   paid_at: string | null;
   updated_at: string;
+  archived_at: string | null;
 }
 
 export interface Totals {
@@ -454,13 +457,16 @@ export const api = {
   templateDelete: (id: number) => invoke<null>('template_delete', { id }),
 
   /** `null` lists the invoices of all contexts */
-  invoicesList: (contextId: number | null) => invoke<ListEntry[]>('invoices_list', { contextId }),
+  /** Archived invoices only when asked */
+  invoicesList: (contextId: number | null, withArchived = false) =>
+    invoke<ListEntry[]>('invoices_list', { contextId, withArchived }),
   invoiceGet: (id: number) => invoke<StoredInvoice>('invoice_get', { id }),
   invoiceBlank: () => invoke<InvoiceDraft>('invoice_blank'),
   /** A new invoice (`id` null) is made under `contextId`, a stored one stays where it is */
   invoiceSave: (id: number | null, contextId: number | null, draft: InvoiceDraft) =>
     invoke<StoredInvoice>('invoice_save', { id, contextId, draft }),
   invoiceArchive: (id: number) => invoke<null>('invoice_archive', { id }),
+  invoiceUnarchive: (id: number) => invoke<StoredInvoice>('invoice_unarchive', { id }),
   invoiceSetPaid: (id: number, paidAt: string | null) =>
     invoke<StoredInvoice>('invoice_set_paid', { id, paidAt }),
   invoiceDuplicate: (id: number) => invoke<StoredInvoice>('invoice_duplicate', { id }),

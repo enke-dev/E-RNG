@@ -82,3 +82,24 @@ button {
 :host(:not([has-end]):not([has-sub-end])) ::slotted([slot='sub']) {
   grid-column: 1 / -1;
 }
+
+::slotted([slot='tags']),
+::slotted([slot='tags-end']) {
+  grid-row: 3;
+  margin-top: var(--wa-space-2xs);
+}
+
+::slotted([slot='tags']) {
+  grid-column: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wa-space-xs);
+}
+
+::slotted([slot='tags-end']) {
+  grid-column: 2;
+  align-self: center;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

@@ -12,6 +12,8 @@ import styles from './list-item.component.css';
  * @slot end - beside the name, right aligned (an amount)
  * @slot sub - second line, quiet (a number, a place)
  * @slot sub-end - second line, right aligned (a date)
+ * @slot tags - a row of its own below, tags and badges side by side
+ * @slot tags-end - that row, right aligned (an amount)
  * @csspart button - the clickable surface
  */
 @customElement('erng-list-item')
@@ -47,6 +49,8 @@ export class ListItemComponent extends ErngElement.withStyles(styles) {
         <slot name="end" @slotchange="${this.noted('has-end')}"></slot>
         <slot name="sub" @slotchange="${this.noted('has-sub')}"></slot>
         <slot name="sub-end" @slotchange="${this.noted('has-sub-end')}"></slot>
+        <slot name="tags"></slot>
+        <slot name="tags-end"></slot>
       </button>
     `;
   }

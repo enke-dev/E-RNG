@@ -130,6 +130,7 @@ pub fn run() {
             commands::invoice_files_command::invoice_next_number,
             commands::invoice_files_command::invoice_output,
             commands::invoices_command::invoice_archive,
+            commands::invoices_command::invoice_unarchive,
             commands::invoices_command::invoice_blank,
             commands::invoices_command::invoice_delete,
             commands::invoices_command::invoice_duplicate,

@@ -233,6 +233,7 @@ fn stored(row: &Row) -> rusqlite::Result<StoredRow> {
             exported_at: row.get("exported_at")?,
             paid_at: row.get("paid_at")?,
             updated_at: row.get("updated_at")?,
+            archived_at: row.get("archived_at")?,
             files: None,
         },
         draft,
@@ -760,8 +761,8 @@ impl Store {
 
     // invoices
 
-    /// The invoices of a context, or of all (`None`), newest first. Archived ones are left out.
-    pub fn invoices(&self, context: Option<i64>) -> Result<Vec<ListEntry>> {
+    /// The invoices of a context, or of all (`None`), newest first. Archived ones only when asked.
+    pub fn invoices(&self, context: Option<i64>, with_archived: bool) -> Result<Vec<ListEntry>> {
         let sellers: std::collections::HashMap<i64, String> = self
             .contexts()?
             .into_iter()
@@ -769,11 +770,12 @@ impl Store {
             .collect();
         let conn = self.conn();
         let mut statement = conn.prepare(
-            "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at, files
-             FROM invoices WHERE archived_at IS NULL AND (?1 IS NULL OR context_id = ?1)
+            "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at,
+                 archived_at, files
+             FROM invoices WHERE (?2 OR archived_at IS NULL) AND (?1 IS NULL OR context_id = ?1)
              ORDER BY updated_at DESC, id DESC",
         )?;
-        let rows = statement.query_map([context], stored)?;
+        let rows = statement.query_map(params![context, with_archived], stored)?;
         rows.map(|row| {
             let (invoice, draft, _) = row?;
             let draft: InvoiceDraft = serde_json::from_str(&draft)?;
@@ -795,6 +797,7 @@ impl Store {
                 total: invoice.total,
                 paid_at: invoice.paid_at,
                 updated_at: invoice.updated_at,
+                archived_at: invoice.archived_at,
             })
         })
         .collect()
@@ -804,7 +807,9 @@ impl Store {
         let conn = self.conn();
         let (mut invoice, draft, files) = conn
             .query_row(
-                "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at, files FROM invoices WHERE id = ?1",
+                "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at,
+                     archived_at, files
+                 FROM invoices WHERE id = ?1",
                 [id],
                 stored,
             )
@@ -921,6 +926,18 @@ impl Store {
             bail!("only an exported invoice can be archived");
         }
         Ok(())
+    }
+
+    /// Puts an archived invoice back into the list, as it was.
+    pub fn unarchive_invoice(&self, id: i64) -> Result<StoredInvoice> {
+        let changed = self.conn().execute(
+            "UPDATE invoices SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL",
+            [id],
+        )?;
+        if changed == 0 {
+            bail!("the invoice is not archived");
+        }
+        self.invoice(id)
     }
 
     /// The next free number of a context for an invoice of that day, by the pattern (see `numbering`).
@@ -1321,7 +1338,10 @@ mod tests {
 
         let paid = store.set_paid(id, Some("2026-10-20")).unwrap();
         assert_eq!(paid.paid_at.as_deref(), Some("2026-10-20"));
-        assert_eq!(store.invoices(None).unwrap()[0].paid_at, paid.paid_at);
+        assert_eq!(
+            store.invoices(None, false).unwrap()[0].paid_at,
+            paid.paid_at
+        );
 
         assert_eq!(store.set_paid(id, None).unwrap().paid_at, None);
     }
@@ -1356,7 +1376,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(updated.draft.note.as_deref(), Some("Danke"));
-        let list = store.invoices(None).unwrap();
+        let list = store.invoices(None, false).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(
             (list[0].customer_name.as_str(), list[0].total.as_deref()),
@@ -1473,7 +1493,7 @@ mod tests {
 
         store.delete_draft(id).unwrap();
 
-        assert_eq!(store.invoices(None).unwrap(), Vec::new());
+        assert_eq!(store.invoices(None, false).unwrap(), Vec::new());
         assert!(store.delete_draft(id).is_err());
     }
 
@@ -1523,7 +1543,7 @@ mod tests {
         assert_eq!(contexts[0].id, Some(1));
         assert_eq!(contexts[0].brand, "blue");
         assert_eq!(contexts[0].settings, old);
-        let list = store.invoices(None).unwrap();
+        let list = store.invoices(None, false).unwrap();
         assert_eq!(list.len(), 2);
         assert!(list.iter().all(|i| i.context_id == 1));
         let exported = list.iter().find(|i| i.number.is_some()).unwrap();
@@ -1582,15 +1602,15 @@ mod tests {
     }
 
     #[test]
-    fn the_list_can_show_one_context_or_all_and_leaves_archived_invoices_out() {
+    fn the_list_can_show_one_context_or_all_and_archived_invoices_when_asked() {
         let store = Store::in_memory().unwrap();
         let a = context(&store, "Alpha").id.unwrap();
         let b = context(&store, "Beta").id.unwrap();
         let in_a = store.save_draft(None, a, &draft(), None).unwrap();
         store.save_draft(None, b, &draft(), None).unwrap();
 
-        assert_eq!(store.invoices(None).unwrap().len(), 2);
-        let only_a = store.invoices(Some(a)).unwrap();
+        assert_eq!(store.invoices(None, false).unwrap().len(), 2);
+        let only_a = store.invoices(Some(a), false).unwrap();
         assert_eq!(only_a.len(), 1);
         assert_eq!(only_a[0].seller_name, "Alpha");
 
@@ -1602,7 +1622,10 @@ mod tests {
             .finalize(in_a.id, "RE-2026-001", &settings(), None, "1.00", &files())
             .unwrap();
         store.archive_invoice(in_a.id).unwrap();
-        assert_eq!(store.invoices(Some(a)).unwrap(), Vec::new());
+        assert_eq!(store.invoices(Some(a), false).unwrap(), Vec::new());
+        let with_archived = store.invoices(Some(a), true).unwrap();
+        assert_eq!(with_archived.len(), 1);
+        assert!(with_archived[0].archived_at.is_some());
         // it still counts for the numbers
         assert_eq!(
             store
@@ -1615,6 +1638,12 @@ mod tests {
             "RE-2026-002"
         );
         assert!(store.archive_invoice(in_a.id).is_err());
+
+        let restored = store.unarchive_invoice(in_a.id).unwrap();
+        assert_eq!(restored.archived_at, None);
+        assert_eq!(restored.number.as_deref(), Some("RE-2026-001"));
+        assert_eq!(store.invoices(Some(a), false).unwrap().len(), 1);
+        assert!(store.unarchive_invoice(in_a.id).is_err());
     }
 
     #[test]

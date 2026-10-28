@@ -9,8 +9,11 @@ use crate::utils::{today, CommandError, CommandResult};
 pub fn invoices_list(
     store: State<'_, Store>,
     context_id: Option<i64>,
+    with_archived: bool,
 ) -> CommandResult<Vec<ListEntry>> {
-    store.invoices(context_id).map_err(CommandError::from)
+    store
+        .invoices(context_id, with_archived)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -64,6 +67,12 @@ pub fn invoice_save(
 #[tauri::command]
 pub fn invoice_archive(store: State<'_, Store>, id: i64) -> CommandResult<()> {
     store.archive_invoice(id).map_err(CommandError::from)
+}
+
+/// Puts an archived invoice back into the list.
+#[tauri::command]
+pub fn invoice_unarchive(store: State<'_, Store>, id: i64) -> CommandResult<StoredInvoice> {
+    store.unarchive_invoice(id).map_err(CommandError::from)
 }
 
 #[tauri::command]

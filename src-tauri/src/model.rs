@@ -274,6 +274,8 @@ pub struct StoredInvoice {
     /// ISO date the invoice was paid on, set by hand after the export
     pub paid_at: Option<String>,
     pub updated_at: String,
+    /// Taken out of the list, it stays as it is and can be put back
+    pub archived_at: Option<String>,
     /// The originals, none for a draft and for an invoice exported before they were kept
     pub files: Option<InvoiceFiles>,
 }
@@ -291,6 +293,7 @@ pub struct ListEntry {
     pub total: Option<String>,
     pub paid_at: Option<String>,
     pub updated_at: String,
+    pub archived_at: Option<String>,
 }
 
 #[cfg(test)]

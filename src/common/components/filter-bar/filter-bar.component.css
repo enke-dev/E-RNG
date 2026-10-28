@@ -34,13 +34,15 @@ section {
 
 /* stacked, the controls fill the width; in a row they keep their own size */
 ::slotted(wa-select),
-::slotted(wa-button) {
+::slotted(wa-button),
+::slotted(wa-dropdown) {
   width: 100%;
 }
 
 @container (min-width: 40rem) {
   ::slotted(wa-select),
-  ::slotted(wa-button) {
+  ::slotted(wa-button),
+  ::slotted(wa-dropdown) {
     width: auto;
   }
 }
