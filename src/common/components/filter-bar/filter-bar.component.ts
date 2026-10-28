@@ -44,6 +44,7 @@ export class FilterBarComponent extends ErngElement.withStyles(styles) {
       <section>
         <wa-input
           type="search"
+          size="s"
           with-clear
           aria-label="Suchen"
           placeholder="${this.placeholder}"

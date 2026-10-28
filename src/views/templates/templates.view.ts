@@ -68,8 +68,9 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
     if (!template) {
       return;
     }
-    if (template.description.trim() === '' || template.price.trim() === '') {
-      notify('Beschreibung und Preis sind erforderlich.', 'danger');
+    // the price may stay open, it is filled in on the invoice
+    if (template.description.trim() === '') {
+      notify('Eine Beschreibung ist erforderlich.', 'danger');
       return;
     }
     try {
@@ -127,6 +128,7 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
         >
           <wa-select
             slot="filters"
+            size="s"
             aria-label="Einheit"
             .value="${this.unit}"
             @change="${(e: Event) => (this.unit = String((e.target as WaSelect).value))}"
@@ -134,7 +136,7 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
             <wa-option value="all">Alle Einheiten</wa-option>
             ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
           </wa-select>
-          <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
+          <wa-button slot="actions" size="s" variant="brand" @click="${() => this.edit(blank())}">
             Neue Position
           </wa-button>
         </erng-filter-bar>
@@ -155,7 +157,8 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
                     <wa-card slot="cards" @click="${() => this.edit(t)}">
                       <strong>${t.description}</strong>
                       <div class="muted">
-                        ${t.quantity ?? '1'} ${unitLabel(t.unit)} × ${t.price} €
+                        ${t.quantity ?? '1'}
+                        ${unitLabel(t.unit)}${t.price.trim() ? ` × ${t.price} €` : ''}
                       </div>
                       ${
                         contextsOf(t.context_id).length > 0
@@ -215,7 +218,6 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
                         label="Preis (netto)"
                         inputmode="decimal"
                         placeholder="0,00"
-                        required
                         .value="${editing.price}"
                         @input="${(e: Event) => this.change(t => (t.price = text(e)))}"
                       ></wa-input>

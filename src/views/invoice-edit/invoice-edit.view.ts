@@ -43,7 +43,7 @@ import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
-import { formatDate, money, UNITS } from '../../common/utils/format.utils.js';
+import { formatDate, UNITS } from '../../common/utils/format.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { startReorder } from '../../common/utils/reorder.utils.js';
 import { goto } from '../../common/utils/routing.utils.js';
@@ -538,6 +538,14 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
   }
 
+  private addPosition(from: 'blank' | 'template') {
+    if (from === 'template') {
+      void this.openTemplates();
+    } else {
+      this.edit(d => d.positions.push({ description: '', quantity: null, unit: null, price: '' }));
+    }
+  }
+
   private movePosition(from: number, to: number) {
     this.edit(draft => {
       const [moved] = draft.positions.splice(from, 1);
@@ -727,8 +735,9 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
               </button>
               <wa-textarea
                 label="Beschreibung"
-                rows="2"
+                rows="3"
                 resize="auto"
+                size="s"
                 ?disabled="${locked}"
                 .value="${p.description}"
                 @input="${(e: Event) => this.editPosition(i, pos => (pos.description = text(e)))}"
@@ -737,12 +746,14 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 label="Menge"
                 placeholder="1"
                 inputmode="decimal"
+                size="s"
                 ?disabled="${locked}"
                 .value="${p.quantity ?? ''}"
                 @input="${(e: Event) => this.editPosition(i, pos => (pos.quantity = nullable(text(e))))}"
               ></wa-input>
               <wa-select
                 label="Einheit"
+                size="s"
                 ?disabled="${locked}"
                 .value="${p.unit ?? 'C62'}"
                 @change="${(e: Event) =>
@@ -761,13 +772,14 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 label="Preis (netto)"
                 inputmode="decimal"
                 placeholder="0,00"
+                size="s"
                 ?disabled="${locked}"
                 .value="${p.price}"
                 @input="${(e: Event) => this.editPosition(i, pos => (pos.price = text(e)))}"
               ></wa-input>
               <wa-button-group class="row-actions" label="Position">
                 <wa-button
-                  size="m"
+                  size="s"
                   appearance="outlined"
                   title="Position für später speichern"
                   aria-label="Position für später speichern"
@@ -776,9 +788,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                   <wa-icon name="save"></wa-icon>
                 </wa-button>
                 <wa-button
-                  size="m"
+                  size="s"
                   appearance="outlined"
-                  variant="danger"
                   title="Position entfernen"
                   aria-label="Position entfernen"
                   ?disabled="${locked || draft.positions.length === 1}"
@@ -795,16 +806,19 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         locked
           ? nothing
           : html`
-              <wa-button-group label="Position hinzufügen">
-                <wa-button
-                  @click="${() => this.edit(d => d.positions.push({ description: '', quantity: null, unit: null, price: '' }))}"
-                  appearance="outlined"
+              <wa-button-group class="add-position" label="Neue Position hinzufügen">
+                <wa-dropdown
+                  placement="bottom-end"
+                  size="s"
+                  @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) =>
+                    this.addPosition(e.detail.item.value === 'template' ? 'template' : 'blank')}"
                 >
-                  Position hinzufügen
-                </wa-button>
-                <wa-button @click="${() => void this.openTemplates()}" appearance="outlined">
-                  Gespeicherte Position
-                </wa-button>
+                  <wa-button slot="trigger" size="s" appearance="outlined" with-caret>
+                    Neue Position
+                  </wa-button>
+                  <wa-dropdown-item value="blank">leer hinzufügen</wa-dropdown-item>
+                  <wa-dropdown-item value="template">aus Vorlage</wa-dropdown-item>
+                </wa-dropdown>
               </wa-button-group>
             `
       }
@@ -843,7 +857,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                       >
                         <strong>${t.description}</strong>
                         <span class="muted"
-                          >${t.quantity ?? '1'} ${unitLabel(t.unit)} × ${t.price} €</span
+                          >${t.quantity ?? '1'}
+                          ${unitLabel(t.unit)}${t.price.trim() ? ` × ${t.price} €` : ''}</span
                         >
                       </button>`
                   )}
@@ -903,25 +918,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
             `
           : nothing
       }
-    `;
-  }
-
-  private renderSummary() {
-    const totals = this.check?.totals;
-    const rate = (this.draft?.frozen ?? this.settings)?.tax_rate.trim() ?? '';
-    return html`
-      <div class="summary">
-        ${
-          rate === ''
-            ? nothing
-            : html`
-                <span>Netto</span><span class="value">${money(totals?.net)}</span>
-                <span>Umsatzsteuer ${rate} %</span><span class="value">${money(totals?.vat)}</span>
-              `
-        }
-        <span class="total">Gesamtbetrag</span>
-        <span class="value total">${money(totals?.gross)}</span>
-      </div>
     `;
   }
 
@@ -1119,9 +1115,9 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
             </div>
           </wa-card>
 
-          <wa-card>
+          <wa-card id="positions">
             <div slot="header">Positionen</div>
-            <div class="stack">${this.renderPositions(locked)} ${this.renderSummary()}</div>
+            <div class="stack">${this.renderPositions(locked)}</div>
           </wa-card>
 
           <wa-card>

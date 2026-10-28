@@ -132,13 +132,14 @@ export class CustomersView extends ErngElement.withStyles(styles) {
         >
           <wa-select
             slot="filters"
+            size="s"
             aria-label="Gruppen"
             .value="${this.groups}"
             @change="${(e: Event) => (this.groups = String((e.target as WaSelect).value))}"
           >
             ${GROUPS.map(u => html`<wa-option value="${u.key}">${u.label}</wa-option>`)}
           </wa-select>
-          <wa-button slot="actions" variant="brand" @click="${() => this.edit(blank())}">
+          <wa-button slot="actions" size="s" variant="brand" @click="${() => this.edit(blank())}">
             Neuer Kunde
           </wa-button>
         </erng-filter-bar>

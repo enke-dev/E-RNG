@@ -37,24 +37,6 @@ erng-sheet {
   width: fit-content;
 }
 
-.summary {
-  display: grid;
-  grid-template-columns: auto auto;
-  justify-content: end;
-  gap: var(--wa-space-2xs) var(--wa-space-xl);
-  font-variant-numeric: tabular-nums;
-}
-
-.summary .value {
-  text-align: right;
-}
-
-.summary .total {
-  font-weight: var(--wa-font-weight-bold);
-  border-top: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
-  padding-top: var(--wa-space-2xs);
-}
-
 ul {
   margin: var(--wa-space-2xs) 0 0;
   padding-left: var(--wa-space-l);
@@ -68,12 +50,16 @@ wa-dialog::part(dialog) {
   font-size: var(--wa-font-size-s);
 }
 
+#positions::part(body) {
+  padding-left: var(--wa-space-xs);
+}
+
 /* positions: all rows share the columns of the container (subgrid), so the labels of the head sit
    over the fields; a row is still its own element and can be dragged as a whole */
 .positions {
   position: relative;
   display: grid;
-  gap: var(--wa-space-xs) var(--wa-space-s);
+  gap: 0 var(--wa-space-s);
   grid-template-columns: var(--wa-form-control-height) minmax(10rem, 1fr) 5rem 8rem 7.5rem auto;
   break-inside: auto;
 
@@ -89,8 +75,6 @@ wa-dialog::part(dialog) {
 
     & .position {
       align-items: end;
-      padding-bottom: var(--wa-space-s);
-      border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
 
       &.head {
         display: none;
@@ -129,6 +113,7 @@ wa-dialog::part(dialog) {
   display: grid;
   grid-template-columns: subgrid;
   gap: var(--wa-space-xs);
+  padding: var(--wa-space-s) 0;
   grid-column: 1 / -1;
   align-items: start;
   background: var(--wa-color-surface-default);
@@ -137,6 +122,15 @@ wa-dialog::part(dialog) {
   &.head {
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
+  }
+
+  &:not(.head) {
+    border-top: var(--wa-border-width-s) var(--wa-border-style) transparent;
+  }
+
+  /* a rule between the positions, not above the first one */
+  &:not(.head) + &:not(.head) {
+    border-top-color: var(--wa-color-surface-border);
   }
 
   &.dragging {
@@ -180,6 +174,10 @@ wa-dialog::part(dialog) {
     pointer-events: none;
     cursor: default;
   }
+}
+
+.add-position {
+  align-self: flex-end;
 }
 
 .templates {
