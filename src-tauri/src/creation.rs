@@ -104,6 +104,14 @@ fn make(
 ) -> Result<Made, ProduceError> {
     let invoice = build_invoice(&stored.draft, settings, number)
         .map_err(|problems| ProduceError::Input { problems })?;
+    // German law, not a rule of the profile: the validator would let it pass
+    if let Some(finding) = crate::invoice::recipient_address(&invoice)
+        .filter(|f| f.severity == en16931::Severity::Fatal)
+    {
+        return Err(ProduceError::Invalid {
+            findings: vec![finding],
+        });
+    }
     let total = totals(&invoice).gross;
     let customs = store.all_custom_layouts().map_err(failed)?;
     let branding = Branding::for_draft(&stored.draft, settings, &customs);

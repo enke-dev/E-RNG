@@ -62,7 +62,45 @@ pub fn validate(invoice: &Invoice, profile: ProfileKind) -> Vec<Finding> {
         .iter()
         .cloned()
         .map(german::localize)
+        .chain(recipient_address(invoice))
         .collect()
+}
+
+/// Up to this gross total an invoice may leave out the customer's address (Kleinbetragsrechnung,
+/// § 33 `UStDV`: the Gesamtbetrag, VAT included)
+const SMALL_INVOICE_LIMIT: rust_decimal::Decimal =
+    rust_decimal::Decimal::from_parts(250, 0, 0, false, 0);
+
+/// What German VAT law asks beyond EN 16931: the customer's full address (§ 14 Abs. 4 Nr. 1 `UStG`).
+/// Above 250 € gross it stops the invoice, up to that it is a warning.
+pub fn recipient_address(invoice: &Invoice) -> Option<Finding> {
+    let address = &invoice.buyer.address;
+    let complete = [&address.line1, &address.post_code, &address.city]
+        .iter()
+        .all(|part| part.as_deref().is_some_and(|p| !p.trim().is_empty()));
+    if complete {
+        return None;
+    }
+    let small = rust_decimal::Decimal::from(invoice.totals.gross_total) <= SMALL_INVOICE_LIMIT;
+    Some(Finding {
+        rule: "§ 14 UStG".into(),
+        severity: if small {
+            en16931::Severity::Warning
+        } else {
+            en16931::Severity::Fatal
+        },
+        path: en16931::Path::group(en16931::Group::Buyer),
+        message: if small {
+            "Die Anschrift des Kunden ist unvollständig. Bis 250 € brutto ist das als \
+             Kleinbetragsrechnung erlaubt, darüber braucht die Rechnung Straße, PLZ und Ort."
+        } else {
+            "Über 250 € brutto braucht die Rechnung die vollständige Anschrift des Kunden: \
+             Straße, PLZ und Ort."
+        }
+        .into(),
+        detail: None,
+        hint: Some("§ 14 Abs. 4 Nr. 1 UStG, § 33 UStDV".into()),
+    })
 }
 
 /// Serializes the invoice as UN/CEFACT CII (`factur-x.xml`, or the `XRechnung` file).

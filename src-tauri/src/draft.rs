@@ -663,6 +663,31 @@ mod tests {
     }
 
     #[test]
+    fn a_customer_address_is_needed_above_250_euros_gross_only() {
+        let severity = |price: &str, address: Address| {
+            let mut d = draft();
+            d.customer.address = address;
+            d.positions = vec![Position {
+                description: "Beratung".into(),
+                quantity: None,
+                unit: None,
+                price: price.into(),
+            }];
+            let invoice = build_invoice(&d, &settings(), "RE-1").unwrap();
+            crate::invoice::validate(&invoice, ProfileKind::En16931)
+                .into_iter()
+                .find(|f| f.rule == "§ 14 UStG")
+                .map(|f| f.severity)
+        };
+        let none = Address::default;
+
+        // 19 %: 210.08 net is 250.00 gross, a Kleinbetragsrechnung; one cent more is not
+        assert_eq!(severity("210.08", none()), Some(en16931::Severity::Warning));
+        assert_eq!(severity("210.09", none()), Some(en16931::Severity::Fatal));
+        assert_eq!(severity("1000", draft().customer.address), None);
+    }
+
+    #[test]
     fn a_draft_without_positions_is_refused() {
         let mut d = draft();
         d.positions.clear();
