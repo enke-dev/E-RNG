@@ -428,7 +428,14 @@ export type PartContent =
       align: Align;
       color?: Color;
     }
-  | { kind: 'page-number'; text: string; size: number; align: Align; color?: Color }
+  | {
+      kind: 'page-number';
+      text: string;
+      size: number;
+      align: Align;
+      several_pages_only?: boolean;
+      color?: Color;
+    }
   | { kind: 'line'; thickness: number; color?: Color };
 
 /** Something placed on the page, offsets in millimetres from the anchor towards the inside */

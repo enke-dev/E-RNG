@@ -60,6 +60,7 @@ pub enum PartViewContent {
         text: String,
         size: f64,
         align: Align,
+        several_pages_only: bool,
         color: Option<String>,
     },
     Line {
@@ -314,11 +315,13 @@ fn part_view(
             text,
             size,
             align,
+            several_pages_only,
             color,
         } => PartViewContent::PageNumber {
             text: text.clone(),
             size: *size,
             align: *align,
+            several_pages_only: *several_pages_only,
             color: color.clone(),
         },
         PartContent::Line { thickness, color } => PartViewContent::Line {
@@ -918,6 +921,7 @@ mod tests {
                     text: "{page}".into(),
                     size: 7.5,
                     align: Align::Right,
+                    several_pages_only: false,
                     color: color.clone(),
                 },
                 PartContent::Infos {
@@ -952,6 +956,39 @@ mod tests {
             .all(|part| part["color"] == "#231f20"));
         // the template tells "no color" by null and keeps the grey of the kind
         assert!(json(None).iter().all(|part| part["color"].is_null()));
+    }
+
+    #[test]
+    fn a_page_number_hands_its_wish_for_several_pages_to_the_template() {
+        let invoice =
+            crate::invoice::golden::standard_invoice(crate::invoice::ProfileKind::En16931);
+        let view = super::super::view::build(
+            &invoice,
+            &super::super::view::Branding::default(),
+            &crate::layout::Format::default(),
+        );
+        let json = |several_pages_only| {
+            let part = Part {
+                anchor: Anchor::TopLeft,
+                x: 0.0,
+                y: 0.0,
+                width: None,
+                content: PartContent::PageNumber {
+                    text: "{page}".into(),
+                    size: 7.5,
+                    align: Align::Right,
+                    several_pages_only,
+                    color: None,
+                },
+            };
+            let view = part_view(0, &part, &view, &mut |_| Ok(String::new()))
+                .unwrap()
+                .unwrap();
+            serde_json::to_value(view).unwrap()
+        };
+
+        assert_eq!(json(true)["several_pages_only"], true);
+        assert_eq!(json(false)["several_pages_only"], false);
     }
 
     #[test]

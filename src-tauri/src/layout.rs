@@ -144,6 +144,9 @@ pub enum PartContent {
         text: String,
         size: f64,
         align: Align,
+        /// Left out of a document that has a single page
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        several_pages_only: bool,
         /// `#rrggbb`, none keeps the look of the kind of part
         #[serde(default, skip_serializing_if = "Option::is_none")]
         color: Option<String>,
@@ -371,6 +374,7 @@ fn footer() -> Vec<Part> {
                 text: "Seite {page} von {pages}".into(),
                 size: 7.5,
                 align: Align::Right,
+                several_pages_only: true,
                 color: None,
             },
         },
@@ -481,6 +485,38 @@ mod tests {
         assert_eq!(json["kind"], "text");
         assert_eq!(json["anchor"], "top-left");
         assert_eq!(json["size"], 7.5);
+    }
+
+    #[test]
+    fn a_page_number_asks_for_several_pages_only_when_told_so() {
+        let number = |part: &Part| match &part.content {
+            PartContent::PageNumber {
+                several_pages_only, ..
+            } => Some(*several_pages_only),
+            _ => None,
+        };
+        // a layout made before the option has none, and the page number stays on every page
+        let old = r#"{"kind":"page-number","anchor":"top-right","x":20,"y":285,"width":60,
+            "text":"{page}","size":7.5,"align":"right"}"#;
+        let part: Part = serde_json::from_str(old).unwrap();
+
+        assert_eq!(number(&part), Some(false));
+        assert!(serde_json::to_value(&part)
+            .unwrap()
+            .get("several_pages_only")
+            .is_none());
+        // the built-in layout keeps single pages free of it
+        let builtin = builtin();
+        let numbers: Vec<_> = builtin
+            .page
+            .parts
+            .iter()
+            .chain(builtin.first.iter().flat_map(|first| &first.parts))
+            .filter_map(number)
+            .collect();
+        assert_eq!(numbers, [true, true]);
+        let json = serde_json::to_value(&builtin.page.parts[5]).unwrap();
+        assert_eq!(json["several_pages_only"], true);
     }
 
     #[test]

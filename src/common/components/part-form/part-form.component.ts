@@ -6,11 +6,13 @@ import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
+import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '../anchor-picker/anchor-picker.component.js';
 
 import type WaColorPicker from '@awesome.me/webawesome/dist/components/color-picker/color-picker.js';
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
+import type WaSwitch from '@awesome.me/webawesome/dist/components/switch/switch.js';
 import type WaTextarea from '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import { open } from '@tauri-apps/plugin-dialog';
 import { html, nothing } from 'lit';
@@ -382,6 +384,16 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
               this.changed();
             }}"
           ></wa-input>
+          <wa-switch
+            ?checked="${part.several_pages_only ?? false}"
+            hint="Ein Dokument mit einer einzigen Seite bekommt keine Seitenzahl."
+            @change="${(e: Event) => {
+              part.several_pages_only = (e.target as WaSwitch).checked;
+              this.changed();
+            }}"
+          >
+            Nur bei mehreren Seiten
+          </wa-switch>
           <div class="fields styled">
             ${this.number('Schriftgröße', part.size, size => (part.size = size ?? 7.5), 'pt')}
             ${this.align(part.align, align => (part.align = align))} ${this.color(part)}

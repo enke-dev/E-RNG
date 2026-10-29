@@ -85,6 +85,7 @@ const KINDS: Record<Kind, { label: string; make: () => Part }> = {
       text: 'Seite {page} von {pages}',
       size: 7.5,
       align: 'right',
+      several_pages_only: false,
     }),
   },
   line: {

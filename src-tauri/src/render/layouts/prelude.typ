@@ -106,9 +106,15 @@
   } else if part.kind == "page-number" {
     set text(size: size, fill: color-of(part, luma(110)))
     set align(alignment)
-    context part.text
-      .replace("{page}", str(counter(page).get().first()))
-      .replace("{pages}", str(counter(page).final().first()))
+    context {
+      let pages = counter(page).final().first()
+      // a document of one page may go without a number
+      if not part.several_pages_only or pages > 1 {
+        part.text
+          .replace("{page}", str(counter(page).get().first()))
+          .replace("{pages}", str(pages))
+      }
+    }
   } else if part.kind == "line" {
     line(length: 100%, stroke: part.thickness * 1pt + color-of(part, luma(190)))
   }

@@ -769,6 +769,61 @@ mod tests {
         assert!((all.w - without.w).abs() < 0.5, "{all:?} {without:?}");
     }
 
+    /// The page number of a layout that wants it only on several pages: there on a document of
+    /// two pages, gone from one of a single page, and as before when the layout does not ask.
+    /// `RENDER_OUT` keeps the PDFs.
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn a_page_number_that_asks_for_several_pages_stays_away_from_a_single_page() {
+        use crate::draft::{build_invoice, fixtures};
+        use crate::layout::{builtin, Align, Anchor, Part, PartContent};
+        let sidecars = Sidecars::in_repo();
+        let settings = fixtures::settings();
+        let render = |name: &str, several_pages_only: bool, positions: usize| {
+            let mut draft = fixtures::draft();
+            draft.positions = (0..positions)
+                .flat_map(|_| fixtures::draft().positions)
+                .collect();
+            let invoice = build_invoice(&draft, &settings, "RE-2026-001").unwrap();
+            let mut layout = builtin();
+            layout.first = None;
+            layout.page.parts = vec![Part {
+                anchor: Anchor::TopLeft,
+                x: 25.0,
+                y: 285.0,
+                width: Some(60.0),
+                content: PartContent::PageNumber {
+                    text: "Seite {page} von {pages}".into(),
+                    size: 9.0,
+                    align: Align::Left,
+                    several_pages_only,
+                    color: None,
+                },
+            }];
+            let branding = Branding {
+                custom: Some(layout),
+                marks: true,
+                ..Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[])
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let (pages, boxes) =
+                render::render_sample(&sidecars, dir.path(), &invoice, &branding).unwrap();
+            if let Ok(keep) = std::env::var("RENDER_OUT") {
+                std::fs::create_dir_all(&keep).unwrap();
+                let pdf = render::render_pdf(&sidecars, dir.path(), &invoice, &branding).unwrap();
+                std::fs::copy(pdf, format!("{keep}/page-number-{name}.pdf")).unwrap();
+            }
+            // the box of the number on each page: no height when there is nothing in it
+            let shown = boxes.iter().map(|b| b.h > 1.0).collect::<Vec<_>>();
+            (pages.len(), shown)
+        };
+
+        assert_eq!(render("always-1-page", false, 1), (1, vec![true]));
+        assert_eq!(render("always-2-pages", false, 25), (2, vec![true, true]));
+        assert_eq!(render("several-1-page", true, 1), (1, vec![false]));
+        assert_eq!(render("several-2-pages", true, 25), (2, vec![true, true]));
+    }
+
     /// Enough of base64 for a fixture.
     fn base64_decode(text: &str) -> Vec<u8> {
         const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
