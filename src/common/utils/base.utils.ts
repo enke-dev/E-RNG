@@ -1,12 +1,16 @@
+import nativeStyles from '@awesome.me/webawesome/dist/styles/native.css';
 import { SignalWatcher } from '@lit-labs/signals';
 import type { CSSResultGroup } from 'lit';
 import { LitElement } from 'lit';
 
-import styles from './base.utils.css';
+import baseStyles from './base.utils.css';
 
-/** Base for all elements: re-renders on signal reads, shared base styles */
+/**
+ * Base for all elements: re-renders on signal reads, shared base styles. Web Awesome's styles of
+ * native elements (tables, headings, lists, …) are global and do not reach into shadow roots.
+ */
 export class ErngElement extends SignalWatcher(LitElement) {
-  static override styles: CSSResultGroup = [styles];
+  static override styles: CSSResultGroup = [nativeStyles, baseStyles];
 
   /**
    * The element with more styles after the shared ones, so a component names its own stylesheet
