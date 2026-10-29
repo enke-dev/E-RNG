@@ -19,6 +19,7 @@ import type {
   StoredInvoice,
 } from './api.utils.js';
 import { today } from './form.utils.js';
+import { validUntil } from './kind.utils.js';
 
 const address = {
   street: 'Marktplatz 2',
@@ -375,13 +376,6 @@ const templates: PositionTemplate[] = [
   },
 ];
 
-/** The day an offer dated `issue` is valid until, none without days */
-const validUntil = (issue: string, days: number | null) => {
-  const until = new Date(`${issue}T12:00:00Z`);
-  until.setUTCDate(until.getUTCDate() + (days ?? 0));
-  return days === null ? null : until.toISOString().slice(0, 10);
-};
-
 const draftOf = (customer: Customer): InvoiceDraft => ({
   customer,
   issue_date: '2026-10-01',
@@ -427,6 +421,31 @@ const invoices: StoredInvoice[] = [
     archived_at: null,
     files: null,
   },
+  // an offer that has run out, one still valid and a draft
+  ...[
+    { id: 3, number: 'AN-2026-001', issued: '2026-09-01', days: 30, customer: 0 },
+    { id: 4, number: 'AN-2026-002', issued: '2026-10-20', days: 30, customer: 1 },
+    { id: 5, number: null, issued: '2026-10-27', days: 30, customer: 0 },
+  ].map((o): StoredInvoice => ({
+    id: o.id,
+    context_id: 1,
+    kind: 'offer',
+    number: o.number,
+    status: o.number ? 'exported' : 'draft',
+    draft: {
+      ...draftOf(customers[o.customer] as Customer),
+      issue_date: o.issued,
+      delivery_date: o.issued,
+      validity_days: o.days,
+      frozen: o.number ? settings : null,
+    },
+    total: '1130.50',
+    exported_at: o.number ? `${o.issued} 08:00:00` : null,
+    paid_at: null,
+    updated_at: `${o.issued} 08:00:00`,
+    archived_at: null,
+    files: null,
+  })),
 ];
 
 const number = (text: string | null | undefined) =>
@@ -572,7 +591,8 @@ export function installMocks() {
           return sequenceOf(contextId, kind, day);
         }
         case 'contexts_list':
-          return contexts;
+          // a new array each time, as the backend hands one out: the signal only notices a change then
+          return [...contexts];
         case 'context_blank':
           return refreshed({
             id: null,

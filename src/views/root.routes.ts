@@ -1,17 +1,19 @@
 import type { RouteConfig } from '@lit-labs/router';
 import { html } from 'lit';
 
+import type { Kind } from '../common/utils/api.utils.js';
 import { activeContext, blockedAt, ensureContexts } from '../common/utils/context.utils.js';
 import { confirmLeave } from '../common/utils/leave.utils.js';
 import { redirect } from '../common/utils/routing.utils.js';
 import { currentRoute } from '../state.js';
 
 /**
- * Invoices, customers and templates need a context that can issue invoices. Without one the user is
- * sent to the form of the context (or of a new one) and comes back here when it is complete. The
- * export gate in the backend stays the real check, this only keeps the way clear.
+ * Invoices, customers and templates need a context that can issue invoices, offers one that has a
+ * seller with an address. Without one the user is sent to the form of the context (or of a new one)
+ * and comes back here when it is complete. The export gate in the backend stays the real check, this
+ * only keeps the way clear.
  */
-async function guard(): Promise<boolean> {
+async function guard(kind: Kind): Promise<boolean> {
   try {
     await ensureContexts();
   } catch {
@@ -19,7 +21,7 @@ async function guard(): Promise<boolean> {
     return true;
   }
   const active = activeContext.get();
-  if (active && active.missing.length === 0) {
+  if (active && (kind === 'offer' ? active.missing_for_offers : active.missing).length === 0) {
     return true;
   }
   blockedAt.set(location.pathname);
@@ -44,14 +46,14 @@ async function leave(): Promise<boolean> {
   return false;
 }
 
-/** Enters a route: the user may stay where they are, the view is loaded, then the context guard */
-const entering = (load: () => Promise<unknown>, guarded = true) => {
+/** Enters a route: the user may stay where they are, the view is loaded, then the context guard of its kind */
+const entering = (load: () => Promise<unknown>, guarded: Kind | false = 'invoice') => {
   return async () => {
     if (!(await leave())) {
       return false;
     }
     await load();
-    if (guarded && !(await guard())) {
+    if (guarded && !(await guard(guarded))) {
       return false;
     }
     shown = location.pathname;
@@ -62,10 +64,24 @@ const entering = (load: () => Promise<unknown>, guarded = true) => {
 /** Both address forms show the same element: it stays and only its selection changes */
 const invoices = (selected = '') => html`<erng-invoices selected="${selected}"></erng-invoices>`;
 
+/** A literal of its own: the offers are another element, not the invoice list with another kind */
+const offers = (selected = '') =>
+  html`<erng-invoices kind="offer" selected="${selected}"></erng-invoices>`;
+
 const settings = (section = '') => html`<erng-settings selected="${section}"></erng-settings>`;
 
 /** Views are loaded on first visit, the shell stays small */
 export const routes: RouteConfig[] = [
+  {
+    path: '/offers',
+    enter: entering(() => import('./invoices/invoices.view.js'), 'offer'),
+    render: () => offers(),
+  },
+  {
+    path: '/offers/:id',
+    enter: entering(() => import('./invoices/invoices.view.js'), 'offer'),
+    render: ({ id }) => offers(id),
+  },
   {
     path: '/',
     enter: entering(() => import('./invoices/invoices.view.js')),

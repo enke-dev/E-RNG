@@ -42,9 +42,9 @@ export function rememberText(key: string, value: string) {
 
 const ROUTE = `${PREFIX}route`;
 
-/** Views worth coming back to; a blank invoice is not stored yet, there is nothing to come back to */
+/** Views worth coming back to; a blank invoice or offer is not stored yet, there is nothing to come back to */
 const restorable = (path: string) =>
-  !path.startsWith('/invoices/') || /^\/invoices\/\d+$/.test(path);
+  !/^\/(invoices|offers)\//.test(path) || /^\/(invoices|offers)\/\d+$/.test(path);
 
 /** Notes the view that is open, call it on every navigation */
 export function rememberRoute(path: string) {

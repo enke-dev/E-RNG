@@ -35,6 +35,7 @@ import type {
   CustomLayout,
   ImportChoice,
   ImportOutcome,
+  Kind,
   LayoutInfo,
   LayoutUsage,
   Missing,
@@ -58,6 +59,7 @@ import {
   switchContext,
 } from '../../common/utils/context.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
+import { parseDays } from '../../common/utils/kind.utils.js';
 import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
 import { recall, remember } from '../../common/utils/memory.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
@@ -69,13 +71,35 @@ import styles from './settings.view.css';
 const PAGES = [
   ['company', 'Unternehmen'],
   ['bank', 'Bankverbindung'],
+  ['offers', 'Angebote'],
   ['invoices', 'Rechnungen'],
 ] as const;
 
 type Page = (typeof PAGES)[number][0];
 
+/**
+ * Common number patterns in different forms, shown with what they make today. `{P}` is the prefix
+ * of the kind, the fiscal year one only shows when the fiscal year differs from the calendar year.
+ */
+const NUMBER_EXAMPLES: [pattern: string, reset: NumberReset, extra?: string, fiscal?: boolean][] = [
+  ['[{P}-]YYYY-NNN', 'fiscal_year'],
+  ['N/YY', 'fiscal_year', 'ohne führende Nullen'],
+  ['YYYYMM-NNN', 'month'],
+  ['YYYY-[Q]Q-NN', 'quarter'],
+  ['GGGG/gg-NNN', 'fiscal_year', undefined, true],
+  ['[{P}]NNNNN', 'never'],
+];
+
+/** The resets as the example notes name them */
+const RESET_NAMES: Record<NumberReset, string> = {
+  never: 'nie',
+  fiscal_year: 'je Geschäftsjahr',
+  quarter: 'je Quartal',
+  month: 'je Monat',
+};
+
 /** `context-<id>-<page>`, or `context-new-<page>` for one that is not stored yet */
-const CONTEXT_PAGE = /^context-(new|\d+)-(company|bank|invoices)$/;
+const CONTEXT_PAGE = /^context-(new|\d+)-(company|bank|offers|invoices)$/;
 
 /** What the form calls the fields that must be filled in before an invoice can be issued */
 const FIELD_LABELS: Record<string, string> = {
@@ -87,7 +111,9 @@ const FIELD_LABELS: Record<string, string> = {
   'seller.vat_id': 'USt-IdNr. oder Steuernummer',
   'seller.iban': 'IBAN',
   number_pattern: 'Muster der Rechnungsnummer',
-  number_reset: 'Zähler periodisch zurücksetzen',
+  number_reset: 'Zähler periodisch zurücksetzen (Rechnungen)',
+  'offer.number_pattern': 'Muster der Angebotsnummer',
+  'offer.number_reset': 'Zähler periodisch zurücksetzen (Angebote)',
   tax_rate: 'Umsatzsteuersatz',
   vat_note: 'Hinweis zur Steuerbefreiung',
   'seller.contact_name': 'Ansprechpartner',
@@ -129,6 +155,12 @@ const resetOptions = (fiscalYearStart: string | null): [NumberReset, string][] =
   ];
 };
 
+const patternOf = (settings: Settings, kind: Kind) =>
+  kind === 'offer' ? settings.offer.number_pattern : settings.number_pattern;
+
+const resetOf = (settings: Settings, kind: Kind) =>
+  kind === 'offer' ? settings.offer.number_reset : settings.number_reset;
+
 /** What identifies a context's form values, brand and settings (the rest is computed) */
 const snapshot = (context: Context | undefined) =>
   JSON.stringify(context && [context.brand, context.settings]);
@@ -148,7 +180,7 @@ const parseKey = (key: string): { first: boolean; index: number } => {
 };
 
 /**
- * Settings: on the left the contexts (the open one shows its pages: company, bank, invoices) and
+ * Settings: on the left the contexts (the open one shows its pages: company, bank, offers, invoices) and
  * the layouts, the selected one on the right. The pages of a context share one Save button, a layout
  * is saved on its own.
  */
@@ -171,11 +203,16 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   @state() private removing: { what: 'share' | 'move' | 'delete'; to: number | null } | undefined;
 
   /** What the next number would look like by the pattern in the form, or what is wrong with it */
-  @state() private numberHint = '';
+  @state() private numberHints: Record<Kind, string> = { invoice: '', offer: '' };
+  /** The common patterns of each kind with what they make today: pattern, number, note */
+  @state() private numberExamples: Record<Kind, [string, string, string][]> = {
+    invoice: [],
+    offer: [],
+  };
   /** Where the numbers of the selected stored context stand, by its saved settings */
-  @state() private sequence: Sequence | undefined;
-  /** The dialog that continues the counter: what is typed and why it was refused */
-  @state() private counterEdit: { value: string; error: string } | undefined;
+  @state() private sequences: Partial<Record<Kind, Sequence>> = {};
+  /** The dialog that continues the counter of a kind: what is typed and why it was refused */
+  @state() private counterEdit: { kind: Kind; value: string; error: string } | undefined;
   @state() private layouts: LayoutInfo[] = [];
   @state() private customs: CustomLayout[] = [];
   /** A copy of the selected own layout, what its form edits */
@@ -202,6 +239,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   /** The context as it is stored, what "unchanged" is compared against */
   #saved = '';
   #missingTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The tables of examples by prefix and fiscal year start, and the latest ask for a hint */
+  #examples = new Map<string, Promise<[string, string, string][]>>();
+  #exampleRequest = 0;
+  #exampleTimer: ReturnType<typeof setTimeout> | undefined;
   /** The own layout as it is stored */
   #layoutSaved = '';
 
@@ -375,14 +416,17 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   private async loadSequence() {
     const id = this.context?.id ?? null;
-    this.sequence = undefined;
+    this.sequences = {};
     if (id === null) {
       return;
     }
     try {
-      const sequence = await api.numberSequence(id, 'invoice');
+      const [invoice, offer] = await Promise.all([
+        api.numberSequence(id, 'invoice'),
+        api.numberSequence(id, 'offer'),
+      ]);
       if (this.context?.id === id) {
-        this.sequence = sequence;
+        this.sequences = { invoice, offer };
       }
     } catch (error) {
       notifyError(error);
@@ -543,17 +587,63 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  private async showNumberExample() {
-    const {
-      number_pattern: pattern = '',
-      number_reset: reset = 'fiscal_year',
-      fiscal_year_start: fiscal = null,
-    } = this.context?.settings ?? {};
-    try {
-      this.numberHint = `Die nächste Nummer sähe so aus: ${await api.numberExample(pattern, reset, fiscal)}`;
-    } catch (error) {
-      this.numberHint = errorText(error);
+  /**
+   * The common patterns of a kind with what they make today. They do not depend on what is typed,
+   * only on the start of the fiscal year, so each table is asked for once.
+   */
+  private examplesOf(prefix: string, fiscal: string | null) {
+    const key = `${prefix}|${fiscal ?? ''}`;
+    const known = this.#examples.get(key);
+    if (known) {
+      return known;
     }
+    // each example with the reset it fits, one that cannot work with the fiscal year is left out
+    const table = Promise.all(
+      NUMBER_EXAMPLES.filter(([, , , needsFiscal]) => !needsFiscal || fiscal !== null).map(
+        async ([pattern, reset, extra]) => {
+          const own = pattern.replace('{P}', prefix);
+          const note = `passt zu: ${RESET_NAMES[reset]}${extra ? `, ${extra}` : ''}`;
+          return [own, await api.numberExample(own, reset, fiscal).catch(() => ''), note] as [
+            string,
+            string,
+            string,
+          ];
+        }
+      )
+    ).then(rows => rows.filter(([, number]) => number !== ''));
+    this.#examples.set(key, table);
+    return table;
+  }
+
+  /** The hint under the patterns shortly after the last keystroke, not with every one */
+  private askNumberExample() {
+    clearTimeout(this.#exampleTimer);
+    this.#exampleTimer = setTimeout(() => void this.showNumberExample(), 150);
+  }
+
+  private async showNumberExample() {
+    // a slower answer to an earlier call must not replace the one of a later call
+    const request = ++this.#exampleRequest;
+    const settings = this.context?.settings;
+    const fiscal = settings?.fiscal_year_start ?? null;
+    const hint = async (pattern: string, reset: NumberReset) => {
+      try {
+        return `Die nächste Nummer sähe so aus: ${await api.numberExample(pattern, reset, fiscal)}`;
+      } catch (error) {
+        return errorText(error);
+      }
+    };
+    const [invoice, offer, invoiceExamples, offerExamples] = await Promise.all([
+      hint(settings?.number_pattern ?? '', settings?.number_reset ?? 'fiscal_year'),
+      hint(settings?.offer.number_pattern ?? '', settings?.offer.number_reset ?? 'fiscal_year'),
+      this.examplesOf('RE', fiscal),
+      this.examplesOf('AN', fiscal),
+    ]);
+    if (request !== this.#exampleRequest) {
+      return;
+    }
+    this.numberHints = { invoice, offer };
+    this.numberExamples = { invoice: invoiceExamples, offer: offerExamples };
   }
 
   private async save() {
@@ -589,7 +679,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       void this.loadSequence();
       notify('Gespeichert. Bereits exportierte Rechnungen behalten ihre alten Angaben.');
       const back = blockedAt.get();
-      if (saved.missing.length === 0 && back !== undefined) {
+      // the way to the offers is open with less than the way to the invoices
+      const open =
+        (back?.startsWith('/offers') ? saved.missing_for_offers : saved.missing).length === 0;
+      if (open && back !== undefined) {
         // the guard sent the user here, so they can go on where they wanted to
         blockedAt.set(undefined);
         goto(back);
@@ -670,8 +763,8 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         choice
           ? html`<div class="stack">
               <span>
-                „${label(this.context)}“ wird entfernt. Es hat keine Rechnungen, dieser Schritt
-                lässt sich nicht rückgängig machen.
+                „${label(this.context)}“ wird entfernt. Es hat weder Rechnungen noch Angebote,
+                dieser Schritt lässt sich nicht rückgängig machen.
               </span>
               ${
                 usage && this.scoped > 0
@@ -736,15 +829,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   /** The period of the counter depends on the saved reset and business year, the number on the pattern */
-  private get numberingEdited() {
+  private numberingEdited(kind: Kind) {
     const id = this.context?.id;
     const saved = id == null ? undefined : contextById(id)?.settings;
     const edited = this.context?.settings;
     return (
       !saved ||
       !edited ||
-      saved.number_pattern !== edited.number_pattern ||
-      saved.number_reset !== edited.number_reset ||
+      patternOf(saved, kind) !== patternOf(edited, kind) ||
+      resetOf(saved, kind) !== resetOf(edited, kind) ||
       saved.fiscal_year_start !== edited.fiscal_year_start
     );
   }
@@ -761,9 +854,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       return;
     }
     try {
-      const sequence = await api.numberSequenceSet(id, 'invoice', next);
+      const sequence = await api.numberSequenceSet(id, dialog.kind, next);
       if (this.context?.id === id) {
-        this.sequence = sequence;
+        this.sequences = { ...this.sequences, [dialog.kind]: sequence };
       }
       this.counterEdit = undefined;
       notify(`Die nächste Nummer ist ${sequence.next_number}.`);
@@ -773,12 +866,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   /** The next number and the way to continue the numbers of another program */
-  private counterRow() {
-    const sequence = this.sequence;
+  private counterRow(kind: Kind) {
+    const sequence = this.sequences[kind];
     if (!sequence) {
       return nothing;
     }
-    const edited = this.numberingEdited;
+    const edited = this.numberingEdited(kind);
     return html`
       <div class="counter">
         <span>
@@ -789,7 +882,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           <wa-button
             appearance="outlined"
             ?disabled="${edited}"
-            @click="${() => (this.counterEdit = { value: String(sequence.counter), error: '' })}"
+            @click="${() => (this.counterEdit = { kind, value: String(sequence.counter), error: '' })}"
           >
             Zähler ändern…
           </wa-button>
@@ -808,7 +901,8 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   private counterDialog() {
     const dialog = this.counterEdit;
-    const highest = this.sequence?.highest;
+    const sequence = dialog && this.sequences[dialog.kind];
+    const highest = sequence?.highest;
     return html`<wa-dialog
       ?open="${dialog !== undefined}"
       label="Zähler ändern"
@@ -827,9 +921,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
                 min="1"
                 step="1"
                 label="Zähler der nächsten Nummer"
-                hint="${this.sequence ? `Jetzt: ${this.sequence.next_number}` : ''}"
+                hint="${sequence ? `Jetzt: ${sequence.next_number}` : ''}"
                 .value="${dialog.value}"
-                @input="${(e: Event) => (this.counterEdit = { value: text(e), error: '' })}"
+                @input="${(e: Event) => (this.counterEdit = { ...dialog, value: text(e), error: '' })}"
                 @keydown="${(e: KeyboardEvent) => e.key === 'Enter' && void this.changeCounter()}"
               ></wa-input>
               ${
@@ -1310,6 +1404,161 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     `;
   }
 
+  /** The pattern of a kind's numbers, how it is written, and where its counter stands */
+  private numberFields(kind: Kind, settings: Settings) {
+    const offer = kind === 'offer';
+    return html`
+      <wa-input
+        label="${offer ? 'Muster der Angebotsnummer' : 'Muster der Rechnungsnummer'}"
+        hint="${this.numberHints[kind]}"
+        .value="${patternOf(settings, kind)}"
+        @input="${(e: Event) => {
+          this.edit(s => {
+            if (offer) {
+              s.offer.number_pattern = text(e);
+            } else {
+              s.number_pattern = text(e);
+            }
+          });
+          this.askNumberExample();
+        }}"
+      ></wa-input>
+      <wa-select
+        label="Zähler periodisch zurücksetzen"
+        hint="Das Muster formatiert nur. Es muss den Zeitraum enthalten, sonst wiederholen sich Nummern."
+        .value="${resetOf(settings, kind)}"
+        @change="${(e: Event) => {
+          const reset = (e.target as WaSelect).value as NumberReset;
+          this.edit(s => {
+            if (offer) {
+              s.offer.number_reset = reset;
+            } else {
+              s.number_reset = reset;
+            }
+          });
+          void this.showNumberExample();
+        }}"
+      >
+        ${resetOptions(settings.fiscal_year_start).map(
+          ([value, label]) => html`<wa-option value="${value}">${label}</wa-option>`
+        )}
+      </wa-select>
+      <wa-callout variant="brand" size="small" class="numbering">
+        <wa-icon slot="icon" name="info"></wa-icon>
+        Jahr YYYY (2026) oder YY, Monat MM (03) oder M, Tag DD (07) oder D, Zähler N: NNN füllt mit
+        Nullen auf drei Stellen auf (007), N gar nicht.
+        ${
+          // the fiscal year marks only matter when it differs from the calendar year
+          settings.fiscal_year_start === null
+            ? 'Quartal Q.'
+            : html`Geschäftsjahr: GGGG oder GG für das Jahr, in dem es beginnt, gggg oder gg für das
+                Jahr, in dem es endet (<code>GGGG/gg</code> gibt 2026/27), Q für sein Quartal.`
+        }
+        Buchstaben als Text in [eckige Klammern].
+        <table class="examples">
+          <thead>
+            <tr>
+              <th>Muster</th>
+              <th>Ergibt</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${this.numberExamples[kind].map(
+              ([pattern, number, note]) => html`
+                <tr>
+                  <td><code>${pattern}</code></td>
+                  <td>${number}</td>
+                  <td>${note}</td>
+                </tr>
+              `
+            )}
+          </tbody>
+        </table>
+      </wa-callout>
+      ${this.counterRow(kind)}
+    `;
+  }
+
+  /** What a kind of document calls itself: headline, headline of a draft, label of the number */
+  private wordingFields(kind: Kind, settings: Settings) {
+    const offer = kind === 'offer';
+    const wording = offer ? settings.offer.wording : settings.invoice_wording;
+    const [title, draft, number] = offer
+      ? ['Angebot', 'Angebotsentwurf', 'Angebotsnummer']
+      : ['Rechnung', 'Rechnungsentwurf', 'Rechnungsnummer'];
+    const field = (
+      key: 'title' | 'draft_title' | 'number_label',
+      caption: string,
+      standard: string,
+      hint = ''
+    ) => html`
+      <wa-input
+        label="${caption}"
+        placeholder="${standard}"
+        hint="${hint}"
+        .value="${wording[key]}"
+        @input="${(e: Event) =>
+          this.edit(s => ((offer ? s.offer.wording : s.invoice_wording)[key] = text(e)))}"
+      ></wa-input>
+    `;
+    return html`
+      <div class="grid">
+        ${field(
+          'title',
+          'Überschrift',
+          title,
+          offer ? 'Leer: die Vorgabe, z. B. „Offerte“ schreiben.' : 'Leer: die Vorgabe.'
+        )}
+        ${field('draft_title', 'Überschrift im Entwurf', draft)}
+        ${field('number_label', 'Bezeichnung der Nummer', number)}
+      </div>
+    `;
+  }
+
+  private offersPage(settings: Settings) {
+    const offer = settings.offer;
+    // none: the layout of the invoices, which then shows selected
+    const offerLayout = offer.layout ?? settings.layout;
+    return html`
+      ${this.numberFields('offer', settings)}
+      <wa-input
+        label="Gültigkeit (Tage)"
+        type="number"
+        min="0"
+        hint="Leer lassen, um keine Gültigkeit festzulegen."
+        .value="${offer.validity_days === null ? '' : String(offer.validity_days)}"
+        @input="${(e: Event) => this.edit(s => (s.offer.validity_days = parseDays(text(e))))}"
+      ></wa-input>
+      ${this.wordingFields('offer', settings)}
+      <wa-textarea
+        label="Einleitung"
+        hint="Vor der Positionstabelle, z. B. Anrede und Anlass. Jedes Angebot kann einen eigenen Text haben."
+        rows="3"
+        .value="${offer.intro ?? ''}"
+        @input="${(e: Event) => this.edit(s => (s.offer.intro = nullable(text(e))))}"
+      ></wa-textarea>
+      <wa-textarea
+        label="Schlusstext"
+        hint="Nach den Summen. {valid_until} schreibt das Datum, bis zu dem das Angebot gilt, eine Zeile mit dem Platzhalter entfällt ohne Gültigkeit."
+        rows="3"
+        .value="${offer.closing ?? ''}"
+        @input="${(e: Event) => this.edit(s => (s.offer.closing = nullable(text(e))))}"
+      ></wa-textarea>
+      <wa-select
+        label="Standard-Layout"
+        hint="Neue Angebote dieses Kontexts beginnen damit, jedes kann ein anderes wählen."
+        .value="${offerLayout}"
+        @change="${(e: Event) =>
+          this.edit(s => (s.offer.layout = String((e.target as WaSelect).value)))}"
+      >
+        ${this.layouts
+          .filter(l => !l.archived || l.id === offerLayout)
+          .map(l => html`<wa-option value="${l.id}">${l.name}</wa-option>`)}
+      </wa-select>
+    `;
+  }
+
   private invoicesPage(settings: Settings) {
     return html`
       <div class="grid">
@@ -1343,35 +1592,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
             ></wa-input>`
           : nothing
       }
-      <wa-input
-        label="Muster der Rechnungsnummer"
-        hint="${this.numberHint}"
-        .value="${settings.number_pattern}"
-        @input="${(e: Event) => {
-          this.edit(s => (s.number_pattern = text(e)));
-          void this.showNumberExample();
-        }}"
-      ></wa-input>
-      <wa-select
-        label="Zähler periodisch zurücksetzen"
-        hint="Das Muster formatiert nur. Es muss den Zeitraum enthalten, sonst wiederholen sich Nummern."
-        .value="${settings.number_reset}"
-        @change="${(e: Event) => {
-          this.edit(s => (s.number_reset = (e.target as WaSelect).value as NumberReset));
-          void this.showNumberExample();
-        }}"
-      >
-        ${resetOptions(settings.fiscal_year_start).map(
-          ([value, label]) => html`<wa-option value="${value}">${label}</wa-option>`
-        )}
-      </wa-select>
-      <span class="muted">
-        Jahr YYYY (2026) oder YY, Monat MM (03) oder M, Tag DD (07) oder D, Zähler N: NNN füllt mit
-        Nullen auf drei Stellen auf (007), N gar nicht. Geschäftsjahr: GGGG oder GG für das Jahr, in
-        dem es beginnt, gggg oder gg für das Jahr, in dem es endet (<code>GGGG/gg</code> gibt
-        2026/27), Q für sein Quartal. Buchstaben als Text in [eckige Klammern].
-      </span>
-      ${this.counterRow()}
+      ${this.numberFields('invoice', settings)} ${this.wordingFields('invoice', settings)}
       <wa-textarea
         label="Einleitung"
         hint="Vor der Positionstabelle, z. B. Anrede und Anlass. Jede Rechnung kann einen eigenen Text haben."
@@ -1401,14 +1622,18 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   /** What stops invoices from being issued under the context, and what only XRechnung needs */
   private missingNotes() {
-    const { missing, missing_for_xrechnung: forXRechnung } = this.missing;
+    const {
+      missing,
+      missing_for_xrechnung: forXRechnung,
+      missing_for_offers: forOffers,
+    } = this.missing;
     return html`
       ${
         missing.length > 0
           ? html`
               <wa-callout variant="warning">
-                Für Rechnungen fehlt noch: ${fieldNames(missing)}. Bis dahin sind Rechnungen, Kunden
-                und Positionen gesperrt.
+                Für Rechnungen fehlt noch: ${fieldNames(missing)}. Bis dahin sind Rechnungen,
+                ${forOffers.length > 0 ? 'Angebote, ' : ''}Kunden und Positionen gesperrt.
               </wa-callout>
             `
           : nothing
@@ -1481,6 +1706,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     const content = {
       company: () => this.companyPage(settings),
       bank: () => this.bankPage(),
+      offers: () => this.offersPage(settings),
       invoices: () => this.invoicesPage(settings),
     }[page];
     const heading = PAGES.find(([key]) => key === page)?.[1];
@@ -1602,7 +1828,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     }
     return [
       ...(this.defaultLayout === `custom-${layout.id}` ? ['Standard-Layout'] : []),
-      ...this.usage.map(u => `${u.number ?? 'Entwurf'} · ${u.customer || '–'}`),
+      ...this.usage.map(
+        u =>
+          `${u.kind === 'offer' ? 'Angebot ' : ''}${u.number ?? 'Entwurf'} · ${u.customer || '–'}`
+      ),
     ];
   }
 

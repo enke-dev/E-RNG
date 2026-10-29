@@ -17,6 +17,16 @@ erng-list-item.add {
   gap: var(--wa-space-xs);
 }
 
+/* a quiet, compact table inside the explanation */
+.numbering .examples {
+  margin-block-start: var(--wa-space-s);
+
+  & th,
+  & td {
+    padding: var(--wa-space-2xs) var(--wa-space-m) var(--wa-space-2xs) 0;
+  }
+}
+
 .file,
 .counter {
   display: flex;

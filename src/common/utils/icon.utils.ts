@@ -1,5 +1,6 @@
 import { registerIconLibrary } from '@awesome.me/webawesome/dist/components/icon/library.js';
 import check from '@fortawesome/fontawesome-free/svgs/solid/check.svg?url';
+import info from '@fortawesome/fontawesome-free/svgs/solid/circle-info.svg?url';
 import save from '@fortawesome/fontawesome-free/svgs/solid/floppy-disk.svg?url';
 import trash from '@fortawesome/fontawesome-free/svgs/solid/trash.svg?url';
 
@@ -10,6 +11,7 @@ import trash from '@fortawesome/fontawesome-free/svgs/solid/trash.svg?url';
  */
 const ICONS: Record<string, string> = {
   check,
+  info,
   save,
   trash,
 };

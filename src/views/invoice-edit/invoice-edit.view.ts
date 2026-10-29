@@ -30,6 +30,7 @@ import type {
   Check,
   Customer,
   InvoiceDraft,
+  Kind,
   LayoutInfo,
   Position,
   PositionTemplate,
@@ -43,9 +44,16 @@ import { ErngElement } from '../../common/utils/base.utils.js';
 import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { formatDate, UNITS } from '../../common/utils/format.utils.js';
+import {
+  draftTitle,
+  kindRoute,
+  KINDS,
+  parseDays,
+  validUntil,
+} from '../../common/utils/kind.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { startReorder } from '../../common/utils/reorder.utils.js';
-import { goto } from '../../common/utils/routing.utils.js';
+import { goto, redirect } from '../../common/utils/routing.utils.js';
 import styles from './invoice-edit.view.css';
 
 const blankCustomer = (): Customer => ({
@@ -62,6 +70,9 @@ const blankCustomer = (): Customer => ({
 export class InvoiceEditView extends ErngElement.withStyles(styles) {
   /** `new` or the id of a stored invoice */
   @property({ attribute: 'invoice-id' }) invoiceId = 'new';
+
+  /** What is edited, for good: the list makes one element per kind */
+  @property() kind: Kind = 'invoice';
 
   @state() private stored: StoredInvoice | undefined;
   @state() private draft: InvoiceDraft | undefined;
@@ -156,6 +167,15 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     return this.stored?.status === 'exported';
   }
 
+  private get texts() {
+    return KINDS[this.kind];
+  }
+
+  /** The texts and layout of the settings that apply to the kind */
+  private get defaults() {
+    return this.kind === 'offer' ? this.settings?.offer : this.settings;
+  }
+
   private async load() {
     try {
       const stored =
@@ -164,7 +184,12 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       const contextId = stored?.context_id ?? activeContext.get()?.id;
       const context = contextById(contextId);
       if (contextId == null || !context) {
-        throw new Error('Für die Rechnung fehlt der Kontext.');
+        throw new Error(this.texts.missingContext);
+      }
+      // a document of the other kind belongs to the other list
+      if (stored && stored.kind !== this.kind) {
+        redirect(kindRoute(stored.kind, stored.id));
+        return;
       }
       const settings = context.settings;
       const [customers, layouts] = await Promise.all([
@@ -177,12 +202,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       this.customers = customers;
       if (stored === undefined) {
         this.stored = undefined;
-        this.draft = await api.invoiceBlank(contextId, 'invoice');
-        // a new invoice starts with the default layout, it can pick another
-        this.draft.layout = settings.layout;
-        // and the texts of the settings, which it can change for itself
-        this.draft.intro = settings.intro ?? '';
-        this.draft.closing = settings.closing ?? '';
+        // with the default layout and texts of its kind, which it can change for itself
+        this.draft = await api.invoiceBlank(contextId, this.kind);
       } else {
         this.stored = stored;
         this.draft = stored.draft;
@@ -206,7 +227,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         this.draft,
         this.stored?.id ?? null,
         this.contextId as number,
-        'invoice'
+        this.kind
       );
       if (request !== this.#previewRequest) {
         return;
@@ -222,7 +243,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   private async runCheck() {
     if (this.draft) {
-      this.check = await api.invoiceCheck(this.contextId as number, 'invoice', this.draft);
+      this.check = await api.invoiceCheck(this.contextId as number, this.kind, this.draft);
     }
   }
 
@@ -298,7 +319,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     this.stored = await api.invoiceSave(
       this.stored?.id ?? null,
       this.contextId ?? null,
-      'invoice',
+      this.kind,
       this.draft
     );
     // typed while saving: that is for the next save
@@ -307,7 +328,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
     // the first save gives the new invoice its address, without reloading the form
     if (updateUrl && isNew && this.invoiceId === 'new') {
-      history.replaceState({}, '', `/invoices/${this.stored.id}`);
+      history.replaceState({}, '', kindRoute(this.kind, this.stored.id));
     }
     return this.stored;
   }
@@ -350,7 +371,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       const copy = await api.invoiceDuplicate(this.stored.id);
       this.#dirty = false;
       this.announce({ id: copy.id });
-      goto(`/invoices/${copy.id}`);
+      goto(kindRoute(this.kind, copy.id));
     } catch (error) {
       notifyError(error);
     }
@@ -368,14 +389,14 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         return;
       }
     }
-    goto('/invoices/none');
+    goto(kindRoute(this.kind, 'none'));
   }
 
   /** A new invoice that was never saved is dropped, what was typed asks first */
   private async cancelNew() {
     if (this.#dirty) {
-      const sure = await ask('Die Eingaben dieser Rechnung gehen verloren.', {
-        title: 'Neue Rechnung abbrechen',
+      const sure = await ask(this.texts.cancelText, {
+        title: this.texts.cancelTitle,
         kind: 'warning',
         okLabel: 'Verwerfen',
         cancelLabel: 'Zurück',
@@ -386,7 +407,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
     // nothing of it is kept: no draft is saved on the way out
     this.#dirty = false;
-    goto('/invoices/none');
+    goto(kindRoute(this.kind, 'none'));
   }
 
   /** An exported invoice cannot go, it leaves the list instead and stays for the books */
@@ -398,8 +419,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       const id = this.stored.id;
       await api.invoiceArchive(id);
       this.announce({ id, deleted: true });
-      notify('Die Rechnung ist archiviert und steht nicht mehr in der Liste.');
-      goto('/');
+      notify(this.texts.archived);
+      goto(kindRoute(this.kind));
     } catch (error) {
       notifyError(error);
     }
@@ -412,7 +433,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     try {
       this.stored = await api.invoiceUnarchive(this.stored.id);
       this.announce({ restored: true });
-      notify('Die Rechnung ist wiederhergestellt und steht wieder in der Liste.');
+      notify(this.texts.restored);
     } catch (error) {
       notifyError(error);
     }
@@ -427,7 +448,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       await api.invoiceDelete(id);
       this.#dirty = false;
       this.announce({ id, deleted: true });
-      goto('/');
+      goto(kindRoute(this.kind));
     } catch (error) {
       notifyError(error);
     }
@@ -447,8 +468,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         throw new Error('Die Rechnung konnte nicht gespeichert werden.');
       }
       const number = await api.invoiceNextNumber(stored.id);
-      const sure = await ask(`Rechnung ${number} erstellen? Danach ist sie gesperrt.`, {
-        title: 'Rechnung erstellen',
+      const sure = await ask(this.texts.confirm(number), {
+        title: this.texts.createTitle,
         okLabel: 'Erstellen',
         cancelLabel: 'Abbrechen',
       });
@@ -460,7 +481,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       this.draft = created.invoice.draft;
       this.#dirty = false;
       this.announce();
-      notify(`Rechnung ${created.invoice.number} erstellt und gesperrt.`);
+      notify(this.texts.created(created.invoice.number ?? ''));
       if (created.warnings.length > 0) {
         notify(
           `Hinweise: ${created.warnings.map(w => w.message.slice(0, 120)).join(' ')}`,
@@ -482,7 +503,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     if (!stored || !this.locked || this.outputting) {
       return;
     }
-    const number = stored.number ?? 'Rechnung';
+    const number = stored.number ?? this.texts.noun;
     try {
       const target = await save({
         defaultPath: `${fileName(number)}.${kind}`,
@@ -515,14 +536,14 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     const customer = this.draft.customer.name.trim();
     try {
       const target = await save({
-        defaultPath: `${fileName(`Rechnungsentwurf${customer ? ` ${customer}` : ''}`)}.pdf`,
+        defaultPath: `${fileName(`${draftTitle(this.settings, this.kind)}${customer ? ` ${customer}` : ''}`)}.pdf`,
         filters: [{ name: 'PDF', extensions: ['pdf'] }],
       });
       if (!target) {
         return;
       }
       this.outputting = true;
-      await api.invoiceDraftPdf(this.draft, stored.id, this.contextId as number, 'invoice', target);
+      await api.invoiceDraftPdf(this.draft, stored.id, this.contextId as number, this.kind, target);
       notify('Der Entwurf ist als PDF gespeichert.');
     } catch (error) {
       notifyError(error);
@@ -651,6 +672,95 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         </div>
       </wa-card>
     `;
+  }
+
+  /** What an invoice says about the service and the file format; an offer has neither */
+  private renderService(draft: InvoiceDraft, locked: boolean) {
+    return html`
+      <div class="grid">
+        <wa-input
+          type="date"
+          label="${draft.delivery_end === null ? 'Leistungsdatum' : 'Leistungszeitraum vom'}"
+          ?disabled="${locked}"
+          required
+          .value="${draft.delivery_date}"
+          @input="${(e: Event) => this.edit(d => (d.delivery_date = text(e)))}"
+        ></wa-input>
+        ${
+          draft.delivery_end === null
+            ? nothing
+            : html`
+                <wa-input
+                  type="date"
+                  label="bis"
+                  ?disabled="${locked}"
+                  required
+                  .value="${draft.delivery_end}"
+                  @input="${(e: Event) => this.edit(d => (d.delivery_end = text(e)))}"
+                ></wa-input>
+              `
+        }
+      </div>
+      <wa-switch
+        ?disabled="${locked}"
+        ?checked="${draft.delivery_end !== null}"
+        @change="${(e: Event) =>
+          this.edit(d => {
+            // a new period starts and ends on the day of service, the user moves its end
+            d.delivery_end = (e.target as WaSwitch).checked
+              ? (d.delivery_end ?? d.delivery_date)
+              : null;
+          })}"
+      >
+        Zeitraum
+      </wa-switch>
+      <wa-switch
+        ?disabled="${locked}"
+        ?checked="${draft.profile === 'xrechnung'}"
+        @change="${(e: Event) => this.edit(d => (d.profile = (e.target as WaSwitch).checked ? 'xrechnung' : 'en16931'))}"
+      >
+        XRechnung (für öffentliche Auftraggeber)
+      </wa-switch>
+      ${
+        draft.profile === 'xrechnung'
+          ? html`
+              <wa-input
+                label="Leitweg-ID / Käuferreferenz"
+                ?disabled="${locked}"
+                required
+                .value="${draft.buyer_reference ?? ''}"
+                @input="${(e: Event) => this.edit(d => (d.buyer_reference = nullable(text(e))))}"
+              ></wa-input>
+            `
+          : nothing
+      }
+    `;
+  }
+
+  /** How many days an offer is valid from its date; the day itself is worked out, never typed */
+  private renderValidity(draft: InvoiceDraft, locked: boolean) {
+    const until = validUntil(draft.issue_date, draft.validity_days);
+    return html`
+      <wa-input
+        type="number"
+        min="0"
+        label="Gültigkeit (Tage)"
+        hint="${until ? `bis ${formatDate(until)}` : 'Leer lassen, um keine Gültigkeit festzulegen.'}"
+        ?disabled="${locked}"
+        .value="${draft.validity_days === null ? '' : String(draft.validity_days)}"
+        @input="${(e: Event) => this.edit(d => (d.validity_days = parseDays(text(e))))}"
+      ></wa-input>
+    `;
+  }
+
+  /** The date of the document; the (hidden) day of service of an offer goes along */
+  private editIssueDate(value: string) {
+    this.edit(d => {
+      d.issue_date = value;
+      if (this.kind === 'offer' && value !== '') {
+        d.delivery_date = value;
+      }
+    });
   }
 
   private renderPreviewSheet() {
@@ -917,7 +1027,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  /** What the invoice is: a draft, or created (numbered, checked) and perhaps paid */
+  /** What the document is: a draft, or created (numbered, checked) and perhaps paid, an offer valid until a day */
   private renderStatus() {
     const stored = this.stored;
     if (!stored) {
@@ -926,6 +1036,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     if (stored.status === 'draft') {
       return html`<div class="status"><wa-tag>Entwurf</wa-tag></div>`;
     }
+    const until = validUntil(stored.draft.issue_date, stored.draft.validity_days);
     return html`
       <div class="status">
         <wa-tag>${stored.number}</wa-tag>
@@ -933,6 +1044,13 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         ${
           stored.paid_at
             ? html`<wa-tag variant="success">Bezahlt am ${formatDate(stored.paid_at)}</wa-tag>`
+            : nothing
+        }
+        ${
+          this.kind === 'offer' && until
+            ? html`<wa-tag variant="${until < today() ? 'warning' : 'neutral'}">
+                Gültig bis ${formatDate(until)}
+              </wa-tag>`
             : nothing
         }
       </div>
@@ -951,7 +1069,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       (this.check?.findings.some(f => f.severity === 'Fatal') ?? false);
 
     return html`
-      <erng-editor position-key="editor:invoice">
+      <erng-editor position-key="editor:${this.kind}">
         <section id="form" slot="form">
           ${
             locked
@@ -959,15 +1077,15 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                   <wa-callout variant="neutral">
                     Erstellt als <strong>${stored?.number}</strong> am
                     ${formatDate(stored?.exported_at ?? '', true)}.<br>
-                    <em>Erstellte Rechnungen sind für alle Änderungen gesperrt.</em>
+                    <em>${this.texts.locked}</em>
                   </wa-callout>
                 `
               : nothing
           }
-          ${locked ? this.renderPayment() : nothing}
+          ${locked && this.kind === 'invoice' ? this.renderPayment() : nothing}
 
           <wa-card>
-            <div slot="header">Rechnung</div>
+            <div slot="header">${this.texts.noun}</div>
             <div class="stack">
               <div class="grid">
                 <div class="customer">
@@ -986,7 +1104,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 <wa-select
                   label="Layout"
                   ?disabled="${locked}"
-                  .value="${draft.layout ?? this.settings?.layout ?? 'standard'}"
+                  .value="${draft.layout ?? this.defaults?.layout ?? this.settings?.layout ?? 'standard'}"
                   @change="${(e: Event) => this.edit(d => (d.layout = String((e.target as WaSelect).value)))}"
                 >
                   ${this.layouts
@@ -1007,70 +1125,15 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
               <div class="grid">
                 <wa-input
                   type="date"
-                  label="Rechnungsdatum"
+                  label="${this.texts.dateLabel}"
                   ?disabled="${locked}"
                   required
                   .value="${draft.issue_date}"
-                  @input="${(e: Event) => this.edit(d => (d.issue_date = text(e)))}"
+                  @input="${(e: Event) => this.editIssueDate(text(e))}"
                 ></wa-input>
+                ${this.kind === 'offer' ? this.renderValidity(draft, locked) : nothing}
               </div>
-              <div class="grid">
-                <wa-input
-                  type="date"
-                  label="${draft.delivery_end === null ? 'Leistungsdatum' : 'Leistungszeitraum vom'}"
-                  ?disabled="${locked}"
-                  required
-                  .value="${draft.delivery_date}"
-                  @input="${(e: Event) => this.edit(d => (d.delivery_date = text(e)))}"
-                ></wa-input>
-                ${
-                  draft.delivery_end === null
-                    ? nothing
-                    : html`
-                        <wa-input
-                          type="date"
-                          label="bis"
-                          ?disabled="${locked}"
-                          required
-                          .value="${draft.delivery_end}"
-                          @input="${(e: Event) => this.edit(d => (d.delivery_end = text(e)))}"
-                        ></wa-input>
-                      `
-                }
-              </div>
-              <wa-switch
-                ?disabled="${locked}"
-                ?checked="${draft.delivery_end !== null}"
-                @change="${(e: Event) =>
-                  this.edit(d => {
-                    // a new period starts and ends on the day of service, the user moves its end
-                    d.delivery_end = (e.target as WaSwitch).checked
-                      ? (d.delivery_end ?? d.delivery_date)
-                      : null;
-                  })}"
-              >
-                Zeitraum
-              </wa-switch>
-              <wa-switch
-                ?disabled="${locked}"
-                ?checked="${draft.profile === 'xrechnung'}"
-                @change="${(e: Event) => this.edit(d => (d.profile = (e.target as WaSwitch).checked ? 'xrechnung' : 'en16931'))}"
-              >
-                XRechnung (für öffentliche Auftraggeber)
-              </wa-switch>
-              ${
-                draft.profile === 'xrechnung'
-                  ? html`
-                      <wa-input
-                        label="Leitweg-ID / Käuferreferenz"
-                        ?disabled="${locked}"
-                        required
-                        .value="${draft.buyer_reference ?? ''}"
-                        @input="${(e: Event) => this.edit(d => (d.buyer_reference = nullable(text(e))))}"
-                      ></wa-input>
-                    `
-                  : nothing
-              }
+              ${this.kind === 'invoice' ? this.renderService(draft, locked) : nothing}
             </div>
           </wa-card>
 
@@ -1086,7 +1149,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 label="Einleitung"
                 rows="2"
                 ?disabled="${locked}"
-                .placeholder="${this.settings?.intro ?? ''}"
+                .placeholder="${this.defaults?.intro ?? ''}"
                 .value="${draft.intro ?? ''}"
                 @input="${(e: Event) => this.edit(d => (d.intro = text(e)))}"
               ></wa-textarea>
@@ -1102,7 +1165,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 label="Schlusstext"
                 rows="2"
                 ?disabled="${locked}"
-                .placeholder="${this.settings?.closing ?? ''}"
+                .placeholder="${this.defaults?.closing ?? ''}"
                 .value="${draft.closing ?? ''}"
                 @input="${(e: Event) => this.edit(d => (d.closing = text(e)))}"
               ></wa-textarea>
@@ -1132,7 +1195,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
           ${
             stored
               ? html`
-                  <wa-button-group label="Rechnung">
+                  <wa-button-group label="${this.texts.noun}">
                     <wa-button appearance="outlined" @click="${this.duplicate}">
                       Duplizieren
                     </wa-button>
@@ -1164,72 +1227,85 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
               : nothing
           }
           ${
-            locked
-              ? html`
-                  <wa-button-group label="Exportieren">
-                    <wa-button
-                      variant="brand"
-                      ?loading="${this.outputting}"
-                      @click="${() => void this.output(this.outputKind)}"
-                    >
-                      Exportieren als
-                    </wa-button>
-                    <wa-dropdown
-                      placement="top-end"
-                      @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) => {
-                        this.outputKind = e.detail.item.value === 'xml' ? 'xml' : 'pdf';
-                      }}"
-                    >
+            locked && this.kind === 'offer'
+              ? // an offer has a PDF only: no format to pick
+                html`
+                  <wa-button
+                    appearance="outlined"
+                    ?loading="${this.outputting}"
+                    @click="${() => void this.output('pdf')}"
+                  >
+                    Exportieren als PDF
+                  </wa-button>
+                `
+              : locked
+                ? html`
+                    <wa-button-group label="Exportieren">
                       <wa-button
-                        slot="trigger"
                         variant="brand"
-                        with-caret
-                        ?disabled="${this.outputting}"
-                        aria-label="Format zum Exportieren"
+                        ?loading="${this.outputting}"
+                        @click="${() => void this.output(this.outputKind)}"
                       >
-                        ${this.outputKind.toUpperCase()}
+                        Exportieren als
                       </wa-button>
-                      <wa-dropdown-item value="pdf">PDF</wa-dropdown-item>
-                      <wa-dropdown-item value="xml">XML</wa-dropdown-item>
-                    </wa-dropdown>
-                  </wa-button-group>
-                `
-              : html`
-                  <wa-button-group label="Speichern">
-                    ${
-                      // a stored draft saves itself, what it can still be saved as is a PDF to show
-                      stored
-                        ? html`
-                            <wa-button
-                              ?loading="${this.outputting}"
-                              ?disabled="${this.creating}"
-                              @click="${this.saveDraftPdf}"
-                              appearance="outlined"
-                            >
-                              Exportieren als PDF
-                            </wa-button>
-                          `
-                        : html`
-                            <wa-button
-                              ?loading="${this.busy}"
-                              ?disabled="${this.creating}"
-                              @click="${this.saveDraft}"
-                              appearance="outlined"
-                            >
-                              Entwurf speichern
-                            </wa-button>
-                          `
-                    }
-                    <wa-button
-                      variant="brand"
-                      ?loading="${this.creating}"
-                      ?disabled="${blocked}"
-                      @click="${this.create}"
-                    >
-                      Prüfen und erstellen
-                    </wa-button>
-                  </wa-button-group>
-                `
+                      <wa-dropdown
+                        placement="top-end"
+                        @wa-select="${(
+                          e: CustomEvent<{ item: HTMLElement & { value: string } }>
+                        ) => {
+                          this.outputKind = e.detail.item.value === 'xml' ? 'xml' : 'pdf';
+                        }}"
+                      >
+                        <wa-button
+                          slot="trigger"
+                          variant="brand"
+                          with-caret
+                          ?disabled="${this.outputting}"
+                          aria-label="Format zum Exportieren"
+                        >
+                          ${this.outputKind.toUpperCase()}
+                        </wa-button>
+                        <wa-dropdown-item value="pdf">PDF</wa-dropdown-item>
+                        <wa-dropdown-item value="xml">XML</wa-dropdown-item>
+                      </wa-dropdown>
+                    </wa-button-group>
+                  `
+                : html`
+                    <wa-button-group label="Speichern">
+                      ${
+                        // a stored draft saves itself, what it can still be saved as is a PDF to show
+                        stored
+                          ? html`
+                              <wa-button
+                                ?loading="${this.outputting}"
+                                ?disabled="${this.creating}"
+                                @click="${this.saveDraftPdf}"
+                                appearance="outlined"
+                              >
+                                Exportieren als PDF
+                              </wa-button>
+                            `
+                          : html`
+                              <wa-button
+                                ?loading="${this.busy}"
+                                ?disabled="${this.creating}"
+                                @click="${this.saveDraft}"
+                                appearance="outlined"
+                              >
+                                Entwurf speichern
+                              </wa-button>
+                            `
+                      }
+                      <wa-button
+                        variant="brand"
+                        ?loading="${this.creating}"
+                        ?disabled="${blocked}"
+                        @click="${this.create}"
+                      >
+                        ${this.texts.create}
+                      </wa-button>
+                    </wa-button-group>
+                  `
           }
         </nav>
       </footer>

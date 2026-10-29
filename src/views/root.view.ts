@@ -21,6 +21,7 @@ import {
   label,
   loadContexts,
   ready,
+  readyForOffers,
   switchContext,
 } from '../common/utils/context.utils.js';
 import { rememberRoute } from '../common/utils/memory.utils.js';
@@ -32,14 +33,20 @@ import { routes } from './root.routes.js';
 import styles from './root.view.css';
 
 const NAV = [
+  ['/offers', 'Angebote'],
   ['/', 'Rechnungen'],
   ['/customers', 'Kunden'],
   ['/templates', 'Positionen'],
   ['/settings', 'Einstellungen'],
 ] as const;
 
-/** Views that issue invoices wait for a context that can */
-const NEEDS_CONTEXT = new Set(['/', '/customers', '/templates']);
+/** Views that issue documents wait for a context that can, offers need less than invoices */
+const NEEDS_CONTEXT = new Map([
+  ['/', ready],
+  ['/customers', ready],
+  ['/templates', ready],
+  ['/offers', readyForOffers],
+]);
 
 const isActive = (href: string) =>
   href === '/'
@@ -127,7 +134,7 @@ export class RootView extends ErngElement.withStyles(styles) {
         </div>
         <nav>
           ${NAV.map(([href, text]) =>
-            NEEDS_CONTEXT.has(href) && !ready.get()
+            NEEDS_CONTEXT.get(href)?.get() === false
               ? html`<a
                   class="disabled"
                   aria-disabled="true"
