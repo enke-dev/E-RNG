@@ -1,6 +1,6 @@
 {
   "name": "e-rng",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Desktop app to create ZUGFeRD/Factur-X invoices and XRechnung XML",
   "homepage": "https://github.com/enke-dev/e-rng#readme",
