@@ -1175,6 +1175,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   // render
 
   private item(key: string, label: string, sub: string, tag: unknown = nothing, archived = false) {
+    const kind = html`<wa-tag variant="neutral" size="s">${sub}</wa-tag>`;
     return html`
       <erng-list-item
         ?selected="${this.section === key}"
@@ -1183,7 +1184,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       >
         ${label}
         <span slot="end">${tag}</span>
-        ${sub ? html`<span slot="sub">${sub}</span>` : nothing}
+        <span slot="sub">${kind}</span>
       </erng-list-item>
     `;
   }
@@ -1298,12 +1299,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
                 `
               : nothing
           }
-          ${this.item(`${LAYOUT}standard`, this.builtInName, 'Eingebaut', isDefault('standard'))}
+          ${this.item(`${LAYOUT}standard`, this.builtInName, 'integriert', isDefault('standard'))}
           ${this.customs.map(c =>
             this.item(
               `${LAYOUT}${c.id}`,
               c.name,
-              c.archived ? 'Archiviert' : 'Eigenes Layout',
+              c.archived ? 'Archiviert' : 'individuell',
               isDefault(`custom-${c.id}`),
               c.archived
             )
@@ -1605,7 +1606,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       ></wa-textarea>
       <wa-select
         label="Standard-Layout"
-        hint="Neue Rechnungen dieses Kontexts beginnen damit, jede kann ein anderes wählen. Eigene Layouts legst du unter Layouts an."
+        hint="Neue Rechnungen dieses Kontexts beginnen damit, jede kann ein anderes wählen. Individuelle Layouts legst du unter Layouts an."
         .value="${settings.layout}"
         @change="${(e: Event) => this.edit(s => (s.layout = String((e.target as WaSelect).value)))}"
       >
@@ -1796,9 +1797,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           <div slot="form" class="stack">
             <span>${this.layouts.find(l => l.id === 'standard')?.description}</span>
             <span class="muted">
-              Das eingebaute Layout lässt sich nicht ändern. Eigene Layouts mit Rand, Teilen (Texte,
-              Bilder, Briefkopf als Bild) und Schrift legst du mit „Neu“ an. Die Vorschau zeigt
-              dieselben Beispieldaten wie bei jedem Layout.
+              Das integrierte Layout lässt sich nicht ändern. Individuelle Layouts mit Rand,
+              Elementen (Texte, Bilder, Briefkopf als Bild) und Schrift legst du mit „Neu“ an. Die
+              Vorschau zeigt dieselben Beispieldaten wie bei jedem Layout.
             </span>
           </div>
           ${this.guidesToggle()} ${this.sampleSheet(false)}

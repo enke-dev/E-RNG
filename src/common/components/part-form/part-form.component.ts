@@ -200,7 +200,7 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
           <span class="muted">
             PNG, JPG oder SVG bis 5 MB. SVG bleibt in jeder Größe scharf. Ein Bild über die ganze
             Seite (Breite 210 mm, oben links bei 0 und 0) ist ein Briefpapier, Bilder liegen immer
-            hinter den anderen Teilen.
+            hinter den anderen Elementen.
           </span>
         `;
       }

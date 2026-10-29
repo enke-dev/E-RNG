@@ -194,7 +194,7 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
           )}
         </div>
 
-        <strong>Teile</strong>
+        <strong>Elemente</strong>
         ${setup.parts.map(
           (part, index) => html`
             <wa-details
@@ -222,8 +222,8 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
                   <wa-button
                     appearance="outlined"
                     variant="danger"
-                    title="Teil entfernen"
-                    aria-label="Teil entfernen"
+                    title="Element entfernen"
+                    aria-label="Element entfernen"
                     @click="${() => {
                       setup.parts.splice(index, 1);
                       this.pointAt(() => {
@@ -248,7 +248,9 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
               this.changed();
             }}"
           >
-            <wa-button slot="trigger" appearance="outlined" with-caret>Teil hinzufügen</wa-button>
+            <wa-button slot="trigger" appearance="outlined" with-caret
+              >Element hinzufügen</wa-button
+            >
             ${(Object.keys(KINDS) as Kind[]).map(
               kind =>
                 html`<wa-dropdown-item value="${kind}">${KINDS[kind].label}</wa-dropdown-item>`

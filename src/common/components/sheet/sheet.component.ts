@@ -104,7 +104,7 @@ export class SheetComponent extends ErngElement.withStyles(styles) {
               class="region ${key === this.active ? 'active' : key === this.hover ? 'hover' : ''}"
               style="left: ${(region.x / 210) * 100}%; top: ${(region.y / 297) * 100}%; width: ${(region.w / 210) * 100}%; height: ${(height / 297) * 100}%"
               data-key="${key}"
-              aria-label="Teil bearbeiten"
+              aria-label="Element bearbeiten"
               @mouseenter="${() => this.emit('region-hover', key)}"
               @mouseleave="${() => this.emit('region-hover', null)}"
               @click="${() => this.emit('region-click', key)}"
