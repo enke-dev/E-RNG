@@ -119,7 +119,8 @@ pub struct PartBox {
 }
 
 /// The preview with the boxes of the parts, for the editor of a layout: what is under the pointer
-/// in the sample is the part to edit. The template hands the boxes out, a query reads them.
+/// in the sample is the part to edit. The template hands the boxes out, an evaluation in its
+/// context reads them.
 pub fn render_sample(
     sidecars: &Sidecars,
     dir: &Path,
@@ -134,9 +135,17 @@ pub fn render_sample(
     compile(sidecars, dir, &["--format", "svg"], "page-{0p}.svg")?;
     let pages = read_pages(dir)?;
 
-    let mut args: Vec<OsString> = vec!["query".into()];
+    // `typst query` is deprecated, `eval` in the context of the document replaces it
+    let mut args: Vec<OsString> = vec!["eval".into()];
     args.extend(world_args(dir));
-    args.extend(["invoice.typ", "<part-box>", "--field", "value"].map(OsString::from));
+    args.extend(
+        [
+            "--in",
+            "invoice.typ",
+            "query(<part-box>).map(box => box.value)",
+        ]
+        .map(OsString::from),
+    );
     let boxes = serde_json::from_str(&typst(sidecars, dir, &args)?)
         .context("the part boxes are not readable")?;
     Ok((pages, boxes))
