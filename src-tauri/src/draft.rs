@@ -445,6 +445,7 @@ pub(crate) mod fixtures {
             issue_date: "2026-10-17".into(),
             delivery_date: "2026-10-17".into(),
             delivery_end: None,
+            validity_days: None,
             positions: vec![
                 Position {
                     description: "Beratung".into(),

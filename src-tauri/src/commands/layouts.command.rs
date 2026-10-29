@@ -9,7 +9,7 @@ use crate::draft::{build_invoice, for_preview};
 use crate::layout::ImageFile;
 use crate::layout_bundle;
 use crate::layout_files;
-use crate::model::{CustomLayout, Customer, FontFile, InvoiceDraft, LayoutUsage, Position};
+use crate::model::{CustomLayout, Customer, FontFile, InvoiceDraft, Kind, LayoutUsage, Position};
 use crate::render::{self, Branding};
 use crate::render::{layouts, LayoutInfo};
 use crate::sidecar::Sidecars;
@@ -66,7 +66,7 @@ pub fn layout_delete(store: State<'_, Store>, id: i64) -> CommandResult<()> {
     }
     if !store.layout_usages(id)?.is_empty() {
         return Err(
-            "Das Layout wird von Rechnungen verwendet, es kann nur archiviert werden.".into(),
+            "Das Layout wird von Rechnungen oder Angeboten verwendet, es kann nur archiviert werden.".into(),
         );
     }
     store.delete_custom_layout(id).map_err(CommandError::from)
@@ -319,7 +319,7 @@ pub async fn layout_preview(
     };
     let branding = Branding {
         guides,
-        ..Branding::for_draft(&draft, &settings, &[])
+        ..Branding::for_document(Kind::Invoice, &draft, &settings, &[])
     };
     let sidecars = Sidecars::locate(&app)?;
 
@@ -416,13 +416,15 @@ mod tests {
 
         assert!(build_invoice(&for_preview(&draft), &settings(), "RE-BEISPIEL").is_ok());
         assert!(draft.positions.len() >= 30, "long enough for a second page");
-        let branding = Branding::for_draft(&draft, &settings(), &[]);
+        let branding = Branding::for_document(Kind::Invoice, &draft, &settings(), &[]);
         assert_eq!(branding.custom.map(|c| c.name).as_deref(), Some("Neu"));
 
         // without a layout the sample shows the built-in one, whatever the default is
         let plain = sample(&settings(), None);
-        assert!(Branding::for_draft(&plain, &settings(), &[])
-            .custom
-            .is_none());
+        assert!(
+            Branding::for_document(Kind::Invoice, &plain, &settings(), &[])
+                .custom
+                .is_none()
+        );
     }
 }

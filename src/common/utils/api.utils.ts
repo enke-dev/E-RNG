@@ -26,6 +26,35 @@ export interface Seller {
 /** When the counter of the numbers starts again: never, or with every business year, quarter, month */
 export type NumberReset = 'never' | 'fiscal_year' | 'quarter' | 'month';
 
+/** The kinds of document: written alike, numbered apart; an offer is a PDF only */
+export type Kind = 'invoice' | 'offer';
+
+/** What a kind of document calls itself, a blank part is the default one */
+export interface Wording {
+  /** The headline: `Rechnung`, `Angebot` */
+  title: string;
+  /** The headline of a draft: `Rechnungsentwurf`, `Angebotsentwurf` */
+  draft_title: string;
+  /** The label of its number: `Rechnungsnummer`, `Angebotsnummer` */
+  number_label: string;
+}
+
+/** What offers have of their own, their layout and texts otherwise follow the invoices' */
+export interface OfferSettings {
+  /** How offer numbers are made, like `Settings.number_pattern` */
+  number_pattern: string;
+  /** When the counter of the offer numbers starts again, like `Settings.number_reset` */
+  number_reset: NumberReset;
+  /** Days an offer is valid from its date; null: no validity */
+  validity_days: number | null;
+  /** Texts of the letter, `{valid_until}` stands for the day the offer is valid until */
+  intro: string | null;
+  closing: string | null;
+  /** Null: the layout of the invoices */
+  layout: string | null;
+  wording: Wording;
+}
+
 export interface Settings {
   seller: Seller;
   /** Blank: no VAT is charged, the invoices show none and `vat_note` says why */
@@ -48,6 +77,8 @@ export interface Settings {
   /** Texts of the letter, used unless an invoice has its own */
   intro: string | null;
   closing: string | null;
+  invoice_wording: Wording;
+  offer: OfferSettings;
 }
 
 /**
@@ -65,14 +96,17 @@ export interface Context {
   missing: string[];
   /** What only XRechnung asks for on top */
   missing_for_xrechnung: string[];
+  /** What is missing before an offer can be issued: the seller's name and address only */
+  missing_for_offers: string[];
 }
 
 export interface Missing {
   missing: string[];
   missing_for_xrechnung: string[];
+  missing_for_offers: string[];
 }
 
-/** Where the invoice numbers of a context stand today */
+/** Where the numbers of a kind of a context stand today */
 export interface Sequence {
   next_number: string;
   /** The counter of the next number */
@@ -85,8 +119,10 @@ export interface Sequence {
 
 /** What belongs to a context */
 export interface ContextUsage {
+  /** Drafts and created invoices, offers are counted apart */
   drafts: number;
   exported: number;
+  offers: number;
   customers: number;
   templates: number;
   layouts: number;
@@ -128,6 +164,8 @@ export interface InvoiceDraft {
   delivery_date: string;
   /** End of the service period, null: one day; blank while it is being typed */
   delivery_end: string | null;
+  /** Offers: days from the issue date it is valid, null: no validity */
+  validity_days: number | null;
   positions: Position[];
   profile: Profile;
   buyer_reference: string | null;
@@ -145,6 +183,8 @@ export interface StoredInvoice {
   id: number;
   /** The context (issuer) it was made under, for good */
   context_id: number;
+  /** What it is, for good */
+  kind: Kind;
   number: string | null;
   status: Status;
   draft: InvoiceDraft;
@@ -168,7 +208,8 @@ export interface StoredFile {
 /** The PDF and XML that were validated on creation, handed out as they are */
 export interface InvoiceFiles {
   pdf: StoredFile;
-  xml: StoredFile;
+  /** Null for an offer, it has a PDF only */
+  xml: StoredFile | null;
   /** Made again from the frozen data, for an invoice created before originals were kept */
   regenerated: boolean;
 }
@@ -183,12 +224,15 @@ export interface Created {
 export interface ListEntry {
   id: number;
   context_id: number;
+  kind: Kind;
   /** The seller of its context, tells invoices apart in a mixed list */
   seller_name: string;
   number: string | null;
   status: Status;
   customer_name: string;
   issue_date: string;
+  /** Offers: the day it is valid until, the issue date plus the days of the draft */
+  valid_until: string | null;
   total: string | null;
   paid_at: string | null;
   updated_at: string;
@@ -267,9 +311,10 @@ export type ImportOutcome =
     }
   | { kind: 'name-taken'; name: string; suggested: string };
 
-/** An invoice made with an own layout, what keeps the layout from being deleted */
+/** An invoice or offer made with an own layout, what keeps the layout from being deleted */
 export interface LayoutUsage {
   invoice_id: number;
+  kind: Kind;
   /** Null for a draft */
   number: string | null;
   customer: string;
@@ -292,6 +337,7 @@ export type Align = 'left' | 'center' | 'right';
 export type InfoField =
   | 'number'
   | 'date'
+  | 'valid-until'
   | 'service-date'
   | 'due-date'
   | 'buyer-reference'
@@ -457,9 +503,10 @@ export const api = {
   settingsCheck: (settings: Settings) => invoke<Missing>('settings_check', { settings }),
   numberExample: (pattern: string, reset: NumberReset, fiscalYearStart: string | null) =>
     invoke<string>('number_example', { pattern, reset, fiscalYearStart }),
-  numberSequence: (contextId: number) => invoke<Sequence>('number_sequence', { contextId }),
-  numberSequenceSet: (contextId: number, next: number) =>
-    invoke<Sequence>('number_sequence_set', { contextId, next }),
+  numberSequence: (contextId: number, kind: Kind) =>
+    invoke<Sequence>('number_sequence', { contextId, kind }),
+  numberSequenceSet: (contextId: number, kind: Kind, next: number) =>
+    invoke<Sequence>('number_sequence_set', { contextId, kind, next }),
 
   customersList: (contextId: number) => invoke<Customer[]>('customers_list', { contextId }),
   customerSave: (customer: Customer) => invoke<Customer>('customer_save', { customer }),
@@ -485,36 +532,43 @@ export const api = {
     invoke<PositionTemplate>('template_save', { template }),
   templateDelete: (id: number) => invoke<null>('template_delete', { id }),
 
-  /** `null` lists the invoices of all contexts */
-  /** Archived invoices only when asked */
-  invoicesList: (contextId: number | null, withArchived = false) =>
-    invoke<ListEntry[]>('invoices_list', { contextId, withArchived }),
+  /** The documents of one kind, `null` lists those of all contexts; archived ones only when asked */
+  invoicesList: (contextId: number | null, kind: Kind, withArchived = false) =>
+    invoke<ListEntry[]>('invoices_list', { contextId, kind, withArchived }),
   invoiceGet: (id: number) => invoke<StoredInvoice>('invoice_get', { id }),
-  invoiceBlank: () => invoke<InvoiceDraft>('invoice_blank'),
-  /** A new invoice (`id` null) is made under `contextId`, a stored one stays where it is */
-  invoiceSave: (id: number | null, contextId: number | null, draft: InvoiceDraft) =>
-    invoke<StoredInvoice>('invoice_save', { id, contextId, draft }),
+  /** A blank draft with the layout, texts and validity the settings of the context give its kind */
+  invoiceBlank: (contextId: number, kind: Kind) =>
+    invoke<InvoiceDraft>('invoice_blank', { contextId, kind }),
+  /** A new document (`id` null) is made under `contextId` and of `kind`, a stored one stays as it is */
+  invoiceSave: (id: number | null, contextId: number | null, kind: Kind, draft: InvoiceDraft) =>
+    invoke<StoredInvoice>('invoice_save', { id, contextId, kind, draft }),
   invoiceArchive: (id: number) => invoke<null>('invoice_archive', { id }),
   invoiceUnarchive: (id: number) => invoke<StoredInvoice>('invoice_unarchive', { id }),
   invoiceSetPaid: (id: number, paidAt: string | null) =>
     invoke<StoredInvoice>('invoice_set_paid', { id, paidAt }),
   invoiceDuplicate: (id: number) => invoke<StoredInvoice>('invoice_duplicate', { id }),
   invoiceDelete: (id: number) => invoke<null>('invoice_delete', { id }),
-  invoiceCheck: (contextId: number, draft: InvoiceDraft) =>
-    invoke<Check>('check_invoice', { contextId, draft }),
+  /** Totals and findings, an offer has no findings */
+  invoiceCheck: (contextId: number, kind: Kind, draft: InvoiceDraft) =>
+    invoke<Check>('check_invoice', { contextId, kind, draft }),
 
-  invoicePreview: (draft: InvoiceDraft, id: number | null, contextId: number) =>
-    invoke<Preview>('preview_invoice', { draft, id, contextId }),
+  invoicePreview: (draft: InvoiceDraft, id: number | null, contextId: number, kind: Kind) =>
+    invoke<Preview>('preview_invoice', { draft, id, contextId, kind }),
 
   /** The draft as a plain PDF like the preview: marked as a draft, no number, no XML, not checked */
-  invoiceDraftPdf: (draft: InvoiceDraft, id: number | null, contextId: number, target: string) =>
-    invoke<null>('invoice_draft_pdf', { draft, id, contextId, target }),
+  invoiceDraftPdf: (
+    draft: InvoiceDraft,
+    id: number | null,
+    contextId: number,
+    kind: Kind,
+    target: string
+  ) => invoke<null>('invoice_draft_pdf', { draft, id, contextId, kind, target }),
 
-  /** The number a draft would get if it were created now */
+  /** The number a draft would get if it were created now, by the pattern of its kind */
   invoiceNextNumber: (id: number) => invoke<string>('invoice_next_number', { id }),
-  /** Checks, numbers, freezes and locks a draft and keeps its PDF and XML; rejects with a `ProduceError` */
+  /** Checks, numbers, freezes and locks a draft and keeps its PDF and XML (an offer: its PDF only); rejects with a `ProduceError` */
   invoiceCreate: (id: number) => invoke<Created>('invoice_create', { id }),
-  /** Copies the kept originals to the picked places */
+  /** Copies the kept originals to the picked places, an offer has no XML to ask for */
   invoiceOutput: (id: number, pdfTarget: string | null, xmlTarget: string | null) =>
     invoke<StoredInvoice>('invoice_output', { id, pdfTarget, xmlTarget }),
   openedFiles: () => invoke<string[]>('opened_files'),

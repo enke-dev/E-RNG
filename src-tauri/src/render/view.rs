@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::format::Formatter;
 use super::parts::PartView;
-use crate::model::{CustomLayout, Format, Insets, InvoiceDraft, Settings};
+use crate::model::{CustomLayout, Format, Insets, InvoiceDraft, Kind, Settings, Wording};
 
 /// What the user adds to the plain invoice data: look and feel of the document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -31,11 +31,42 @@ pub struct Branding {
     pub marks: bool,
     /// Not created yet: the title says it is a draft, the number is only the pattern
     pub draft: bool,
+    /// An offer has no payment, no due date and no date of service, but a validity
+    pub kind: Kind,
+    /// Headline, draft headline and label of the number
+    pub wording: Wording,
+    /// Offers: the day it is valid until
+    pub valid_until: Option<Date>,
+}
+
+/// What stands for the day an offer is valid until in the letter texts
+const VALID_UNTIL: &str = "{valid_until}";
+
+/// Puts the day into `{valid_until}`. Without a day the lines that mention it are left out: an
+/// offer without validity does not say "valid until" and nothing.
+fn with_validity(text: &str, valid_until: Option<&str>) -> Option<String> {
+    if !text.contains(VALID_UNTIL) {
+        return Some(text.to_owned());
+    }
+    let lines: Vec<String> = text
+        .lines()
+        .filter_map(|line| match valid_until {
+            Some(day) => Some(line.replace(VALID_UNTIL, day)),
+            None => (!line.contains(VALID_UNTIL)).then(|| line.to_owned()),
+        })
+        .collect();
+    Some(lines.join("\n")).filter(|text| !text.trim().is_empty())
 }
 
 impl Branding {
-    /// Look, feel and letter texts of an invoice: what it chose for itself, else the settings.
-    pub fn for_draft(draft: &InvoiceDraft, settings: &Settings, customs: &[CustomLayout]) -> Self {
+    /// Look, feel, wording and letter texts of a document: what it chose for itself, else the
+    /// settings for its kind.
+    pub fn for_document(
+        kind: Kind,
+        draft: &InvoiceDraft,
+        settings: &Settings,
+        customs: &[CustomLayout],
+    ) -> Self {
         // what the invoice has is its own, even when it is empty (no text for this one); only an
         // invoice that never had a text (made before the texts existed) takes the settings
         let pick = |own: Option<&str>, default: Option<&str>| {
@@ -47,7 +78,7 @@ impl Branding {
             .layout
             .clone()
             .filter(|id| !id.is_empty())
-            .unwrap_or_else(|| settings.layout.clone());
+            .unwrap_or_else(|| settings.layout_for(kind).to_owned());
         // an exported invoice keeps the layout as it was, whatever became of the original
         let custom = draft
             .frozen_layout
@@ -66,15 +97,21 @@ impl Branding {
             guides: false,
             marks: false,
             draft: false,
-            intro: pick(draft.intro.as_deref(), settings.intro.as_deref()),
-            closing: pick(draft.closing.as_deref(), settings.closing.as_deref()),
+            kind,
+            wording: settings.wording(kind),
+            valid_until: draft
+                .valid_until()
+                .filter(|_| kind == Kind::Offer)
+                .and_then(|day| Date::parse(&day).ok()),
+            intro: pick(draft.intro.as_deref(), settings.intro(kind)),
+            closing: pick(draft.closing.as_deref(), settings.closing(kind)),
         }
     }
 }
 
 #[derive(Debug, Serialize)]
 pub struct InvoiceView {
-    pub title: &'static str,
+    pub title: String,
     pub number: String,
     pub issue: YearMonthDay,
     pub seller: PartyView,
@@ -129,6 +166,8 @@ pub struct Facts {
     /// The invoice date is also the date of service
     pub same_day: bool,
     pub due_date: Option<String>,
+    /// Offers: the day it is valid until
+    pub valid_until: Option<String>,
     pub buyer_reference: Option<String>,
     pub tax_number: Option<String>,
     pub vat_id: Option<String>,
@@ -338,19 +377,25 @@ fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Dat
         value_long: value.clone(),
         value,
     };
+    let offer = branding.kind == Kind::Offer;
     let mut infos = vec![text(
         "number",
         if credit {
             "Gutschriftsnummer"
         } else {
-            "Rechnungsnummer"
+            &branding.wording.number_label
         },
         invoice.number.clone().unwrap_or_default(),
     )];
     infos.push(date("date", "Datum", issue));
-    if let Some(day) = invoice.delivery.as_ref().and_then(|d| d.date) {
+    if let Some(day) = branding.valid_until {
+        infos.push(date("valid-until", "Gültig bis", day));
+    }
+    // an offer has no date of service and nothing falls due
+    let service = invoice.delivery.as_ref().and_then(|d| d.date);
+    if let Some(day) = service.filter(|_| !offer) {
         infos.push(date("service-date", "Leistungsdatum", day));
-    } else if let Some(period) = &invoice.invoicing_period {
+    } else if let Some(period) = invoice.invoicing_period.as_ref().filter(|_| !offer) {
         if let (Some(start), Some(end)) = (period.start, period.end) {
             infos.push(Info {
                 key: "service-date",
@@ -360,7 +405,10 @@ fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Dat
             });
         }
     }
-    if let Some(due) = invoice.due_date.filter(|_| !branding.no_payment_term) {
+    if let Some(due) = invoice
+        .due_date
+        .filter(|_| !branding.no_payment_term && !offer)
+    {
         infos.push(date("due-date", "Fällig am", due));
     }
     if let Some(reference) = &invoice.buyer_reference {
@@ -495,16 +543,20 @@ fn total_rows(
             strong: false,
         });
     }
-    rows.push(Total {
-        label: if credit {
-            "Gutschriftsbetrag"
-        } else {
-            "Zahlbetrag"
-        }
-        .into(),
-        value: fmt.money(totals.due, currency),
-        strong: true,
-    });
+    // nothing is paid on an offer, its gross sum is the last row (without VAT the only one)
+    let offer = branding.kind == Kind::Offer;
+    if !offer || branding.vat_free {
+        rows.push(Total {
+            label: match (credit, offer) {
+                (true, _) => "Gutschriftsbetrag",
+                (false, true) => "Gesamtbetrag",
+                (false, false) => "Zahlbetrag",
+            }
+            .into(),
+            value: fmt.money(totals.due, currency),
+            strong: true,
+        });
+    }
     rows
 }
 
@@ -531,13 +583,20 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         .collect();
     vat_notes.dedup();
 
+    let offer = branding.kind == Kind::Offer;
+    let valid_until = branding.valid_until.map(|day| fmt.date_long(day));
+    let letter_text = |text: &Option<String>| {
+        text.as_deref()
+            .and_then(|text| with_validity(text, valid_until.as_deref()))
+    };
+    let title = match (credit, branding.draft) {
+        (true, _) => "Gutschrift",
+        (false, false) => branding.wording.title.as_str(),
+        (false, true) => branding.wording.draft_title.as_str(),
+    };
+
     InvoiceView {
-        title: match (credit, branding.draft) {
-            (true, false) => "Gutschrift",
-            (true, true) => "Gutschriftsentwurf",
-            (false, false) => "Rechnung",
-            (false, true) => "Rechnungsentwurf",
-        },
+        title: title.to_owned(),
         number: invoice.number.clone().unwrap_or_default(),
         issue: YearMonthDay {
             year: issue.year(),
@@ -555,11 +614,15 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         lines,
         totals: rows,
         vat_notes,
-        payment: payment_lines(invoice, currency, fmt, !branding.no_payment_term),
+        payment: if offer {
+            Vec::new()
+        } else {
+            payment_lines(invoice, currency, fmt, !branding.no_payment_term)
+        },
         legal: branding.legal.clone(),
         letter: Letter {
-            intro: branding.intro.clone(),
-            closing: branding.closing.clone(),
+            intro: letter_text(&branding.intro),
+            closing: letter_text(&branding.closing),
         },
         facts: Facts {
             number: invoice.number.clone().unwrap_or_default(),
@@ -568,12 +631,14 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
                 .delivery
                 .as_ref()
                 .and_then(|d| d.date)
+                .filter(|_| !offer)
                 .map(|d| fmt.date(d)),
             same_day: invoice.delivery.as_ref().and_then(|d| d.date) == Some(issue),
             due_date: invoice
                 .due_date
-                .filter(|_| !branding.no_payment_term)
+                .filter(|_| !branding.no_payment_term && !offer)
                 .map(|d| fmt.date(d)),
+            valid_until: branding.valid_until.map(|d| fmt.date(d)),
             buyer_reference: invoice.buyer_reference.clone(),
             tax_number: invoice.seller.tax_registration.clone(),
             vat_id: invoice.seller.vat_identifier.clone(),
@@ -604,7 +669,7 @@ mod tests {
         };
         let draft = crate::draft::fixtures::draft();
         let invoice = crate::draft::build_invoice(&draft, &free, "RE-1").unwrap();
-        let branding = Branding::for_draft(&draft, &free, &[]);
+        let branding = Branding::for_document(Kind::Invoice, &draft, &free, &[]);
 
         let view = build(&invoice, &branding, &Format::default());
 
@@ -621,7 +686,7 @@ mod tests {
         let invoice = crate::draft::build_invoice(&draft, &taxed, "RE-1").unwrap();
         let view = build(
             &invoice,
-            &Branding::for_draft(&draft, &taxed, &[]),
+            &Branding::for_document(Kind::Invoice, &draft, &taxed, &[]),
             &Format::default(),
         );
         assert!(view.totals.iter().any(|t| t.label.contains("Umsatzsteuer")));
@@ -639,7 +704,7 @@ mod tests {
 
         let view = build(
             &invoice,
-            &Branding::for_draft(&draft, &none, &[]),
+            &Branding::for_document(Kind::Invoice, &draft, &none, &[]),
             &Format::default(),
         );
 
@@ -654,7 +719,7 @@ mod tests {
         let invoice = crate::draft::build_invoice(&draft, &with, "RE-1").unwrap();
         let view = build(
             &invoice,
-            &Branding::for_draft(&draft, &with, &[]),
+            &Branding::for_document(Kind::Invoice, &draft, &with, &[]),
             &Format::default(),
         );
         assert!(view.facts.due_date.is_some());
@@ -669,11 +734,16 @@ mod tests {
         };
         let draft = InvoiceDraft::blank("2026-10-18");
 
-        let found = Branding::for_draft(&draft, &settings, &[own_layout(2), own_layout(3)]);
+        let found = Branding::for_document(
+            Kind::Invoice,
+            &draft,
+            &settings,
+            &[own_layout(2), own_layout(3)],
+        );
         assert_eq!(found.custom.and_then(|c| c.id), Some(3));
 
         // gone: the standard layout takes over, nothing breaks
-        let gone = Branding::for_draft(&draft, &settings, &[own_layout(2)]);
+        let gone = Branding::for_document(Kind::Invoice, &draft, &settings, &[own_layout(2)]);
         assert!(gone.custom.is_none());
     }
 
@@ -688,7 +758,7 @@ mod tests {
         frozen.name = "As exported".into();
         draft.frozen_layout = Some(frozen);
 
-        let branding = Branding::for_draft(&draft, &settings, &[own_layout(3)]);
+        let branding = Branding::for_document(Kind::Invoice, &draft, &settings, &[own_layout(3)]);
         assert_eq!(
             branding.custom.map(|c| c.name).as_deref(),
             Some("As exported")
@@ -712,8 +782,8 @@ mod tests {
         };
 
         let customs = [own_layout(3)];
-        let by_settings = Branding::for_draft(&plain, &settings, &customs);
-        let by_invoice = Branding::for_draft(&own, &settings, &customs);
+        let by_settings = Branding::for_document(Kind::Invoice, &plain, &settings, &customs);
+        let by_invoice = Branding::for_document(Kind::Invoice, &own, &settings, &customs);
 
         assert!(by_settings.custom.is_some());
         assert_eq!(by_settings.intro.as_deref(), Some("Aus den Einstellungen"));
@@ -774,5 +844,148 @@ mod tests {
         assert!(view.totals.iter().any(|t| t.label.contains("19%")));
         assert!(view.lines[0].vat_rate.starts_with("19%"));
         assert!(view.facts.date.starts_with("2026-"), "{}", view.facts.date);
+    }
+
+    fn offer_document(settings: &Settings) -> (InvoiceDraft, Invoice) {
+        let draft = InvoiceDraft {
+            customer: crate::draft::fixtures::customer(),
+            positions: crate::draft::fixtures::draft().positions,
+            ..settings.blank_draft(Kind::Offer, "2026-10-17")
+        };
+        let invoice = crate::draft::build_invoice(&draft, settings, "AN-2026-001").unwrap();
+        (draft, invoice)
+    }
+
+    #[test]
+    fn an_offer_has_its_wording_and_a_validity_but_no_payment_due_date_or_service_date() {
+        let settings = Settings {
+            offer: crate::model::OfferSettings {
+                wording: Wording {
+                    title: "Offerte".into(),
+                    draft_title: "Offertenentwurf".into(),
+                    number_label: "Offertennummer".into(),
+                },
+                ..crate::model::OfferSettings::default()
+            },
+            ..crate::draft::fixtures::settings()
+        };
+        let (draft, invoice) = offer_document(&settings);
+        let branding = Branding::for_document(Kind::Offer, &draft, &settings, &[]);
+
+        let view = build(&invoice, &branding, &Format::default());
+
+        assert_eq!(view.title, "Offerte");
+        let keys: Vec<_> = view.infos.iter().map(|i| i.key).collect();
+        assert_eq!(&keys[..3], ["number", "date", "valid-until"]);
+        assert!(keys
+            .iter()
+            .all(|key| !["service-date", "due-date"].contains(key)));
+        assert_eq!(view.infos[0].label, "Offertennummer");
+        assert_eq!(view.infos[2].label, "Gültig bis");
+        assert_eq!(view.infos[2].value, "16.11.2026");
+        assert_eq!(view.infos[2].value_long, "16. November 2026");
+        assert_eq!(view.payment, Vec::<String>::new());
+        let last = view.totals.last().unwrap();
+        assert_eq!(last.label, "Gesamtbetrag");
+        assert!(view.totals.iter().all(|t| t.label != "Zahlbetrag"));
+        assert_eq!(view.facts.due_date, None);
+        assert_eq!(view.facts.service_date, None);
+        // the placeholder of the default closing text
+        assert_eq!(
+            view.letter.closing.as_deref(),
+            Some("Dieses Angebot gilt bis 16. November 2026.")
+        );
+
+        let shown_as_draft = Branding {
+            draft: true,
+            ..branding
+        };
+        let view = build(&invoice, &shown_as_draft, &Format::default());
+        assert_eq!(view.title, "Offertenentwurf");
+    }
+
+    #[test]
+    fn an_offer_without_validity_has_no_row_and_leaves_the_sentence_out() {
+        let mut settings = crate::draft::fixtures::settings();
+        settings.offer.validity_days = None;
+        settings.offer.closing = Some("Beste Grüße\nDas Angebot gilt bis {valid_until}.".into());
+        let (draft, invoice) = offer_document(&settings);
+        let branding = Branding::for_document(Kind::Offer, &draft, &settings, &[]);
+
+        let view = build(&invoice, &branding, &Format::default());
+
+        assert!(view.infos.iter().all(|i| i.key != "valid-until"));
+        assert_eq!(view.letter.closing.as_deref(), Some("Beste Grüße"));
+        // a text of nothing else goes altogether
+        settings.offer.closing = Some("Das Angebot gilt bis {valid_until}.".into());
+        let (draft, _) = offer_document(&settings);
+        let branding = Branding::for_document(Kind::Offer, &draft, &settings, &[]);
+        let view = build(&invoice, &branding, &Format::default());
+        assert_eq!(view.letter.closing, None);
+
+        // without VAT the one sum is still there
+        settings.tax_rate.clear();
+        let (draft, invoice) = offer_document(&settings);
+        let branding = Branding::for_document(Kind::Offer, &draft, &settings, &[]);
+        let view = build(&invoice, &branding, &Format::default());
+        assert_eq!(view.totals.last().unwrap().label, "Gesamtbetrag");
+    }
+
+    #[test]
+    fn an_invoice_is_unchanged_by_the_kinds() {
+        let settings = crate::draft::fixtures::settings();
+        let draft = InvoiceDraft {
+            closing: Some("Danke".into()),
+            // an invoice has no validity, whatever a draft carries
+            validity_days: Some(30),
+            ..crate::draft::fixtures::draft()
+        };
+        let invoice = crate::draft::build_invoice(&draft, &settings, "RE-1").unwrap();
+        let branding = Branding::for_document(Kind::Invoice, &draft, &settings, &[]);
+
+        let view = build(&invoice, &branding, &Format::default());
+
+        assert_eq!(view.title, "Rechnung");
+        let keys: Vec<_> = view.infos.iter().map(|i| i.key).collect();
+        assert!(keys.contains(&"service-date") && keys.contains(&"due-date"));
+        assert!(!keys.contains(&"valid-until"));
+        assert_eq!(view.infos[0].label, "Rechnungsnummer");
+        assert!(view.payment.iter().any(|l| l.contains("Zahlbar")));
+        assert_eq!(view.letter.closing.as_deref(), Some("Danke"));
+
+        let as_draft = Branding {
+            draft: true,
+            ..branding
+        };
+        assert_eq!(
+            build(&invoice, &as_draft, &Format::default()).title,
+            "Rechnungsentwurf"
+        );
+        // the default wording needs no settings
+        assert_eq!(
+            build(&invoice, &Branding::default(), &Format::default()).title,
+            "Rechnung"
+        );
+    }
+
+    #[test]
+    fn an_offer_takes_its_layout_and_texts_from_the_offer_settings() {
+        let mut settings = Settings {
+            layout: "custom-2".into(),
+            intro: Some("Rechnungstext".into()),
+            ..Settings::default()
+        };
+        settings.offer.layout = Some("custom-3".into());
+        settings.offer.intro = Some("Angebotstext".into());
+        let draft = InvoiceDraft::blank("2026-10-17");
+        let customs = [own_layout(2), own_layout(3)];
+
+        let offer = Branding::for_document(Kind::Offer, &draft, &settings, &customs);
+        let invoice = Branding::for_document(Kind::Invoice, &draft, &settings, &customs);
+
+        assert_eq!(offer.custom.and_then(|c| c.id), Some(3));
+        assert_eq!(offer.intro.as_deref(), Some("Angebotstext"));
+        assert_eq!(invoice.custom.and_then(|c| c.id), Some(2));
+        assert_eq!(invoice.intro.as_deref(), Some("Rechnungstext"));
     }
 }

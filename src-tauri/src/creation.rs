@@ -1,7 +1,8 @@
 //! Turning a draft into an invoice, and handing its originals out. Creating is one step: the rules
 //! are checked, the PDF and XML are made and validated, and only if all of it holds the invoice gets
 //! its number, freezes its settings and layout, locks, and its files are kept (`originals`). When
-//! anything fails nothing is stored: no number, no lock, no files.
+//! anything fails nothing is stored: no number, no lock, no files. An offer is made the same way
+//! but is only a PDF: no XML, no rule check, no validator.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ use std::sync::{Mutex, PoisonError};
 use serde::Serialize;
 
 use crate::draft::{build_invoice, totals};
-use crate::model::{CustomLayout, InvoiceFiles, Settings, Status, StoredInvoice};
+use crate::model::{CustomLayout, InvoiceFiles, Kind, Settings, Status, StoredInvoice};
 use crate::originals;
 use crate::package::{Issue, Level};
 use crate::pipeline::{self, ProduceError, Produced};
@@ -114,7 +115,7 @@ fn make(
     }
     let total = totals(&invoice).gross;
     let customs = store.all_custom_layouts().map_err(failed)?;
-    let branding = Branding::for_draft(&stored.draft, settings, &customs);
+    let branding = Branding::for_document(Kind::Invoice, &stored.draft, settings, &customs);
     let layout = branding.custom.clone();
     let work = Work(
         tempfile::Builder::new()
@@ -137,34 +138,80 @@ fn make(
     })
 }
 
-/// Where the numbers of the draft's context stand on the draft's day: the number it would get and
-/// the counter in it
+/// The PDF of an offer and what freezes into it with it
+struct MadeOffer {
+    _work: Work,
+    pdf: PathBuf,
+    total: String,
+    layout: Option<CustomLayout>,
+}
+
+/// Builds and renders an offer: the input is checked and the totals are made like an invoice's, the
+/// PDF is the only thing that comes out.
+fn make_offer(
+    sidecars: &Sidecars,
+    store: &Store,
+    stored: &StoredInvoice,
+    settings: &Settings,
+    number: &str,
+) -> Result<MadeOffer, ProduceError> {
+    // an offer has no date of service, the one the invoice model needs is the day it is dated
+    let mut draft = stored.draft.clone();
+    draft.delivery_date.clone_from(&draft.issue_date);
+    draft.delivery_end = None;
+    let invoice = build_invoice(&draft, settings, number)
+        .map_err(|problems| ProduceError::Input { problems })?;
+    let total = totals(&invoice).gross;
+    let customs = store.all_custom_layouts().map_err(failed)?;
+    let branding = Branding::for_document(Kind::Offer, &draft, settings, &customs);
+    let layout = branding.custom.clone();
+    let work = Work(
+        tempfile::Builder::new()
+            .prefix("erng-")
+            .tempdir()
+            .map_err(failed)?
+            .keep(),
+    );
+    let pdf = crate::render::render_pdf(sidecars, &work.0, &invoice, &branding).map_err(failed)?;
+    Ok(MadeOffer {
+        _work: work,
+        pdf,
+        total,
+        layout,
+    })
+}
+
+/// Where the numbers of the draft's context and kind stand on the draft's day: the number it would
+/// get and the counter in it
 fn next_sequence(store: &Store, id: i64) -> Result<Sequence, ProduceError> {
     let stored = store.invoice(id).map_err(failed)?;
     let settings = store.settings(stored.context_id).map_err(failed)?;
     store
         .sequence(
             stored.context_id,
+            stored.kind,
             &settings,
             issue_day(&stored.draft.issue_date),
         )
         .map_err(failed)
 }
 
-/// The number the next invoice of the draft's context would get, for asking before creating
+/// The number the next document of the draft's context and kind would get, for asking before
+/// creating
 pub fn next_number(store: &Store, id: i64) -> Result<String, ProduceError> {
     let stored = store.invoice(id).map_err(failed)?;
     let settings = store.settings(stored.context_id).map_err(failed)?;
     store
         .next_number(
             stored.context_id,
+            stored.kind,
             &settings,
             issue_day(&stored.draft.issue_date),
         )
         .map_err(failed)
 }
 
-/// Makes the invoice of a draft: validated, numbered, frozen, locked, its originals kept.
+/// Makes the invoice or offer of a draft: validated, numbered, frozen, locked, its originals kept.
 pub fn create(
     sidecars: &Sidecars,
     store: &Store,
@@ -184,22 +231,24 @@ pub fn create(
     let settings = store.settings(stored.context_id).map_err(failed)?;
     let sequence = next_sequence(store, id)?;
     let number = sequence.next_number.clone();
-    let made = make(sidecars, store, &stored, &settings, &number)?;
-
-    let files = originals::store(data, stored.context_id, &number, &made.produced, false)
-        .map_err(failed)?;
-    match store.finalize(
-        id,
-        &sequence,
-        &settings,
-        made.layout.as_ref(),
-        &made.total,
-        &files,
-    ) {
-        Ok(invoice) => Ok(Created {
-            invoice,
-            warnings: for_the_user(made.produced.report.issues, Level::Warning),
-        }),
+    let (files, total, layout, warnings) = match stored.kind {
+        Kind::Offer => {
+            let made = make_offer(sidecars, store, &stored, &settings, &number)?;
+            let files =
+                originals::store_pdf(data, stored.kind, stored.context_id, &number, &made.pdf)
+                    .map_err(failed)?;
+            (files, made.total, made.layout, Vec::new())
+        }
+        Kind::Invoice => {
+            let made = make(sidecars, store, &stored, &settings, &number)?;
+            let files = originals::store(data, stored.context_id, &number, &made.produced, false)
+                .map_err(failed)?;
+            let warnings = for_the_user(made.produced.report.issues, Level::Warning);
+            (files, made.total, made.layout, warnings)
+        }
+    };
+    match store.finalize(id, &sequence, &settings, layout.as_ref(), &total, &files) {
+        Ok(invoice) => Ok(Created { invoice, warnings }),
         Err(error) => {
             originals::discard(data, &files);
             Err(failed(error))
@@ -216,6 +265,9 @@ pub fn regenerate(
     id: i64,
 ) -> Result<StoredInvoice, ProduceError> {
     let stored = store.invoice(id).map_err(failed)?;
+    if stored.kind != Kind::Invoice {
+        return Err(failed("only an invoice can be made again"));
+    }
     let (Some(number), Some(frozen)) = (stored.number.clone(), stored.draft.frozen.clone()) else {
         return Err(failed("the invoice has no number and no frozen settings"));
     };
@@ -240,6 +292,9 @@ pub fn output(
     let mut stored = store.invoice(id).map_err(failed)?;
     if stored.status != Status::Exported {
         return Err(failed("only an invoice that was created can be handed out"));
+    }
+    if stored.kind == Kind::Offer && xml_target.is_some() {
+        return Err(failed("Ein Angebot hat keine XML-Datei."));
     }
     if stored.files.is_none() {
         stored = regenerate(sidecars, store, data, id)?;
@@ -297,6 +352,7 @@ mod tests {
         use super::*;
         use crate::context::Context;
         use crate::draft::fixtures::{draft, settings};
+        use crate::model::InvoiceDraft;
 
         fn setup() -> (Store, i64, tempfile::TempDir) {
             let store = Store::in_memory().unwrap();
@@ -312,7 +368,10 @@ mod tests {
         #[ignore = "needs the sidecars: bun run generate:sidecars"]
         fn creating_keeps_validated_originals_and_locks_the_invoice() {
             let (store, context, data) = setup();
-            let id = store.save_draft(None, context, &draft(), None).unwrap().id;
+            let id = store
+                .save_draft(None, context, Kind::Invoice, &draft(), None)
+                .unwrap()
+                .id;
 
             let created = create(
                 &Sidecars::in_repo(),
@@ -329,7 +388,10 @@ mod tests {
             assert!(invoice.draft.frozen.is_some());
             let files = invoice.files.unwrap();
             assert!(data.path().join(&files.pdf.path).is_file());
-            assert!(data.path().join(&files.xml.path).is_file());
+            assert!(data
+                .path()
+                .join(&files.xml.as_ref().unwrap().path)
+                .is_file());
             assert!(!files.regenerated);
 
             // handed out as they were kept, and not created twice
@@ -366,7 +428,10 @@ mod tests {
             refused.profile = crate::invoice::ProfileKind::XRechnung;
             refused.buyer_reference = None;
             refused.customer.buyer_reference = None;
-            let id = store.save_draft(None, context, &refused, None).unwrap().id;
+            let id = store
+                .save_draft(None, context, Kind::Invoice, &refused, None)
+                .unwrap()
+                .id;
 
             let result = create(
                 &Sidecars::in_repo(),
@@ -389,9 +454,115 @@ mod tests {
 
         #[test]
         #[ignore = "needs the sidecars: bun run generate:sidecars"]
+        fn creating_an_offer_keeps_one_pdf_and_no_xml() {
+            let (store, context, data) = setup();
+            let offer = InvoiceDraft {
+                validity_days: Some(30),
+                ..draft()
+            };
+            let id = store
+                .save_draft(None, context, Kind::Offer, &offer, None)
+                .unwrap()
+                .id;
+
+            let created = create(
+                &Sidecars::in_repo(),
+                &store,
+                &Creating::default(),
+                data.path(),
+                id,
+            )
+            .unwrap();
+
+            let offer = created.invoice;
+            assert_eq!(offer.status, Status::Exported);
+            assert_eq!(offer.kind, Kind::Offer);
+            assert_eq!(offer.number.as_deref(), Some("AN-2026-001"));
+            assert!(offer.draft.frozen.is_some());
+            assert!(created.warnings.is_empty());
+            let files = offer.files.unwrap();
+            assert_eq!(files.xml, None);
+            assert!(files.pdf.path.starts_with(&format!("offers/{context}/")));
+            let kept: Vec<_> =
+                std::fs::read_dir(data.path().join("offers").join(context.to_string()))
+                    .unwrap()
+                    .collect();
+            assert_eq!(kept.len(), 1);
+            assert!(std::fs::read(data.path().join(&files.pdf.path))
+                .unwrap()
+                .starts_with(b"%PDF"));
+            assert!(!data.path().join("invoices").exists());
+            // the next offer goes on counting, the invoices are not touched
+            assert_eq!(
+                store
+                    .next_number(context, Kind::Offer, &settings(), issue_day("2026-10-17"))
+                    .unwrap(),
+                "AN-2026-002"
+            );
+
+            // handed out as the PDF it was kept as, an XML does not exist
+            let out = tempfile::tempdir().unwrap();
+            assert!(output(
+                &Sidecars::in_repo(),
+                &store,
+                data.path(),
+                id,
+                Some(&out.path().join("a.pdf")),
+                Some(&out.path().join("a.xml")),
+            )
+            .is_err());
+            assert!(!out.path().join("a.pdf").exists());
+            output(
+                &Sidecars::in_repo(),
+                &store,
+                data.path(),
+                id,
+                Some(&out.path().join("a.pdf")),
+                None,
+            )
+            .unwrap();
+            assert!(out.path().join("a.pdf").is_file());
+            // an offer is not made again
+            assert!(regenerate(&Sidecars::in_repo(), &store, data.path(), id).is_err());
+        }
+
+        #[test]
+        #[ignore = "needs the sidecars: bun run generate:sidecars"]
+        fn an_offer_with_a_missing_price_stores_nothing() {
+            let (store, context, data) = setup();
+            let mut refused = draft();
+            refused.positions[0].price = String::new();
+            let id = store
+                .save_draft(None, context, Kind::Offer, &refused, None)
+                .unwrap()
+                .id;
+
+            let result = create(
+                &Sidecars::in_repo(),
+                &store,
+                &Creating::default(),
+                data.path(),
+                id,
+            );
+
+            assert!(matches!(result, Err(ProduceError::Input { .. })));
+            let still = store.invoice(id).unwrap();
+            assert_eq!(
+                (still.status, still.number, still.files),
+                (Status::Draft, None, None)
+            );
+            assert!(!data.path().join("offers").exists());
+            assert_eq!(next_number(&store, id).unwrap(), "AN-2026-001");
+        }
+
+        #[test]
+        #[ignore = "needs the sidecars: bun run generate:sidecars"]
         fn an_invoice_exported_without_files_gets_them_made_again_once() {
             let (store, context, data) = setup();
-            let id = store.save_draft(None, context, &draft(), None).unwrap().id;
+            let id = store
+                .save_draft(None, context, Kind::Invoice, &draft(), None)
+                .unwrap()
+                .id;
             create(
                 &Sidecars::in_repo(),
                 &store,

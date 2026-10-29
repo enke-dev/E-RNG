@@ -20,6 +20,9 @@ use crate::render::format::date_pattern;
 /// The numbers `RE-2026-001`, `RE-2026-002`, …
 pub const DEFAULT_PATTERN: &str = "[RE-]YYYY-NNN";
 
+/// The numbers `AN-2026-001`, `AN-2026-002`, … of offers
+pub const DEFAULT_OFFER_PATTERN: &str = "[AN-]YYYY-NNN";
+
 /// When the counter starts again with 1
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

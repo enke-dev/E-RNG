@@ -160,7 +160,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   /** A copy of the selected context, what its pages edit; one that is not stored yet has no id */
   @state() private context: Context | undefined;
   /** What the context in the form still lacks, asked of the backend while typing */
-  @state() private missing: Missing = { missing: [], missing_for_xrechnung: [] };
+  @state() private missing: Missing = {
+    missing: [],
+    missing_for_xrechnung: [],
+    missing_for_offers: [],
+  };
   /** What belongs to the selected stored context, unknown while it is looked up */
   @state() private contextUsage: ContextUsage | undefined;
   /** The question of removing the selected context: what happens with what belongs to it */
@@ -363,6 +367,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     this.missing = {
       missing: this.context?.missing ?? [],
       missing_for_xrechnung: this.context?.missing_for_xrechnung ?? [],
+      missing_for_offers: this.context?.missing_for_offers ?? [],
     };
     void this.showNumberExample();
     void this.loadSequence();
@@ -375,7 +380,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       return;
     }
     try {
-      const sequence = await api.numberSequence(id);
+      const sequence = await api.numberSequence(id, 'invoice');
       if (this.context?.id === id) {
         this.sequence = sequence;
       }
@@ -579,6 +584,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       this.missing = {
         missing: saved.missing,
         missing_for_xrechnung: saved.missing_for_xrechnung,
+        missing_for_offers: saved.missing_for_offers,
       };
       void this.loadSequence();
       notify('Gespeichert. Bereits exportierte Rechnungen behalten ihre alten Angaben.');
@@ -755,7 +761,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       return;
     }
     try {
-      const sequence = await api.numberSequenceSet(id, next);
+      const sequence = await api.numberSequenceSet(id, 'invoice', next);
       if (this.context?.id === id) {
         this.sequence = sequence;
       }
@@ -1422,7 +1428,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   /** What can be done with a stored context besides editing it */
   private contextActions(context: Context) {
     const usage = this.contextUsage;
-    const hasInvoices = usage === undefined || usage.drafts + usage.exported > 0;
+    const hasInvoices = usage === undefined || usage.drafts + usage.exported + usage.offers > 0;
     return html`
       <span slot="actions" id="remove-context">
         <wa-button
@@ -1438,7 +1444,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         hasInvoices
           ? html`
               <wa-tooltip slot="actions" for="remove-context">
-                ${usage === undefined ? 'Wird geprüft…' : 'Mit Rechnungen kann der Kontext nur archiviert werden.'}
+                ${usage === undefined ? 'Wird geprüft…' : 'Mit Rechnungen oder Angeboten kann der Kontext nur archiviert werden.'}
               </wa-tooltip>
             `
           : nothing

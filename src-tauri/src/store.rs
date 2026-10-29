@@ -1,8 +1,9 @@
 //! SQLite storage: contexts (issuers with their settings), customers, position templates, layouts and
 //! invoices. One file in the app data directory.
 //!
-//! Invoice numbers are assigned when an invoice is exported, never for drafts, and an exported
-//! invoice cannot be changed or deleted any more (it can be duplicated).
+//! The `invoices` table holds both kinds of document (`Kind`): invoices and offers, which are
+//! written alike and numbered apart. Numbers are assigned when a document is created, never for
+//! drafts, and a created one cannot be changed or deleted any more (it can be duplicated).
 
 use std::path::Path;
 use std::sync::{Mutex, PoisonError};
@@ -13,8 +14,8 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::context::{Context, ContextUsage, Disposition, BRANDS};
 use crate::model::{
-    CustomLayout, Customer, InvoiceDraft, InvoiceFiles, LayoutUsage, ListEntry, PositionTemplate,
-    Settings, Status, StoredInvoice,
+    CustomLayout, Customer, InvoiceDraft, InvoiceFiles, Kind, LayoutUsage, ListEntry,
+    PositionTemplate, Settings, Status, StoredInvoice,
 };
 use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
 
@@ -33,7 +34,7 @@ pub struct Sequence {
     pub floor: Option<u32>,
 }
 
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -93,12 +94,49 @@ fn migrate(conn: &Connection) -> Result<()> {
     if version < 7 {
         migrate_to_floors(conn)?;
     }
+    if version < 8 {
+        migrate_to_kinds(conn)?;
+    }
     Ok(())
 }
 
-/// The kind of document a number sequence is for; only invoices are numbered yet, the column is
-/// there so offers can have their own sequence later.
-const INVOICE: &str = "invoice";
+/// Invoices get a kind, offers are the second one. A number is unique per context and kind, which
+/// SQLite can only change by building the table again.
+fn migrate_to_kinds(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    if !has_column(&tx, "invoices", "kind")? {
+        tx.execute_batch(
+            "CREATE TABLE invoices_new (
+                 id INTEGER PRIMARY KEY,
+                 context_id INTEGER NOT NULL,
+                 kind TEXT NOT NULL DEFAULT 'invoice',
+                 number TEXT,
+                 status TEXT NOT NULL,
+                 draft TEXT NOT NULL,
+                 total TEXT,
+                 exported_at TEXT,
+                 paid_at TEXT,
+                 updated_at TEXT NOT NULL,
+                 archived_at TEXT,
+                 files TEXT,
+                 counter INTEGER,
+                 issued_on TEXT,
+                 UNIQUE (context_id, kind, number)
+             );
+             INSERT INTO invoices_new
+                 (id, context_id, number, status, draft, total, exported_at, paid_at, updated_at,
+                  archived_at, files, counter, issued_on)
+                 SELECT id, context_id, number, status, draft, total, exported_at, paid_at,
+                     updated_at, archived_at, files, counter, issued_on
+                 FROM invoices;
+             DROP TABLE invoices;
+             ALTER TABLE invoices_new RENAME TO invoices;",
+        )?;
+    }
+    tx.execute_batch("PRAGMA user_version = 8;")?;
+    tx.commit()?;
+    Ok(())
+}
 
 /// Number floors (where a sequence continues from, see `Store::set_counter`) get a table, and a
 /// document keeps the counter of its number and the day it was issued on, which the period of the
@@ -291,6 +329,7 @@ fn stored(row: &Row) -> rusqlite::Result<StoredRow> {
         StoredInvoice {
             id: row.get("id")?,
             context_id: row.get("context_id")?,
+            kind: Kind::from_column(&row.get::<_, String>("kind")?),
             number: row.get("number")?,
             status: if status == "exported" {
                 Status::Exported
@@ -349,6 +388,7 @@ impl Store {
             settings: body.settings.normalized(),
             missing: Vec::new(),
             missing_for_xrechnung: Vec::new(),
+            missing_for_offers: Vec::new(),
         }
         .checked())
     }
@@ -452,10 +492,10 @@ impl Store {
 
     /// Whether the layout is the default of any context that is in use
     pub fn is_default_layout(&self, key: &str) -> Result<bool> {
-        Ok(self
-            .contexts()?
-            .iter()
-            .any(|c| c.archived_at.is_none() && c.settings.layout == key))
+        Ok(self.contexts()?.iter().any(|c| {
+            c.archived_at.is_none()
+                && (c.settings.layout == key || c.settings.offer.layout.as_deref() == Some(key))
+        }))
     }
 
     /// What belongs to a context
@@ -468,10 +508,15 @@ impl Store {
         };
         Ok(ContextUsage {
             drafts: count(
-                "SELECT COUNT(*) FROM invoices WHERE context_id = ?1 AND status = 'draft'",
+                "SELECT COUNT(*) FROM invoices
+                 WHERE context_id = ?1 AND kind = 'invoice' AND status = 'draft'",
             )?,
             exported: count(
-                "SELECT COUNT(*) FROM invoices WHERE context_id = ?1 AND status = 'exported'",
+                "SELECT COUNT(*) FROM invoices
+                 WHERE context_id = ?1 AND kind = 'invoice' AND status = 'exported'",
+            )?,
+            offers: count(
+                "SELECT COUNT(*) FROM invoices WHERE context_id = ?1 AND kind = 'offer'",
             )?,
             customers: count("SELECT COUNT(*) FROM customers WHERE context_id = ?1")?,
             templates: count("SELECT COUNT(*) FROM templates WHERE context_id = ?1")?,
@@ -479,13 +524,13 @@ impl Store {
         })
     }
 
-    /// Removes a context that has no invoices (one that has is archived instead) and settles what is
+    /// Removes a context that has no invoices or offers (one that has is archived instead) and settles what is
     /// scoped to it: shared, moved to another context, or removed with it.
     pub fn remove_context(&self, id: i64, what: Disposition) -> Result<()> {
         self.context(id)?;
         let usage = self.context_usage(id)?;
-        if usage.drafts + usage.exported > 0 {
-            bail!("a context with invoices cannot be removed, archive it instead");
+        if usage.drafts + usage.exported + usage.offers > 0 {
+            bail!("a context with invoices or offers cannot be removed, archive it instead");
         }
         if let Disposition::Move { to } = what {
             let target = self.context(to)?;
@@ -797,28 +842,30 @@ impl Store {
         Ok(layouts)
     }
 
-    /// The invoices (drafts and exported ones) made with the own layout: chosen for themselves, or
-    /// frozen into them on export.
+    /// The invoices and offers (drafts and created ones) made with the own layout: chosen for
+    /// themselves, or frozen into them on creation.
     pub fn layout_usages(&self, id: i64) -> Result<Vec<LayoutUsage>> {
         let key = format!("custom-{id}");
         let conn = self.conn();
         let mut statement =
-            conn.prepare("SELECT id, number, draft FROM invoices ORDER BY updated_at DESC")?;
+            conn.prepare("SELECT id, kind, number, draft FROM invoices ORDER BY updated_at DESC")?;
         let rows = statement.query_map([], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
-                r.get::<_, Option<String>>(1)?,
-                r.get::<_, String>(2)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
             ))
         })?;
         let mut usages = Vec::new();
         for row in rows {
-            let (invoice_id, number, json) = row?;
+            let (invoice_id, kind, number, json) = row?;
             let draft: InvoiceDraft = serde_json::from_str(&json)?;
             let frozen = draft.frozen_layout.as_ref().and_then(|l| l.id) == Some(id);
             if draft.layout.as_deref() == Some(key.as_str()) || frozen {
                 usages.push(LayoutUsage {
                     invoice_id,
+                    kind: Kind::from_column(&kind),
                     number,
                     customer: draft.customer.name,
                 });
@@ -835,8 +882,14 @@ impl Store {
 
     // invoices
 
-    /// The invoices of a context, or of all (`None`), newest first. Archived ones only when asked.
-    pub fn invoices(&self, context: Option<i64>, with_archived: bool) -> Result<Vec<ListEntry>> {
+    /// The documents of a kind of a context, or of all (`None`), newest first. Archived ones only
+    /// when asked.
+    pub fn invoices(
+        &self,
+        context: Option<i64>,
+        kind: Kind,
+        with_archived: bool,
+    ) -> Result<Vec<ListEntry>> {
         let sellers: std::collections::HashMap<i64, String> = self
             .contexts()?
             .into_iter()
@@ -844,12 +897,13 @@ impl Store {
             .collect();
         let conn = self.conn();
         let mut statement = conn.prepare(
-            "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at,
-                 archived_at, files
+            "SELECT id, context_id, kind, number, status, draft, total, exported_at, paid_at,
+                 updated_at, archived_at, files
              FROM invoices WHERE (?2 OR archived_at IS NULL) AND (?1 IS NULL OR context_id = ?1)
+                 AND kind = ?3
              ORDER BY updated_at DESC, id DESC",
         )?;
-        let rows = statement.query_map(params![context, with_archived], stored)?;
+        let rows = statement.query_map(params![context, with_archived, kind.as_str()], stored)?;
         rows.map(|row| {
             let (invoice, draft, _) = row?;
             let draft: InvoiceDraft = serde_json::from_str(&draft)?;
@@ -860,14 +914,17 @@ impl Store {
                 .map(|f| f.seller.name.clone())
                 .or_else(|| sellers.get(&invoice.context_id).cloned())
                 .unwrap_or_default();
+            let valid_until = draft.valid_until().filter(|_| invoice.kind == Kind::Offer);
             Ok(ListEntry {
                 id: invoice.id,
                 context_id: invoice.context_id,
+                kind: invoice.kind,
                 seller_name,
                 number: invoice.number,
                 status: invoice.status,
                 customer_name: draft.customer.name,
                 issue_date: draft.issue_date,
+                valid_until,
                 total: invoice.total,
                 paid_at: invoice.paid_at,
                 updated_at: invoice.updated_at,
@@ -881,8 +938,8 @@ impl Store {
         let conn = self.conn();
         let (mut invoice, draft, files) = conn
             .query_row(
-                "SELECT id, context_id, number, status, draft, total, exported_at, paid_at, updated_at,
-                     archived_at, files
+                "SELECT id, context_id, kind, number, status, draft, total, exported_at, paid_at,
+                     updated_at, archived_at, files
                  FROM invoices WHERE id = ?1",
                 [id],
                 stored,
@@ -895,14 +952,15 @@ impl Store {
     }
 
     /// Marks an exported invoice as paid on a date, or as open again (`None`). The invoice itself stays
-    /// locked, this is the one thing that happens to it afterwards.
+    /// locked, this is the one thing that happens to it afterwards. Offers are not paid.
     pub fn set_paid(&self, id: i64, paid_at: Option<&str>) -> Result<StoredInvoice> {
         if let Some(date) = paid_at {
             en16931::Date::parse(date)
                 .with_context(|| format!("the date of payment {date:?} is not a date"))?;
         }
         let changed = self.conn().execute(
-            "UPDATE invoices SET paid_at = ?1 WHERE id = ?2 AND status = 'exported'",
+            "UPDATE invoices SET paid_at = ?1 WHERE id = ?2 AND status = 'exported'
+                 AND kind = 'invoice'",
             params![paid_at, id],
         )?;
         if changed == 0 {
@@ -911,12 +969,13 @@ impl Store {
         self.invoice(id)
     }
 
-    /// Creates a draft under a context (`id` is `None`) or updates one, which stays under the context
-    /// it was made under. Exported invoices are refused.
+    /// Creates a draft of a kind under a context (`id` is `None`) or updates one, which stays under
+    /// the context and kind it was made under. Exported invoices are refused.
     pub fn save_draft(
         &self,
         id: Option<i64>,
         context_id: i64,
+        kind: Kind,
         draft: &InvoiceDraft,
         total: Option<&str>,
     ) -> Result<StoredInvoice> {
@@ -935,9 +994,9 @@ impl Store {
                 id
             } else {
                 conn.execute(
-                    "INSERT INTO invoices (context_id, status, draft, total, updated_at)
-                     VALUES (?1, 'draft', ?2, ?3, datetime('now'))",
-                    params![context_id, json, total],
+                    "INSERT INTO invoices (context_id, kind, status, draft, total, updated_at)
+                     VALUES (?1, ?2, 'draft', ?3, ?4, datetime('now'))",
+                    params![context_id, kind.as_str(), json, total],
                 )?;
                 conn.last_insert_rowid()
             }
@@ -957,7 +1016,8 @@ impl Store {
         Ok(())
     }
 
-    /// A new draft with the content of an existing invoice, dated `today`, in the same context.
+    /// A new draft with the content of an existing invoice or offer, dated `today`, in the same
+    /// context and of the same kind. An offer keeps its validity days.
     pub fn duplicate(&self, id: i64, today: &str) -> Result<StoredInvoice> {
         let source = self.invoice(id)?;
         let mut draft = source.draft;
@@ -967,7 +1027,7 @@ impl Store {
         draft.delivery_end = draft.delivery_end.map(|_| today.into());
         draft.frozen = None;
         draft.frozen_layout = None;
-        self.save_draft(None, source.context_id, &draft, None)
+        self.save_draft(None, source.context_id, source.kind, &draft, None)
     }
 
     /// As if the invoice had been exported by a version that did not keep files
@@ -981,7 +1041,8 @@ impl Store {
     /// Keeps the originals that were made again for an invoice exported without them
     pub fn set_files(&self, id: i64, files: &InvoiceFiles) -> Result<StoredInvoice> {
         let changed = self.conn().execute(
-            "UPDATE invoices SET files = ?1 WHERE id = ?2 AND status = 'exported' AND files IS NULL",
+            "UPDATE invoices SET files = ?1 WHERE id = ?2 AND status = 'exported'
+                 AND kind = 'invoice' AND files IS NULL",
             params![serde_json::to_string(files)?, id],
         )?;
         if changed == 0 {
@@ -1016,20 +1077,22 @@ impl Store {
         self.invoice(id)
     }
 
-    /// Every number given in a context with its counter and the day it was issued on. A number
-    /// that kept no counter (written before they were kept) is read back with the current pattern.
+    /// Every number of a kind given in a context with its counter and the day it was issued on. A
+    /// number that kept no counter (written before they were kept) is read back with the current
+    /// pattern.
     fn given(
         conn: &Connection,
         context_id: i64,
+        kind: Kind,
         pattern: &Pattern,
         calendar: Calendar,
     ) -> Result<Vec<Given>> {
         let mut statement = conn.prepare(
             "SELECT number, counter, issued_on, CASE WHEN counter IS NULL THEN draft END
-             FROM invoices WHERE number IS NOT NULL AND context_id = ?1",
+             FROM invoices WHERE number IS NOT NULL AND context_id = ?1 AND kind = ?2",
         )?;
         let rows = statement
-            .query_map([context_id], |r| {
+            .query_map(params![context_id, kind.as_str()], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, Option<u32>>(1)?,
@@ -1056,11 +1119,11 @@ impl Store {
             .collect())
     }
 
-    fn floor(conn: &Connection, context_id: i64, period: &str) -> Result<Option<u32>> {
+    fn floor(conn: &Connection, context_id: i64, kind: Kind, period: &str) -> Result<Option<u32>> {
         Ok(conn
             .query_row(
                 "SELECT next FROM number_floors WHERE context_id = ?1 AND kind = ?2 AND period = ?3",
-                params![context_id, INVOICE, period],
+                params![context_id, kind.as_str(), period],
                 |r| r.get(0),
             )
             .optional()?)
@@ -1069,16 +1132,17 @@ impl Store {
     fn sequence_in(
         conn: &Connection,
         context_id: i64,
+        kind: Kind,
         settings: &Settings,
         date: Date,
     ) -> Result<Sequence> {
-        let pattern = Pattern::parse(&settings.number_pattern)?;
+        let pattern = Pattern::parse(settings.pattern(kind))?;
         let calendar = settings.calendar();
-        let reset = settings.number_reset;
+        let reset = settings.reset(kind);
         let period = calendar.period(reset, date);
-        let given = Self::given(conn, context_id, &pattern, calendar)?;
+        let given = Self::given(conn, context_id, kind, &pattern, calendar)?;
         let highest = calendar.highest(reset, &period, &given);
-        let floor = Self::floor(conn, context_id, period.key())?;
+        let floor = Self::floor(conn, context_id, kind, period.key())?;
         let counter = highest.map_or(1, |g| g.counter + 1).max(floor.unwrap_or(0));
         Ok(Sequence {
             next_number: pattern.number(date, calendar, counter),
@@ -1089,15 +1153,27 @@ impl Store {
         })
     }
 
-    /// The next free number of a context for an invoice of that day: the highest counter given in
-    /// its period plus one, or the floor of the period when that is higher (see `numbering`).
-    pub fn next_number(&self, context_id: i64, settings: &Settings, date: Date) -> Result<String> {
-        Ok(self.sequence(context_id, settings, date)?.next_number)
+    /// The next free number of a context for a document of a kind and that day, by the pattern of
+    /// the kind, the business year of the settings and the floor of the period (see `numbering`).
+    pub fn next_number(
+        &self,
+        context_id: i64,
+        kind: Kind,
+        settings: &Settings,
+        date: Date,
+    ) -> Result<String> {
+        Ok(self.sequence(context_id, kind, settings, date)?.next_number)
     }
 
-    /// Where the numbers stand in the period of a day
-    pub fn sequence(&self, context_id: i64, settings: &Settings, date: Date) -> Result<Sequence> {
-        Self::sequence_in(&self.conn(), context_id, settings, date)
+    /// Where the numbers of a kind stand in the period of a day
+    pub fn sequence(
+        &self,
+        context_id: i64,
+        kind: Kind,
+        settings: &Settings,
+        date: Date,
+    ) -> Result<Sequence> {
+        Self::sequence_in(&self.conn(), context_id, kind, settings, date)
     }
 
     /// Makes the sequence of a day's period continue from `next`, for numbers of another program.
@@ -1107,17 +1183,19 @@ impl Store {
     pub fn set_counter(
         &self,
         context_id: i64,
+        kind: Kind,
         settings: &Settings,
         date: Date,
         next: u32,
     ) -> Result<Sequence> {
         // one lock for the check and the write
         let conn = self.conn();
-        let pattern = Pattern::parse(&settings.number_pattern)?;
+        let pattern = Pattern::parse(settings.pattern(kind))?;
         let calendar = settings.calendar();
-        let period = calendar.period(settings.number_reset, date);
-        let given = Self::given(&conn, context_id, &pattern, calendar)?;
-        let highest = calendar.highest(settings.number_reset, &period, &given);
+        let reset = settings.reset(kind);
+        let period = calendar.period(reset, date);
+        let given = Self::given(&conn, context_id, kind, &pattern, calendar)?;
+        let highest = calendar.highest(reset, &period, &given);
         let lowest = highest.map_or(1, |g| g.counter + 1);
         if next < lowest {
             return Err(match highest {
@@ -1131,7 +1209,7 @@ impl Store {
         if next == lowest {
             conn.execute(
                 "DELETE FROM number_floors WHERE context_id = ?1 AND kind = ?2 AND period = ?3",
-                params![context_id, INVOICE, period.key()],
+                params![context_id, kind.as_str(), period.key()],
             )?;
         } else {
             conn.execute(
@@ -1139,10 +1217,10 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4, datetime('now'))
                  ON CONFLICT (context_id, kind, period)
                  DO UPDATE SET next = excluded.next, set_at = excluded.set_at",
-                params![context_id, INVOICE, period.key(), next],
+                params![context_id, kind.as_str(), period.key(), next],
             )?;
         }
-        Self::sequence_in(&conn, context_id, settings, date)
+        Self::sequence_in(&conn, context_id, kind, settings, date)
     }
 
     /// Makes a draft final: it gets the number of the sequence with its counter, freezes the
@@ -1157,7 +1235,9 @@ impl Store {
         total: &str,
         files: &InvoiceFiles,
     ) -> Result<StoredInvoice> {
-        let mut draft = self.invoice(id)?.draft;
+        let stored = self.invoice(id)?;
+        let kind = stored.kind;
+        let mut draft = stored.draft;
         draft.frozen = Some(frozen.clone());
         draft.frozen_layout = frozen_layout.cloned();
         let changed = self.conn().execute(
@@ -1181,7 +1261,11 @@ impl Store {
             Err(rusqlite::Error::SqliteFailure(e, _))
                 if e.code == rusqlite::ErrorCode::ConstraintViolation =>
             {
-                bail!("the number {} is already taken", sequence.next_number)
+                bail!(
+                    "the {} number {} is already taken",
+                    kind.as_str(),
+                    sequence.next_number
+                )
             }
             Err(e) => Err(e.into()),
         }
@@ -1203,7 +1287,7 @@ mod tests {
         };
         InvoiceFiles {
             pdf: file("invoices/1/x.pdf"),
-            xml: file("invoices/1/x.xml"),
+            xml: Some(file("invoices/1/x.xml")),
             regenerated: false,
         }
     }
@@ -1518,10 +1602,15 @@ mod tests {
 
         let mut chosen = draft();
         chosen.layout = Some(layout.key());
-        store.save_draft(None, 1, &chosen, None).unwrap();
+        store
+            .save_draft(None, 1, Kind::Invoice, &chosen, None)
+            .unwrap();
         assert_eq!(store.layout_usages(id).unwrap().len(), 1);
 
-        let exported = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let exported = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
         store
             .finalize(
                 exported,
@@ -1538,7 +1627,10 @@ mod tests {
     #[test]
     fn an_exported_invoice_can_be_marked_paid_and_open_again() {
         let store = Store::in_memory().unwrap();
-        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let id = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
         assert!(
             store.set_paid(id, Some("2026-10-20")).is_err(),
             "drafts are not paid"
@@ -1562,7 +1654,7 @@ mod tests {
         let paid = store.set_paid(id, Some("2026-10-20")).unwrap();
         assert_eq!(paid.paid_at.as_deref(), Some("2026-10-20"));
         assert_eq!(
-            store.invoices(None, false).unwrap()[0].paid_at,
+            store.invoices(None, Kind::Invoice, false).unwrap()[0].paid_at,
             paid.paid_at
         );
 
@@ -1587,7 +1679,7 @@ mod tests {
     fn drafts_are_saved_listed_and_updated() {
         let store = Store::in_memory().unwrap();
         let first = store
-            .save_draft(None, 1, &draft(), Some("1181.08"))
+            .save_draft(None, 1, Kind::Invoice, &draft(), Some("1181.08"))
             .unwrap();
         assert_eq!(first.status, Status::Draft);
         assert_eq!(first.number, None);
@@ -1595,11 +1687,11 @@ mod tests {
         let mut changed = draft();
         changed.note = Some("Danke".into());
         let updated = store
-            .save_draft(Some(first.id), 1, &changed, Some("2.00"))
+            .save_draft(Some(first.id), 1, Kind::Invoice, &changed, Some("2.00"))
             .unwrap();
 
         assert_eq!(updated.draft.note.as_deref(), Some("Danke"));
-        let list = store.invoices(None, false).unwrap();
+        let list = store.invoices(None, Kind::Invoice, false).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(
             (list[0].customer_name.as_str(), list[0].total.as_deref()),
@@ -1613,11 +1705,16 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let pattern = &settings();
         assert_eq!(
-            store.next_number(1, pattern, day(2026, 3, 7)).unwrap(),
+            store
+                .next_number(1, Kind::Invoice, pattern, day(2026, 3, 7))
+                .unwrap(),
             "RE-2026-001"
         );
 
-        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let id = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
         store
             .finalize(
                 id,
@@ -1628,7 +1725,10 @@ mod tests {
                 &files(),
             )
             .unwrap();
-        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let id = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
         store
             .finalize(
                 id,
@@ -1641,29 +1741,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.next_number(1, pattern, day(2026, 3, 7)).unwrap(),
+            store
+                .next_number(1, Kind::Invoice, pattern, day(2026, 3, 7))
+                .unwrap(),
             "RE-2026-008"
         );
         assert_eq!(
-            store.next_number(1, pattern, day(2027, 1, 1)).unwrap(),
+            store
+                .next_number(1, Kind::Invoice, pattern, day(2027, 1, 1))
+                .unwrap(),
             "RE-2027-001"
         );
         // the pattern only formats, the counter goes on
         assert_eq!(
             store
-                .next_number(1, &numbered("[R-]YYYY-NNN"), day(2026, 1, 1))
+                .next_number(1, Kind::Invoice, &numbered("[R-]YYYY-NNN"), day(2026, 1, 1))
                 .unwrap(),
             "R-2026-008"
         );
         assert!(store
-            .next_number(1, &numbered("YYYY"), day(2026, 1, 1))
+            .next_number(1, Kind::Invoice, &numbered("YYYY"), day(2026, 1, 1))
             .is_err());
     }
 
     #[test]
     fn exported_invoices_are_locked_and_keep_their_settings() {
         let store = Store::in_memory().unwrap();
-        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let id = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
 
         let done = store
             .finalize(
@@ -1680,7 +1787,9 @@ mod tests {
         assert_eq!(done.number.as_deref(), Some("RE-2026-001"));
         assert_eq!(done.draft.frozen, Some(settings()));
         assert!(done.exported_at.is_some());
-        assert!(store.save_draft(Some(id), 1, &draft(), None).is_err());
+        assert!(store
+            .save_draft(Some(id), 1, Kind::Invoice, &draft(), None)
+            .is_err());
         assert!(store.delete_draft(id).is_err());
         assert!(store
             .finalize(
@@ -1697,8 +1806,14 @@ mod tests {
     #[test]
     fn a_number_is_never_given_twice() {
         let store = Store::in_memory().unwrap();
-        let a = store.save_draft(None, 1, &draft(), None).unwrap().id;
-        let b = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let a = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
+        let b = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
         store
             .finalize(
                 a,
@@ -1728,7 +1843,10 @@ mod tests {
     #[test]
     fn duplicates_are_fresh_drafts_with_todays_date() {
         let store = Store::in_memory().unwrap();
-        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let id = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
         let done = store
             .finalize(
                 id,
@@ -1758,11 +1876,17 @@ mod tests {
     #[test]
     fn only_drafts_can_be_deleted() {
         let store = Store::in_memory().unwrap();
-        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let id = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
 
         store.delete_draft(id).unwrap();
 
-        assert_eq!(store.invoices(None, false).unwrap(), Vec::new());
+        assert_eq!(
+            store.invoices(None, Kind::Invoice, false).unwrap(),
+            Vec::new()
+        );
         assert!(store.delete_draft(id).is_err());
     }
 
@@ -1812,7 +1936,7 @@ mod tests {
         assert_eq!(contexts[0].id, Some(1));
         assert_eq!(contexts[0].brand, "blue");
         assert_eq!(contexts[0].settings, old);
-        let list = store.invoices(None, false).unwrap();
+        let list = store.invoices(None, Kind::Invoice, false).unwrap();
         assert_eq!(list.len(), 2);
         assert!(list.iter().all(|i| i.context_id == 1));
         let exported = list.iter().find(|i| i.number.is_some()).unwrap();
@@ -1823,7 +1947,12 @@ mod tests {
         // numbers are unique per context now: the old counter goes on
         assert_eq!(
             store
-                .next_number(1, &settings(), Date::new(2026, 10, 9).unwrap())
+                .next_number(
+                    1,
+                    Kind::Invoice,
+                    &settings(),
+                    Date::new(2026, 10, 9).unwrap()
+                )
                 .unwrap(),
             "RE-2026-002"
         );
@@ -1848,7 +1977,9 @@ mod tests {
         let pattern = &settings();
         let day = Date::new(2026, 3, 7).unwrap();
 
-        let first = store.save_draft(None, a, &draft(), None).unwrap();
+        let first = store
+            .save_draft(None, a, Kind::Invoice, &draft(), None)
+            .unwrap();
         store
             .finalize(
                 first.id,
@@ -1859,11 +1990,19 @@ mod tests {
                 &files(),
             )
             .unwrap();
-        assert_eq!(store.next_number(a, pattern, day).unwrap(), "RE-2026-002");
-        assert_eq!(store.next_number(b, pattern, day).unwrap(), "RE-2026-001");
+        assert_eq!(
+            store.next_number(a, Kind::Invoice, pattern, day).unwrap(),
+            "RE-2026-002"
+        );
+        assert_eq!(
+            store.next_number(b, Kind::Invoice, pattern, day).unwrap(),
+            "RE-2026-001"
+        );
 
         // the same number in another context is fine, inside one it is not
-        let other = store.save_draft(None, b, &draft(), None).unwrap();
+        let other = store
+            .save_draft(None, b, Kind::Invoice, &draft(), None)
+            .unwrap();
         store
             .finalize(
                 other.id,
@@ -1874,7 +2013,9 @@ mod tests {
                 &files(),
             )
             .unwrap();
-        let again = store.save_draft(None, a, &draft(), None).unwrap();
+        let again = store
+            .save_draft(None, a, Kind::Invoice, &draft(), None)
+            .unwrap();
         assert!(store
             .finalize(
                 again.id,
@@ -1892,11 +2033,15 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let a = context(&store, "Alpha").id.unwrap();
         let b = context(&store, "Beta").id.unwrap();
-        let in_a = store.save_draft(None, a, &draft(), None).unwrap();
-        store.save_draft(None, b, &draft(), None).unwrap();
+        let in_a = store
+            .save_draft(None, a, Kind::Invoice, &draft(), None)
+            .unwrap();
+        store
+            .save_draft(None, b, Kind::Invoice, &draft(), None)
+            .unwrap();
 
-        assert_eq!(store.invoices(None, false).unwrap().len(), 2);
-        let only_a = store.invoices(Some(a), false).unwrap();
+        assert_eq!(store.invoices(None, Kind::Invoice, false).unwrap().len(), 2);
+        let only_a = store.invoices(Some(a), Kind::Invoice, false).unwrap();
         assert_eq!(only_a.len(), 1);
         assert_eq!(only_a[0].seller_name, "Alpha");
 
@@ -1915,14 +2060,22 @@ mod tests {
             )
             .unwrap();
         store.archive_invoice(in_a.id).unwrap();
-        assert_eq!(store.invoices(Some(a), false).unwrap(), Vec::new());
-        let with_archived = store.invoices(Some(a), true).unwrap();
+        assert_eq!(
+            store.invoices(Some(a), Kind::Invoice, false).unwrap(),
+            Vec::new()
+        );
+        let with_archived = store.invoices(Some(a), Kind::Invoice, true).unwrap();
         assert_eq!(with_archived.len(), 1);
         assert!(with_archived[0].archived_at.is_some());
         // it still counts for the numbers
         assert_eq!(
             store
-                .next_number(a, &settings(), Date::new(2026, 5, 1).unwrap())
+                .next_number(
+                    a,
+                    Kind::Invoice,
+                    &settings(),
+                    Date::new(2026, 5, 1).unwrap()
+                )
                 .unwrap(),
             "RE-2026-002"
         );
@@ -1931,7 +2084,10 @@ mod tests {
         let restored = store.unarchive_invoice(in_a.id).unwrap();
         assert_eq!(restored.archived_at, None);
         assert_eq!(restored.number.as_deref(), Some("RE-2026-001"));
-        assert_eq!(store.invoices(Some(a), false).unwrap().len(), 1);
+        assert_eq!(
+            store.invoices(Some(a), Kind::Invoice, false).unwrap().len(),
+            1
+        );
         assert!(store.unarchive_invoice(in_a.id).is_err());
     }
 
@@ -1940,11 +2096,13 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let a = context(&store, "A").id.unwrap();
         let b = context(&store, "B").id.unwrap();
-        let draft_in_b = store.save_draft(None, b, &draft(), None).unwrap();
+        let draft_in_b = store
+            .save_draft(None, b, Kind::Invoice, &draft(), None)
+            .unwrap();
 
         // saving again with another context does not move it
         let updated = store
-            .save_draft(Some(draft_in_b.id), a, &draft(), None)
+            .save_draft(Some(draft_in_b.id), a, Kind::Invoice, &draft(), None)
             .unwrap();
         assert_eq!(updated.context_id, b);
 
@@ -2092,7 +2250,9 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let a = context(&store, "A").id.unwrap();
         let b = context(&store, "B").id.unwrap();
-        store.save_draft(None, a, &draft(), None).unwrap();
+        store
+            .save_draft(None, a, Kind::Invoice, &draft(), None)
+            .unwrap();
 
         let error = store
             .remove_context(a, crate::context::Disposition::Share)
@@ -2121,7 +2281,10 @@ mod tests {
     #[test]
     fn the_files_of_a_created_invoice_are_kept_with_it() {
         let store = Store::in_memory().unwrap();
-        let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let id = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
         assert_eq!(store.invoice(id).unwrap().files, None);
 
         let done = store
@@ -2142,7 +2305,10 @@ mod tests {
     #[test]
     fn files_that_were_made_again_are_only_added_to_an_exported_invoice_without_any() {
         let store = Store::in_memory().unwrap();
-        let draft_id = store.save_draft(None, 1, &draft(), None).unwrap().id;
+        let draft_id = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
         assert!(
             store.set_files(draft_id, &files()).is_err(),
             "a draft has none"
@@ -2207,7 +2373,10 @@ mod tests {
             issue_date: issued_on.into(),
             ..draft()
         };
-        let id = store.save_draft(None, context, &draft, None).unwrap().id;
+        let id = store
+            .save_draft(None, context, Kind::Invoice, &draft, None)
+            .unwrap()
+            .id;
         store
             .finalize(
                 id,
@@ -2237,7 +2406,9 @@ mod tests {
         let settings = settings();
         let day = Date::new(2026, 3, 7).unwrap();
         let gone = context(&store, "A").id.unwrap();
-        store.set_counter(gone, &settings, day, 88).unwrap();
+        store
+            .set_counter(gone, Kind::Invoice, &settings, day, 88)
+            .unwrap();
         assert_eq!(floors(&store), 1);
 
         store
@@ -2248,7 +2419,9 @@ mod tests {
         assert_eq!(reused, gone);
         assert_eq!(floors(&store), 0);
         assert_eq!(
-            store.next_number(reused, &settings, day).unwrap(),
+            store
+                .next_number(reused, Kind::Invoice, &settings, day)
+                .unwrap(),
             "RE-2026-001"
         );
     }
@@ -2259,23 +2432,31 @@ mod tests {
         let settings = settings();
         let day = Date::new(2026, 3, 7).unwrap();
 
-        let set = store.set_counter(1, &settings, day, 88).unwrap();
+        let set = store
+            .set_counter(1, Kind::Invoice, &settings, day, 88)
+            .unwrap();
 
         assert_eq!(set.next_number, "RE-2026-088");
         assert_eq!((set.counter, set.floor, set.highest), (88, Some(88), None));
-        assert_eq!(store.next_number(1, &settings, day).unwrap(), "RE-2026-088");
+        assert_eq!(
+            store.next_number(1, Kind::Invoice, &settings, day).unwrap(),
+            "RE-2026-088"
+        );
         // the floor is for this year, the next one starts at 1
         assert_eq!(
             store
-                .next_number(1, &settings, Date::new(2027, 1, 1).unwrap())
+                .next_number(1, Kind::Invoice, &settings, Date::new(2027, 1, 1).unwrap())
                 .unwrap(),
             "RE-2027-001"
         );
         // other contexts do not see it
-        assert_eq!(store.next_number(2, &settings, day).unwrap(), "RE-2026-001");
+        assert_eq!(
+            store.next_number(2, Kind::Invoice, &settings, day).unwrap(),
+            "RE-2026-001"
+        );
 
         issue(&store, 1, "RE-2026-088", 88, "2026-03-07");
-        let after = store.sequence(1, &settings, day).unwrap();
+        let after = store.sequence(1, Kind::Invoice, &settings, day).unwrap();
         assert_eq!(after.next_number, "RE-2026-089");
         // the numbers have passed the floor, it decides nothing any more
         assert_eq!(after.floor, None);
@@ -2294,7 +2475,7 @@ mod tests {
 
         for next in [87, 50, 1, 0] {
             let refused = store
-                .set_counter(1, &settings, day, next)
+                .set_counter(1, Kind::Invoice, &settings, day, next)
                 .unwrap_err()
                 .to_string();
             assert_eq!(
@@ -2304,12 +2485,15 @@ mod tests {
             );
         }
         assert_eq!(floors(&store), 0);
-        assert_eq!(store.next_number(1, &settings, day).unwrap(), "RE-2026-088");
+        assert_eq!(
+            store.next_number(1, Kind::Invoice, &settings, day).unwrap(),
+            "RE-2026-088"
+        );
 
         let empty = Store::in_memory().unwrap();
         assert_eq!(
             empty
-                .set_counter(1, &settings, day, 0)
+                .set_counter(1, Kind::Invoice, &settings, day, 0)
                 .unwrap_err()
                 .to_string(),
             "Der Zähler beginnt bei 1."
@@ -2323,14 +2507,20 @@ mod tests {
         let day = Date::new(2026, 3, 7).unwrap();
         issue(&store, 1, "RE-2026-010", 10, "2026-03-01");
 
-        store.set_counter(1, &settings, day, 100).unwrap();
+        store
+            .set_counter(1, Kind::Invoice, &settings, day, 100)
+            .unwrap();
         // lowering is fine while nothing at or above was given
-        let lowered = store.set_counter(1, &settings, day, 40).unwrap();
+        let lowered = store
+            .set_counter(1, Kind::Invoice, &settings, day, 40)
+            .unwrap();
         assert_eq!(lowered.next_number, "RE-2026-040");
         assert_eq!(floors(&store), 1, "one floor per period, replaced");
 
         // 11 is what the numbers lead to anyway
-        let removed = store.set_counter(1, &settings, day, 11).unwrap();
+        let removed = store
+            .set_counter(1, Kind::Invoice, &settings, day, 11)
+            .unwrap();
         assert_eq!(
             (removed.next_number.as_str(), removed.floor),
             ("RE-2026-011", None)
@@ -2343,18 +2533,18 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let day = Date::new(2026, 3, 7).unwrap();
         store
-            .set_counter(1, &numbered("[RE-]YYYY-NNN"), day, 88)
+            .set_counter(1, Kind::Invoice, &numbered("[RE-]YYYY-NNN"), day, 88)
             .unwrap();
 
         assert_eq!(
             store
-                .next_number(1, &numbered("[RE-]YYYY-NNNN"), day)
+                .next_number(1, Kind::Invoice, &numbered("[RE-]YYYY-NNNN"), day)
                 .unwrap(),
             "RE-2026-0088"
         );
         assert_eq!(
             store
-                .next_number(1, &numbered("[RG-]YYYY-NNN"), day)
+                .next_number(1, Kind::Invoice, &numbered("[RG-]YYYY-NNN"), day)
                 .unwrap(),
             "RG-2026-088"
         );
@@ -2368,21 +2558,31 @@ mod tests {
         // other text, another width: the counter is the one that was given
         assert_eq!(
             store
-                .next_number(1, &numbered("[RG-]YYYY-NNNN"), day(2026, 6, 1))
+                .next_number(
+                    1,
+                    Kind::Invoice,
+                    &numbered("[RG-]YYYY-NNNN"),
+                    day(2026, 6, 1)
+                )
                 .unwrap(),
             "RG-2026-0006"
         );
         // a pattern that writes the month does not restart a counter that runs by year
         assert_eq!(
             store
-                .next_number(1, &numbered("YYYY-MM-NNN"), day(2026, 6, 1))
+                .next_number(1, Kind::Invoice, &numbered("YYYY-MM-NNN"), day(2026, 6, 1))
                 .unwrap(),
             "2026-06-006"
         );
         // another year starts at 1
         assert_eq!(
             store
-                .next_number(1, &numbered("[RG-]YYYY-NNNN"), day(2027, 1, 1))
+                .next_number(
+                    1,
+                    Kind::Invoice,
+                    &numbered("[RG-]YYYY-NNNN"),
+                    day(2027, 1, 1)
+                )
                 .unwrap(),
             "RG-2027-0001"
         );
@@ -2396,7 +2596,9 @@ mod tests {
             number_reset: reset,
             ..numbered(pattern)
         };
-        let next = |settings: &Settings, date| store.next_number(1, settings, date).unwrap();
+        let next = |settings: &Settings, date| {
+            store.next_number(1, Kind::Invoice, settings, date).unwrap()
+        };
 
         // by month
         let month = by(Reset::Month, "YYYYMM-NNN");
@@ -2425,7 +2627,11 @@ mod tests {
         };
         issue(&store, 1, "RE-2026-Q3-04", 4, "2026-11-02");
 
-        let next = |date| store.next_number(1, &settings, date).unwrap();
+        let next = |date| {
+            store
+                .next_number(1, Kind::Invoice, &settings, date)
+                .unwrap()
+        };
 
         assert_eq!(next(day(2026, 12, 31)), "RE-2026-Q3-05");
         assert_eq!(next(day(2027, 1, 1)), "RE-2026-Q4-01");
@@ -2443,11 +2649,17 @@ mod tests {
             ..numbered("[R]NNNN")
         };
 
-        store.set_counter(1, &monthly, day(2026, 3, 7), 50).unwrap();
-        store.set_counter(2, &never, day(2026, 3, 7), 50).unwrap();
+        store
+            .set_counter(1, Kind::Invoice, &monthly, day(2026, 3, 7), 50)
+            .unwrap();
+        store
+            .set_counter(2, Kind::Invoice, &never, day(2026, 3, 7), 50)
+            .unwrap();
 
         let next = |context, settings: &Settings, date| {
-            store.next_number(context, settings, date).unwrap()
+            store
+                .next_number(context, Kind::Invoice, settings, date)
+                .unwrap()
         };
         assert_eq!(next(1, &monthly, day(2026, 3, 31)), "202603-050");
         assert_eq!(next(1, &monthly, day(2026, 4, 1)), "202604-001");
@@ -2478,13 +2690,17 @@ mod tests {
                 .unwrap();
         }
 
-        let sequence = store.sequence(1, &settings(), day(2026, 11, 1)).unwrap();
+        let sequence = store
+            .sequence(1, Kind::Invoice, &settings(), day(2026, 11, 1))
+            .unwrap();
 
         assert_eq!(sequence.next_number, "RE-2026-010");
         assert_eq!(sequence.highest.as_deref(), Some("RE-2026-009"));
         // the day of such a number is the issue date of its draft: 2026-10-17
         assert_eq!(
-            store.next_number(1, &settings(), day(2025, 11, 1)).unwrap(),
+            store
+                .next_number(1, Kind::Invoice, &settings(), day(2025, 11, 1))
+                .unwrap(),
             "RE-2025-001"
         );
     }
@@ -2499,22 +2715,31 @@ mod tests {
         let day = |y, m, d| Date::new(y, m, d).unwrap();
 
         store
-            .set_counter(1, &fiscal, day(2026, 10, 29), 88)
+            .set_counter(1, Kind::Invoice, &fiscal, day(2026, 10, 29), 88)
             .unwrap();
 
         // the same fiscal year over new year
         assert_eq!(
-            store.next_number(1, &fiscal, day(2027, 2, 1)).unwrap(),
+            store
+                .next_number(1, Kind::Invoice, &fiscal, day(2027, 2, 1))
+                .unwrap(),
             "RE-2026-088"
         );
         assert_eq!(
-            store.next_number(1, &fiscal, day(2027, 4, 1)).unwrap(),
+            store
+                .next_number(1, Kind::Invoice, &fiscal, day(2027, 4, 1))
+                .unwrap(),
             "RE-2027-001"
         );
         // without the fiscal year the number is not in the period any more
         assert_eq!(
             store
-                .next_number(1, &numbered("[RE-]GGGG-NNN"), day(2027, 2, 1))
+                .next_number(
+                    1,
+                    Kind::Invoice,
+                    &numbered("[RE-]GGGG-NNN"),
+                    day(2027, 2, 1)
+                )
                 .unwrap(),
             "RE-2027-001"
         );
@@ -2568,14 +2793,20 @@ mod tests {
         // the number goes on as before, also with a fiscal year in the settings
         let day = Date::new(2026, 5, 7).unwrap();
         let old = store.settings(1).unwrap();
-        assert_eq!(store.next_number(1, &old, day).unwrap(), "RG-2026-002");
+        assert_eq!(
+            store.next_number(1, Kind::Invoice, &old, day).unwrap(),
+            "RG-2026-002"
+        );
         let fiscal = Settings {
             fiscal_year_start: Some(Date::new(2026, 4, 1).unwrap()),
             ..old
         };
-        assert_eq!(store.next_number(1, &fiscal, day).unwrap(), "RG-2026-002");
+        assert_eq!(
+            store.next_number(1, Kind::Invoice, &fiscal, day).unwrap(),
+            "RG-2026-002"
+        );
         // the invoice is as it was
-        let list = store.invoices(Some(1), true).unwrap();
+        let list = store.invoices(Some(1), Kind::Invoice, true).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].number.as_deref(), Some("RG-2026-001"));
         assert_eq!(list[0].paid_at.as_deref(), Some("2026-10-05"));
@@ -2597,5 +2828,292 @@ mod tests {
             .unwrap();
         migrate(&store.conn()).unwrap();
         assert_eq!(store.settings(1).unwrap().number_pattern, "R[G]-YYYY-NNN");
+    }
+
+    /// Creates a document of a kind with a number, an offer with a PDF only
+    fn create_as(store: &Store, context: i64, kind: Kind, number: &str) -> StoredInvoice {
+        let id = store
+            .save_draft(None, context, kind, &draft(), None)
+            .unwrap()
+            .id;
+        let files = InvoiceFiles {
+            xml: files().xml.filter(|_| kind == Kind::Invoice),
+            ..files()
+        };
+        // the counter is the last run of digits
+        let counter = number
+            .rsplit(|c: char| !c.is_ascii_digit())
+            .find_map(|digits| digits.parse().ok())
+            .unwrap_or(1);
+        store
+            .finalize(id, &at(number, counter), &settings(), None, "1.00", &files)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_version_seven_database_gets_kinds_and_keeps_its_invoices() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        // the table as version 7 had it
+        conn.execute_batch(
+            "DROP TABLE invoices;
+             CREATE TABLE invoices (
+                 id INTEGER PRIMARY KEY,
+                 context_id INTEGER NOT NULL,
+                 number TEXT,
+                 status TEXT NOT NULL,
+                 draft TEXT NOT NULL,
+                 total TEXT,
+                 exported_at TEXT,
+                 paid_at TEXT,
+                 updated_at TEXT NOT NULL,
+                 archived_at TEXT,
+                 files TEXT,
+                 counter INTEGER,
+                 issued_on TEXT,
+                 UNIQUE (context_id, number)
+             );
+             PRAGMA user_version = 7;",
+        )
+        .unwrap();
+        let json = serde_json::to_string(&draft()).unwrap();
+        let kept = serde_json::to_string(&files()).unwrap();
+        conn.execute(
+            "INSERT INTO invoices (context_id, number, status, draft, total, exported_at, paid_at,
+                 updated_at, archived_at, files, counter, issued_on)
+             VALUES (1, 'RE-2026-001', 'exported', ?1, '1.00', '2026-10-01', '2026-10-05',
+                 '2026-10-01', '2026-10-09', ?2, 5, '2026-10-01'),
+                 (1, NULL, 'draft', ?1, NULL, NULL, NULL, '2026-10-10', NULL, NULL, NULL, NULL)",
+            params![json, kept],
+        )
+        .unwrap();
+
+        let store = Store::init(conn).unwrap();
+
+        let version: i32 = store
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        let created = store.invoice(1).unwrap();
+        assert_eq!(created.kind, Kind::Invoice);
+        assert_eq!(created.number.as_deref(), Some("RE-2026-001"));
+        assert_eq!(created.paid_at.as_deref(), Some("2026-10-05"));
+        assert!(created.archived_at.is_some());
+        assert_eq!(created.files, Some(files()));
+        assert_eq!(store.invoice(2).unwrap().kind, Kind::Invoice);
+        assert_eq!(store.invoices(None, Kind::Invoice, true).unwrap().len(), 2);
+        assert_eq!(store.invoices(None, Kind::Offer, true).unwrap(), Vec::new());
+        // the stored counter goes on, not the one the number reads as
+        let day = Date::new(2026, 5, 7).unwrap();
+        assert_eq!(
+            store
+                .next_number(1, Kind::Invoice, &settings(), day)
+                .unwrap(),
+            "RE-2026-006"
+        );
+
+        // stamped back, it migrates again and keeps everything
+        store
+            .conn()
+            .execute_batch("PRAGMA user_version = 7;")
+            .unwrap();
+        migrate(&store.conn()).unwrap();
+        assert_eq!(store.invoices(None, Kind::Invoice, true).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_same_number_is_allowed_once_per_kind() {
+        let store = Store::in_memory().unwrap();
+
+        create_as(&store, 1, Kind::Invoice, "2026-001");
+        let offer = create_as(&store, 1, Kind::Offer, "2026-001");
+
+        assert_eq!(offer.kind, Kind::Offer);
+        let again = store
+            .save_draft(None, 1, Kind::Offer, &draft(), None)
+            .unwrap()
+            .id;
+        let error = store
+            .finalize(
+                again,
+                &at("2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("offer number 2026-001"));
+        // another context has its own numbers
+        create_as(&store, 2, Kind::Offer, "2026-001");
+    }
+
+    #[test]
+    fn offers_and_invoices_have_a_reset_each() {
+        let store = Store::in_memory().unwrap();
+        let mut settings = settings();
+        settings.offer.number_pattern = "[AN-]YYYYMM-NNN".into();
+        settings.offer.number_reset = Reset::Month;
+        create_as(&store, 1, Kind::Offer, "AN-202610-003");
+        create_as(&store, 1, Kind::Invoice, "RE-2026-009");
+        let next = |kind, date| store.next_number(1, kind, &settings, date).unwrap();
+
+        // offers start again with the month, invoices with the year
+        assert_eq!(next(Kind::Offer, day(2026, 10, 30)), "AN-202610-004");
+        assert_eq!(next(Kind::Offer, day(2026, 11, 2)), "AN-202611-001");
+        assert_eq!(next(Kind::Invoice, day(2026, 11, 2)), "RE-2026-010");
+    }
+
+    #[test]
+    fn numbers_and_counters_are_per_kind() {
+        let store = Store::in_memory().unwrap();
+        let settings = settings();
+        let day = Date::new(2026, 3, 7).unwrap();
+        create_as(&store, 1, Kind::Invoice, "RE-2026-007");
+
+        // the offers start at their own pattern and count on their own
+        let first = store.next_number(1, Kind::Offer, &settings, day).unwrap();
+        assert_eq!(first, "AN-2026-001");
+        create_as(&store, 1, Kind::Offer, &first);
+        assert_eq!(
+            store.next_number(1, Kind::Offer, &settings, day).unwrap(),
+            "AN-2026-002"
+        );
+        assert_eq!(
+            store.next_number(1, Kind::Invoice, &settings, day).unwrap(),
+            "RE-2026-008"
+        );
+
+        // and continue on their own: a floor of one kind does not touch the other
+        store
+            .set_counter(1, Kind::Offer, &settings, day, 50)
+            .unwrap();
+        assert_eq!(
+            store.next_number(1, Kind::Offer, &settings, day).unwrap(),
+            "AN-2026-050"
+        );
+        assert_eq!(
+            store.next_number(1, Kind::Invoice, &settings, day).unwrap(),
+            "RE-2026-008"
+        );
+        let error = store
+            .set_counter(1, Kind::Offer, &settings, day, 1)
+            .unwrap_err();
+        assert!(error.to_string().contains("AN-2026-001"));
+        assert_eq!(
+            store
+                .sequence(1, Kind::Invoice, &settings, day)
+                .unwrap()
+                .floor,
+            None
+        );
+    }
+
+    #[test]
+    fn an_offer_is_not_paid_and_gets_no_files_made_again() {
+        let store = Store::in_memory().unwrap();
+        let offer = create_as(&store, 1, Kind::Offer, "AN-2026-001");
+        let invoice = create_as(&store, 1, Kind::Invoice, "RE-2026-001");
+
+        assert!(store.set_paid(offer.id, Some("2026-11-01")).is_err());
+        assert!(store.set_paid(invoice.id, Some("2026-11-01")).is_ok());
+        store.forget_files(offer.id);
+        assert!(store.set_files(offer.id, &files()).is_err());
+        assert_eq!(store.invoice(offer.id).unwrap().paid_at, None);
+        assert_eq!(store.invoice(offer.id).unwrap().files, None);
+        // an offer can be archived and put back like an invoice
+        store.forget_files(invoice.id);
+        assert!(store.set_files(invoice.id, &files()).is_ok());
+        store.archive_invoice(offer.id).unwrap();
+        assert!(store.unarchive_invoice(offer.id).is_ok());
+    }
+
+    #[test]
+    fn the_lists_hold_one_kind_and_a_draft_keeps_its_kind() {
+        let store = Store::in_memory().unwrap();
+        let mut valid = draft();
+        valid.validity_days = Some(30);
+        let offer = store
+            .save_draft(None, 1, Kind::Offer, &valid, None)
+            .unwrap();
+        store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap();
+
+        let offers = store.invoices(None, Kind::Offer, false).unwrap();
+        assert_eq!(offers.len(), 1);
+        assert_eq!(offers[0].kind, Kind::Offer);
+        assert_eq!(offers[0].valid_until.as_deref(), Some("2026-11-16"));
+        let invoices = store.invoices(None, Kind::Invoice, false).unwrap();
+        assert_eq!(invoices.len(), 1);
+        assert_eq!(invoices[0].valid_until, None);
+
+        // saving again keeps what it is, whatever the caller says
+        let saved = store
+            .save_draft(Some(offer.id), 1, Kind::Invoice, &valid, None)
+            .unwrap();
+        assert_eq!(saved.kind, Kind::Offer);
+
+        // a copy is the same kind, with the same days counted from its own date
+        let copy = store.duplicate(offer.id, "2026-12-01").unwrap();
+        assert_eq!(copy.kind, Kind::Offer);
+        assert_eq!(copy.draft.validity_days, Some(30));
+        assert_eq!(copy.draft.valid_until().as_deref(), Some("2026-12-31"));
+        assert_eq!(copy.draft.issue_date, "2026-12-01");
+    }
+
+    #[test]
+    fn an_own_layout_is_in_use_by_offers_too() {
+        let store = Store::in_memory().unwrap();
+        let layout = store
+            .save_custom_layout(&own_layout("Briefpapier"))
+            .unwrap();
+        let mut chosen = draft();
+        chosen.layout = Some(layout.key());
+        store
+            .save_draft(None, 1, Kind::Offer, &chosen, None)
+            .unwrap();
+        store
+            .save_draft(None, 1, Kind::Invoice, &chosen, None)
+            .unwrap();
+
+        let usages = store.layout_usages(layout.id.unwrap()).unwrap();
+
+        let mut kinds: Vec<_> = usages.iter().map(|u| u.kind.as_str()).collect();
+        kinds.sort_unstable();
+        assert_eq!(kinds, ["invoice", "offer"]);
+        // and the layout an offer takes as default counts as one
+        let mut with_offer_layout = settings();
+        with_offer_layout.offer.layout = Some(layout.key());
+        store
+            .save_context(&Context::new(with_offer_layout, ""))
+            .unwrap();
+        assert!(store.is_default_layout(&layout.key()).unwrap());
+    }
+
+    #[test]
+    fn a_context_with_created_offers_cannot_be_removed() {
+        let store = Store::in_memory().unwrap();
+        let a = context(&store, "A").id.unwrap();
+        create_as(&store, a, Kind::Offer, "AN-2026-001");
+
+        let usage = store.context_usage(a).unwrap();
+        assert_eq!((usage.offers, usage.drafts, usage.exported), (1, 0, 0));
+        let error = store
+            .remove_context(a, crate::context::Disposition::Share)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("archive"));
+        assert!(store.context(a).is_ok());
+        // a draft offer counts as well
+        let b = context(&store, "B").id.unwrap();
+        store
+            .save_draft(None, b, Kind::Offer, &draft(), None)
+            .unwrap();
+        assert_eq!(store.context_usage(b).unwrap().offers, 1);
+        assert!(store
+            .remove_context(b, crate::context::Disposition::Share)
+            .is_err());
     }
 }

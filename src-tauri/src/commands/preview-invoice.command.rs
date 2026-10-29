@@ -5,7 +5,7 @@ use tauri::{AppHandle, State};
 
 use crate::draft::{build_invoice, for_preview, InputProblem};
 use crate::invoice::Invoice;
-use crate::model::InvoiceDraft;
+use crate::model::{InvoiceDraft, Kind};
 use crate::numbering::Pattern;
 use crate::render::{self, Branding};
 use crate::sidecar::Sidecars;
@@ -24,24 +24,24 @@ pub struct Preview {
 
 /// The invoice the form makes now, with stand-ins for what is missing, and how it looks. A draft
 /// is shown as one: its title says so and the number is only the pattern (`RE-2026-###`), it gets
-/// a real one when it is created.
+/// a real one when it is created. A stored document is shown as the kind it is.
 fn shown(
     store: &Store,
     draft: &InvoiceDraft,
     id: Option<i64>,
     context_id: i64,
+    kind: Kind,
 ) -> CommandResult<Result<(Invoice, Branding), Vec<InputProblem>>> {
     let current = store.settings(context_id)?;
     let settings = draft.frozen.clone().unwrap_or(current.clone());
 
-    let stored_number = id
-        .map(|id| store.invoice(id))
-        .transpose()?
-        .and_then(|invoice| invoice.number);
+    let stored = id.map(|id| store.invoice(id)).transpose()?;
+    let kind = stored.as_ref().map_or(kind, |stored| stored.kind);
+    let stored_number = stored.and_then(|stored| stored.number);
     let is_draft = stored_number.is_none();
     let number = match stored_number {
         Some(number) => number,
-        None => Pattern::parse(&current.number_pattern)?
+        None => Pattern::parse(current.pattern(kind))?
             .masked(issue_day(&draft.issue_date), current.calendar()),
     };
 
@@ -50,7 +50,7 @@ fn shown(
         build_invoice(&for_preview(draft), &current, &number).map(|invoice| {
             let branding = Branding {
                 draft: is_draft,
-                ..Branding::for_draft(draft, &settings, &customs)
+                ..Branding::for_document(kind, draft, &settings, &customs)
             };
             (invoice, branding)
         }),
@@ -66,8 +66,9 @@ pub async fn preview_invoice(
     draft: InvoiceDraft,
     id: Option<i64>,
     context_id: i64,
+    kind: Kind,
 ) -> CommandResult<Preview> {
-    let (invoice, branding) = match shown(&store, &draft, id, context_id)? {
+    let (invoice, branding) = match shown(&store, &draft, id, context_id, kind)? {
         Ok(shown) => shown,
         Err(problems) => {
             return Ok(Preview {
@@ -100,9 +101,10 @@ pub async fn invoice_draft_pdf(
     draft: InvoiceDraft,
     id: Option<i64>,
     context_id: i64,
+    kind: Kind,
     target: PathBuf,
 ) -> CommandResult<()> {
-    let (invoice, branding) = shown(&store, &draft, id, context_id)?.map_err(|problems| {
+    let (invoice, branding) = shown(&store, &draft, id, context_id, kind)?.map_err(|problems| {
         let messages: Vec<_> = problems.into_iter().map(|p| p.message).collect();
         CommandError::from(messages.join(", "))
     })?;

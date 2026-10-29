@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::context::{Context, ContextUsage, Disposition, Missing, BRANDS};
-use crate::model::Settings;
+use crate::model::{Kind, Settings};
 use crate::numbering::{reset_problem, Calendar, Pattern, Reset};
 use crate::store::{Sequence, Store};
 use crate::utils::{issue_day, today, CommandError, CommandResult};
@@ -16,10 +16,14 @@ pub fn contexts_list(store: State<'_, Store>) -> CommandResult<Vec<Context>> {
 /// filled in step by step, `missing` tells what is still to do.
 #[tauri::command]
 pub fn context_save(store: State<'_, Store>, context: Context) -> CommandResult<Context> {
-    let archived = store
-        .all_custom_layouts()?
-        .iter()
-        .any(|l| l.archived && l.key() == context.settings.layout);
+    let archived = store.all_custom_layouts()?.iter().any(|l| {
+        l.archived
+            && [
+                Some(context.settings.layout.as_str()),
+                context.settings.offer.layout.as_deref(),
+            ]
+            .contains(&Some(l.key().as_str()))
+    });
     if archived {
         return Err("Ein archiviertes Layout kann nicht das Standard-Layout sein.".into());
     }
@@ -28,7 +32,11 @@ pub fn context_save(store: State<'_, Store>, context: Context) -> CommandResult<
     }
     // a pattern that cannot count would stop every export
     Pattern::parse(&context.settings.number_pattern)?;
-    if let Some(problem) = context.settings.reset_problem() {
+    Pattern::parse(&context.settings.offer.number_pattern)?;
+    if let Some(problem) = [Kind::Invoice, Kind::Offer]
+        .into_iter()
+        .find_map(|kind| context.settings.reset_problem(kind))
+    {
         return Err(problem.into());
     }
     store.save_context(&context).map_err(CommandError::from)
@@ -63,6 +71,7 @@ pub fn settings_check(settings: Settings) -> Missing {
     Missing {
         missing: settings.missing(),
         missing_for_xrechnung: settings.missing_for_xrechnung(),
+        missing_for_offers: settings.missing_for_offers(),
     }
 }
 
@@ -84,12 +93,16 @@ pub fn number_example(
     }
 }
 
-/// Where the invoice numbers of a context stand today, by its saved settings
+/// Where the numbers of a kind of a context stand today, by its saved settings
 #[tauri::command]
-pub fn number_sequence(store: State<'_, Store>, context_id: i64) -> CommandResult<Sequence> {
+pub fn number_sequence(
+    store: State<'_, Store>,
+    context_id: i64,
+    kind: Kind,
+) -> CommandResult<Sequence> {
     let settings = store.settings(context_id)?;
     store
-        .sequence(context_id, &settings, issue_day(&today()))
+        .sequence(context_id, kind, &settings, issue_day(&today()))
         .map_err(CommandError::from)
 }
 
@@ -99,11 +112,12 @@ pub fn number_sequence(store: State<'_, Store>, context_id: i64) -> CommandResul
 pub fn number_sequence_set(
     store: State<'_, Store>,
     context_id: i64,
+    kind: Kind,
     next: u32,
 ) -> CommandResult<Sequence> {
     let settings = store.settings(context_id)?;
     store
-        .set_counter(context_id, &settings, issue_day(&today()), next)
+        .set_counter(context_id, kind, &settings, issue_day(&today()), next)
         .map_err(CommandError::from)
 }
 

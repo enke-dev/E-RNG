@@ -10,6 +10,7 @@ import type {
   Customer,
   CustomLayout,
   InvoiceDraft,
+  Kind,
   ListEntry,
   NumberReset,
   PositionTemplate,
@@ -49,6 +50,20 @@ const settings: Settings = {
   layout: 'standard',
   intro: null,
   closing: null,
+  invoice_wording: {
+    title: 'Rechnung',
+    draft_title: 'Rechnungsentwurf',
+    number_label: 'Rechnungsnummer',
+  },
+  offer: {
+    number_pattern: '[AN-]YYYY-NNN',
+    number_reset: 'fiscal_year',
+    validity_days: 30,
+    intro: null,
+    closing: 'Dieses Angebot gilt bis {valid_until}.',
+    layout: null,
+    wording: { title: 'Angebot', draft_title: 'Angebotsentwurf', number_label: 'Angebotsnummer' },
+  },
 };
 
 const second: Settings = {
@@ -62,6 +77,7 @@ const second: Settings = {
   },
   tax_rate: '',
   number_pattern: '[KV-]YYYY-NNN',
+  offer: { ...settings.offer, number_pattern: '[AN-KV-]YYYY-NNN' },
 };
 
 /** A day as the mock numbers write it */
@@ -227,6 +243,15 @@ const missingOf = (s: Settings) =>
     .filter(([, absent]) => absent)
     .map(([field]) => String(field));
 
+/** Mirrors `Settings::missing_for_offers`: the seller's name and address, the offer pattern and reset */
+const missingForOffers = (s: Settings) => [
+  ...missingOf(s).filter(field => field === 'seller.name' || field.startsWith('seller.address.')),
+  ...(parses(s.offer.number_pattern) ? [] : ['offer.number_pattern']),
+  ...(resetProblem(s.offer.number_pattern, s.offer.number_reset, s.fiscal_year_start)
+    ? ['offer.number_reset']
+    : []),
+];
+
 const missingForXRechnung = (s: Settings) =>
   [
     ['seller.contact_name', s.seller.contact_name.trim() === ''],
@@ -243,12 +268,14 @@ const contexts: Context[] = [
   ...c,
   missing: missingOf(c.settings),
   missing_for_xrechnung: missingForXRechnung(c.settings),
+  missing_for_offers: missingForOffers(c.settings),
 }));
 
 const refreshed = (c: Context): Context => ({
   ...c,
   missing: missingOf(c.settings),
   missing_for_xrechnung: missingForXRechnung(c.settings),
+  missing_for_offers: missingForOffers(c.settings),
 });
 
 const sellerOf = (contextId: number) =>
@@ -348,11 +375,19 @@ const templates: PositionTemplate[] = [
   },
 ];
 
+/** The day an offer dated `issue` is valid until, none without days */
+const validUntil = (issue: string, days: number | null) => {
+  const until = new Date(`${issue}T12:00:00Z`);
+  until.setUTCDate(until.getUTCDate() + (days ?? 0));
+  return days === null ? null : until.toISOString().slice(0, 10);
+};
+
 const draftOf = (customer: Customer): InvoiceDraft => ({
   customer,
   issue_date: '2026-10-01',
   delivery_date: '2026-10-01',
   delivery_end: null,
+  validity_days: null,
   positions: [{ description: 'Beratung', quantity: '10', unit: 'HUR', price: '95,00' }],
   profile: 'en16931',
   buyer_reference: null,
@@ -367,6 +402,7 @@ const invoices: StoredInvoice[] = [
   {
     id: 1,
     context_id: 1,
+    kind: 'invoice',
     number: 'RE-2026-001',
     status: 'exported',
     draft: { ...draftOf(customers[0] as Customer), frozen: settings },
@@ -380,6 +416,7 @@ const invoices: StoredInvoice[] = [
   {
     id: 2,
     context_id: 1,
+    kind: 'invoice',
     number: null,
     status: 'draft',
     draft: draftOf(customers[1] as Customer),
@@ -437,23 +474,25 @@ function check(draft: InvoiceDraft) {
 /** The counters a context has continued from, by period */
 const floors = new Map<string, number>();
 
-/** The pattern and reset of a context, written out for a day */
-function periodOf(contextId: number, day: Day) {
+/** The pattern and reset of a context's kind, written out for a day */
+function periodOf(contextId: number, kind: Kind, day: Day) {
   const settings = (contexts.find(c => c.id === contextId) as Context).settings;
-  const parts = numberParts(settings.number_pattern, settings.fiscal_year_start, day);
-  const period = periodKey(settings.number_reset, settings.fiscal_year_start, day);
-  return { ...parts, period, key: `${contextId}\u001f${period}` };
+  const pattern = kind === 'offer' ? settings.offer.number_pattern : settings.number_pattern;
+  const reset = kind === 'offer' ? settings.offer.number_reset : settings.number_reset;
+  const parts = numberParts(pattern, settings.fiscal_year_start, day);
+  const period = periodKey(reset, settings.fiscal_year_start, day);
+  return { ...parts, period, key: `${contextId}\u001f${kind}\u001f${period}` };
 }
 
 /** The numbers given in the period of a day, the highest counter first, like `Calendar::highest` */
-const numbersOf = (contextId: number, day: Day) => {
-  const { period } = periodOf(contextId, day);
+const numbersOf = (contextId: number, kind: Kind, day: Day) => {
+  const { period } = periodOf(contextId, kind, day);
   return invoices
-    .filter(i => i.context_id === contextId && i.number)
+    .filter(i => i.context_id === contextId && i.kind === kind && i.number)
     .flatMap(i => {
       // a number is read with the pattern of the day it was issued on
       const issued = dayOf(i.draft.issue_date);
-      const { before, after, period: own } = periodOf(contextId, issued);
+      const { before, after, period: own } = periodOf(contextId, kind, issued);
       const digits = (i.number as string).slice(before.length, -after.length || undefined);
       return own === period &&
         i.number?.startsWith(before) &&
@@ -465,12 +504,13 @@ const numbersOf = (contextId: number, day: Day) => {
     .sort((a, b) => b.counter - a.counter);
 };
 
-const highestCounter = (contextId: number, day: Day) => numbersOf(contextId, day)[0]?.counter;
+const highestCounter = (contextId: number, kind: Kind, day: Day) =>
+  numbersOf(contextId, kind, day)[0]?.counter;
 
 /** Mirrors `Store::sequence`, roughly */
-function sequenceOf(contextId: number, day: Day = todayDay()): Sequence {
-  const { before, after, width, key } = periodOf(contextId, day);
-  const highest = numbersOf(contextId, day)[0];
+function sequenceOf(contextId: number, kind: Kind, day: Day = todayDay()): Sequence {
+  const { before, after, width, key } = periodOf(contextId, kind, day);
+  const highest = numbersOf(contextId, kind, day)[0];
   const floor = floors.get(key) ?? 0;
   const counter = Math.max((highest?.counter ?? 0) + 1, floor);
   return {
@@ -480,6 +520,10 @@ function sequenceOf(contextId: number, day: Day = todayDay()): Sequence {
     floor: floor > (highest?.counter ?? 0) ? floor : null,
   };
 }
+
+/** The number a stored document gets: the sequence of its kind on its issue date */
+const numberOf = (stored: StoredInvoice) =>
+  sequenceOf(stored.context_id, stored.kind, dayOf(stored.draft.issue_date)).next_number;
 
 const find = (id: number) => invoices.find(i => i.id === id) as StoredInvoice;
 
@@ -509,22 +553,23 @@ export function installMocks() {
           return `${before}${'1'.padStart(width, '0')}${after}`;
         }
         case 'number_sequence':
-          return sequenceOf(args['contextId']);
+          return sequenceOf(args['contextId'], args['kind']);
         case 'number_sequence_set': {
           const contextId = args['contextId'] as number;
+          const kind = args['kind'] as Kind;
           const next = args['next'] as number;
           const day = todayDay();
-          const counter = highestCounter(contextId, day) ?? 0;
+          const counter = highestCounter(contextId, kind, day) ?? 0;
           if (next <= counter) {
-            throw `${sequenceOf(contextId, day).highest} ist bereits vergeben, der Zähler kann nur auf ${counter + 1} oder höher gesetzt werden.`;
+            throw `${sequenceOf(contextId, kind, day).highest} ist bereits vergeben, der Zähler kann nur auf ${counter + 1} oder höher gesetzt werden.`;
           }
-          const { key } = periodOf(contextId, day);
+          const { key } = periodOf(contextId, kind, day);
           if (next === counter + 1) {
             floors.delete(key);
           } else {
             floors.set(key, next);
           }
-          return sequenceOf(contextId, day);
+          return sequenceOf(contextId, kind, day);
         }
         case 'contexts_list':
           return contexts;
@@ -535,6 +580,7 @@ export function installMocks() {
             archived_at: null,
             missing: [],
             missing_for_xrechnung: [],
+            missing_for_offers: [],
             settings: {
               ...settings,
               seller: {
@@ -548,10 +594,13 @@ export function installMocks() {
           });
         case 'context_save': {
           const context = args['context'] as Context;
-          const { number_pattern, number_reset, fiscal_year_start } = context.settings;
+          const { number_pattern, number_reset, fiscal_year_start, offer } = context.settings;
           // a pattern that cannot count is refused with the reason, like `Pattern::parse`
           numberParts(number_pattern, fiscal_year_start);
-          const problem = resetProblem(number_pattern, number_reset, fiscal_year_start);
+          numberParts(offer.number_pattern, fiscal_year_start);
+          const problem =
+            resetProblem(number_pattern, number_reset, fiscal_year_start) ??
+            resetProblem(offer.number_pattern, offer.number_reset, fiscal_year_start);
           if (problem) {
             throw problem;
           }
@@ -575,9 +624,11 @@ export function installMocks() {
         }
         case 'context_usage': {
           const id = args['id'];
+          const of = (kind: Kind) => invoices.filter(i => i.context_id === id && i.kind === kind);
           return {
-            drafts: invoices.filter(i => i.context_id === id && i.status === 'draft').length,
-            exported: invoices.filter(i => i.context_id === id && i.status === 'exported').length,
+            drafts: of('invoice').filter(i => i.status === 'draft').length,
+            exported: of('invoice').filter(i => i.status === 'exported').length,
+            offers: of('offer').length,
             customers: 0,
             templates: 0,
             layouts: 0,
@@ -593,6 +644,7 @@ export function installMocks() {
           return {
             missing: missingOf(args['settings']),
             missing_for_xrechnung: missingForXRechnung(args['settings']),
+            missing_for_offers: missingForOffers(args['settings']),
           };
         case 'customers_list':
           return customers;
@@ -732,11 +784,15 @@ export function installMocks() {
         }
         case 'invoices_list':
           return invoices
+            .filter(i => i.kind === args['kind'])
             .filter(i => args['contextId'] == null || i.context_id === args['contextId'])
             .filter(i => i.archived_at === null || Boolean(args['withArchived']))
             .map((i): ListEntry => ({
               id: i.id,
               context_id: i.context_id,
+              kind: i.kind,
+              valid_until:
+                i.kind === 'offer' ? validUntil(i.draft.issue_date, i.draft.validity_days) : null,
               seller_name: sellerOf(i.context_id),
               number: i.number,
               status: i.status,
@@ -762,19 +818,28 @@ export function installMocks() {
         }
         case 'invoice_get':
           return find(args['id']);
-        case 'invoice_blank':
+        case 'invoice_blank': {
+          // mirrors `Settings::blank_draft`
+          const kind = args['kind'] as Kind;
+          const own = (contexts.find(c => c.id === args['contextId']) as Context).settings;
           return {
             ...draftOf({ ...(customers[0] as Customer), id: null, name: '' }),
             issue_date: today(),
             delivery_date: today(),
             delivery_end: null,
+            validity_days: kind === 'offer' ? own.offer.validity_days : null,
+            layout: (kind === 'offer' && own.offer.layout) || own.layout,
+            intro: (kind === 'offer' ? own.offer.intro : own.intro) ?? '',
+            closing: (kind === 'offer' ? own.offer.closing : own.closing) ?? '',
           };
+        }
         case 'invoice_save': {
           const draft = args['draft'] as InvoiceDraft;
           const existing = args['id'] === null ? undefined : find(args['id']);
           const stored: StoredInvoice = existing ?? {
             id: invoices.length + 1,
             context_id: (args['contextId'] as number | null) ?? 1,
+            kind: args['kind'] as Kind,
             number: null,
             status: 'draft',
             draft,
@@ -816,15 +881,20 @@ export function installMocks() {
           );
           return null;
         case 'check_invoice':
-          return check(args['draft']);
-        case 'invoice_next_number': {
-          const stored = find(args['id']);
-          return sequenceOf(stored.context_id, dayOf(stored.draft.issue_date)).next_number;
-        }
+          // an offer has no rules to check
+          return args['kind'] === 'offer'
+            ? { ...check(args['draft']), findings: [] }
+            : check(args['draft']);
+        case 'invoice_next_number':
+          return numberOf(find(args['id']));
         case 'invoice_create': {
           const stored = find(args['id']);
           // what the backend refuses: an XRechnung without buyer reference
-          if (stored.draft.profile === 'xrechnung' && !stored.draft.buyer_reference) {
+          if (
+            stored.kind === 'invoice' &&
+            stored.draft.profile === 'xrechnung' &&
+            !stored.draft.buyer_reference
+          ) {
             throw {
               kind: 'invalid',
               findings: [
@@ -837,12 +907,18 @@ export function installMocks() {
             };
           }
           stored.status = 'exported';
-          stored.number = sequenceOf(stored.context_id, dayOf(stored.draft.issue_date)).next_number;
+          stored.number = numberOf(stored);
           stored.exported_at = `${today()} 12:00:00`;
           stored.draft.frozen = settings;
           stored.files = {
-            pdf: { path: `invoices/1/${stored.number}.pdf`, sha256: '0'.repeat(64) },
-            xml: { path: `invoices/1/${stored.number}.xml`, sha256: '0'.repeat(64) },
+            pdf: {
+              path: `${stored.kind === 'offer' ? 'offers' : 'invoices'}/1/${stored.number}.pdf`,
+              sha256: '0'.repeat(64),
+            },
+            xml:
+              stored.kind === 'offer'
+                ? null
+                : { path: `invoices/1/${stored.number}.xml`, sha256: '0'.repeat(64) },
             regenerated: false,
           };
           return { invoice: { ...stored }, warnings: [] };

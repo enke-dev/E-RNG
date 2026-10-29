@@ -19,6 +19,7 @@ Status: idea, not started. Depends on [multi-context.md](multi-context.md) for t
   - a summary with totals per tax rate (helps the Umsatzsteuer-Voranmeldung).
 - Delivery: save dialog, then reveal in Finder. No mail integration.
 - GoBD: only exported (immutable) invoices are included; drafts never.
+- Offers (`kind = 'offer'`, same table) are left out: every query of the export filters `kind = 'invoice'`, also the counts and totals per tax rate.
 - The files come from the invoices' stored originals (PDF and XML written on creation, with their hashes), see [invoice-creation-flow.md](invoice-creation-flow.md): build that first. Invoices created before it have none until their first output regenerates them, the export must do the same for those or list them as "without files".
 
 ### B. DATEV Buchungsstapel CSV (only if the advisor uses it)

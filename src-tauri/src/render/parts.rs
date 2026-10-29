@@ -166,6 +166,7 @@ fn info(view: &InvoiceView, field: InfoField, long: bool) -> Option<InfoRow> {
     let key = match field {
         InfoField::Number => "number",
         InfoField::Date => "date",
+        InfoField::ValidUntil => "valid-until",
         InfoField::ServiceDate => "service-date",
         InfoField::DueDate => "due-date",
         InfoField::BuyerReference => "buyer-reference",
@@ -272,6 +273,14 @@ fn placeholder(view: &InvoiceView, name: &str) -> Option<String> {
         "seller_registration" => Some(view.seller.registration.join("\n")),
         // layouts of older versions say `{footer}` for it
         "legal" | "footer" => Some(view.legal.clone().unwrap_or_default()),
+        // the date an offer is valid until, nothing for a document without one
+        "valid_until" => Some(
+            view.infos
+                .iter()
+                .find(|i| i.key == "valid-until")
+                .map(|i| i.value_long.clone())
+                .unwrap_or_default(),
+        ),
         "bank" => Some(
             view.bank
                 .iter()
@@ -351,12 +360,54 @@ mod tests {
         let invoice = build_invoice(&draft, &settings, "RE-1").unwrap();
         let view = build(
             &invoice,
-            &Branding::for_draft(&draft, &settings, &[]),
+            &Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[]),
             &crate::model::Format::default(),
         );
 
         assert_eq!(placeholder(&view, "legal").as_deref(), Some("HRB 1"));
         assert_eq!(placeholder(&view, "footer").as_deref(), Some("HRB 1"));
+    }
+
+    #[test]
+    fn the_validity_of_an_offer_is_a_placeholder_and_empty_for_a_document_without() {
+        use crate::draft::{build_invoice, fixtures};
+        use crate::model::Kind;
+        use crate::render::view::{build, Branding};
+
+        let settings = fixtures::settings();
+        let view_of = |kind: Kind| {
+            let draft = settings.blank_draft(kind, "2026-10-17");
+            let invoice = build_invoice(
+                &crate::model::InvoiceDraft {
+                    positions: fixtures::draft().positions,
+                    customer: fixtures::customer(),
+                    ..draft.clone()
+                },
+                &settings,
+                "N-1",
+            )
+            .unwrap();
+            build(
+                &invoice,
+                &Branding::for_document(kind, &draft, &settings, &[]),
+                &crate::model::Format::default(),
+            )
+        };
+
+        let offer = view_of(Kind::Offer);
+        assert_eq!(
+            placeholder(&offer, "valid_until").as_deref(),
+            Some("16. November 2026")
+        );
+        assert_eq!(
+            info(&offer, InfoField::ValidUntil, false).map(|row| row.value),
+            Some("16.11.2026".into())
+        );
+        assert_eq!(
+            placeholder(&view_of(Kind::Invoice), "valid_until").as_deref(),
+            Some("")
+        );
+        assert!(info(&view_of(Kind::Invoice), InfoField::ValidUntil, false).is_none());
     }
 
     #[test]

@@ -36,10 +36,11 @@ pub struct FontFile {
     pub path: PathBuf,
 }
 
-/// An invoice that is made with an own layout, what keeps the layout from being deleted.
+/// An invoice or offer that is made with an own layout, what keeps the layout from being deleted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutUsage {
     pub invoice_id: i64,
+    pub kind: crate::model::Kind,
     /// `None` for a draft
     pub number: Option<String>,
     pub customer: String,
@@ -77,6 +78,8 @@ pub enum Align {
 pub enum InfoField {
     Number,
     Date,
+    /// Offers only
+    ValidUntil,
     ServiceDate,
     DueDate,
     BuyerReference,
@@ -361,6 +364,7 @@ pub fn builtin() -> CustomLayout {
                 fields: vec![
                     InfoField::Number,
                     InfoField::Date,
+                    InfoField::ValidUntil,
                     InfoField::ServiceDate,
                     InfoField::DueDate,
                     InfoField::BuyerReference,

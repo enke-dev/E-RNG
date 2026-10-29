@@ -177,7 +177,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       this.customers = customers;
       if (stored === undefined) {
         this.stored = undefined;
-        this.draft = await api.invoiceBlank();
+        this.draft = await api.invoiceBlank(contextId, 'invoice');
         // a new invoice starts with the default layout, it can pick another
         this.draft.layout = settings.layout;
         // and the texts of the settings, which it can change for itself
@@ -205,7 +205,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
       const preview = await api.invoicePreview(
         this.draft,
         this.stored?.id ?? null,
-        this.contextId as number
+        this.contextId as number,
+        'invoice'
       );
       if (request !== this.#previewRequest) {
         return;
@@ -221,7 +222,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   private async runCheck() {
     if (this.draft) {
-      this.check = await api.invoiceCheck(this.contextId as number, this.draft);
+      this.check = await api.invoiceCheck(this.contextId as number, 'invoice', this.draft);
     }
   }
 
@@ -297,6 +298,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     this.stored = await api.invoiceSave(
       this.stored?.id ?? null,
       this.contextId ?? null,
+      'invoice',
       this.draft
     );
     // typed while saving: that is for the next save
@@ -520,7 +522,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         return;
       }
       this.outputting = true;
-      await api.invoiceDraftPdf(this.draft, stored.id, this.contextId as number, target);
+      await api.invoiceDraftPdf(this.draft, stored.id, this.contextId as number, 'invoice', target);
       notify('Der Entwurf ist als PDF gespeichert.');
     } catch (error) {
       notifyError(error);

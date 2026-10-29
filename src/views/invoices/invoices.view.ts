@@ -138,7 +138,11 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
   private async load() {
     try {
       const context = activeContext.get()?.id ?? null;
-      this.entries = await api.invoicesList(this.all ? null : context, this.withArchived);
+      this.entries = await api.invoicesList(
+        this.all ? null : context,
+        'invoice',
+        this.withArchived
+      );
       // the selected invoice may not be in this list (the filter changed): show the newest instead
       const id = Number(this.selected);
       if (this.selected !== '' && Number.isInteger(id) && !this.entries.some(e => e.id === id)) {

@@ -280,7 +280,7 @@ mod tests {
         };
         let draft = fixtures::draft();
         let invoice = build_invoice(&draft, &free, "RE-2026-001").unwrap();
-        let branding = Branding::for_draft(&draft, &free, &[]);
+        let branding = Branding::for_document(crate::model::Kind::Invoice, &draft, &free, &[]);
         let dir = tempfile::tempdir().unwrap();
 
         let produced = produce(
@@ -626,7 +626,7 @@ mod tests {
                     dir.path(),
                     &invoice,
                     profile,
-                    &Branding::for_draft(&draft, &settings, &[]),
+                    &Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[]),
                 )
                 .unwrap();
 

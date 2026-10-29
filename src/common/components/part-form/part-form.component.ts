@@ -22,6 +22,7 @@ import styles from './part-form.component.css';
 const FIELDS: [InfoField, string][] = [
   ['number', 'Rechnungsnummer'],
   ['date', 'Datum'],
+  ['valid-until', 'Gültig bis (Angebote)'],
   ['service-date', 'Leistungsdatum'],
   ['due-date', 'Fällig am'],
   ['buyer-reference', 'Käuferreferenz'],

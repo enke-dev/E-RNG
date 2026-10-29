@@ -1,18 +1,23 @@
 //! The originals of invoices: the PDF and the XML that were validated when an invoice was created
 //! stay in the app's data folder, with a hash each. What is handed out later is these files, so what
-//! was sent is what is archived.
+//! was sent is what is archived. An offer keeps its PDF only, in a folder of its own.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 
-use crate::model::{InvoiceFiles, StoredFile};
+use crate::model::{InvoiceFiles, Kind, StoredFile};
 use crate::pipeline::{safe_name, Produced};
 
-/// Where the originals of a context's invoices live, relative to the data folder
-fn folder(context_id: i64) -> PathBuf {
-    PathBuf::from("invoices").join(context_id.to_string())
+/// Where the originals of a context's documents of a kind live, relative to the data folder. Offers
+/// are kept apart so equal names of the two kinds cannot overwrite each other.
+fn folder(kind: Kind, context_id: i64) -> PathBuf {
+    PathBuf::from(match kind {
+        Kind::Invoice => "invoices",
+        Kind::Offer => "offers",
+    })
+    .join(context_id.to_string())
 }
 
 fn sha256(path: &Path) -> Result<String> {
@@ -42,16 +47,9 @@ pub fn store(
     regenerated: bool,
 ) -> Result<InvoiceFiles> {
     let name = safe_name(number);
-    let pdf = keep(
-        data,
-        folder(context_id).join(format!("{name}.pdf")),
-        &produced.pdf,
-    )?;
-    let xml = match keep(
-        data,
-        folder(context_id).join(format!("{name}.xml")),
-        &produced.xml,
-    ) {
+    let folder = folder(Kind::Invoice, context_id);
+    let pdf = keep(data, folder.join(format!("{name}.pdf")), &produced.pdf)?;
+    let xml = match keep(data, folder.join(format!("{name}.xml")), &produced.xml) {
         Ok(xml) => xml,
         Err(error) => {
             let _ = std::fs::remove_file(data.join(&pdf.path));
@@ -60,14 +58,30 @@ pub fn store(
     };
     Ok(InvoiceFiles {
         pdf,
-        xml,
+        xml: Some(xml),
         regenerated,
+    })
+}
+
+/// Keeps the PDF of a created offer, its only file
+pub fn store_pdf(
+    data: &Path,
+    kind: Kind,
+    context_id: i64,
+    number: &str,
+    pdf: &Path,
+) -> Result<InvoiceFiles> {
+    let relative = folder(kind, context_id).join(format!("{}.pdf", safe_name(number)));
+    Ok(InvoiceFiles {
+        pdf: keep(data, relative, pdf)?,
+        xml: None,
+        regenerated: false,
     })
 }
 
 /// Deletes the files again, for an invoice that could not be created after all
 pub fn discard(data: &Path, files: &InvoiceFiles) {
-    for file in [&files.pdf, &files.xml] {
+    for file in [Some(&files.pdf), files.xml.as_ref()].into_iter().flatten() {
         let _ = std::fs::remove_file(data.join(&file.path));
     }
 }
@@ -95,11 +109,17 @@ pub fn output(
     pdf_target: Option<&Path>,
     xml_target: Option<&Path>,
 ) -> Result<()> {
-    let wanted: Vec<(PathBuf, &Path)> = [(&files.pdf, pdf_target), (&files.xml, xml_target)]
-        .into_iter()
-        .filter_map(|(file, target)| target.map(|t| (file, t)))
-        .map(|(file, target)| Ok((verified(data, file)?, target)))
-        .collect::<Result<_>>()?;
+    if xml_target.is_some() && files.xml.is_none() {
+        bail!("Es gibt keine XML-Datei dazu.");
+    }
+    let wanted: Vec<(PathBuf, &Path)> = [
+        (Some(&files.pdf), pdf_target),
+        (files.xml.as_ref(), xml_target),
+    ]
+    .into_iter()
+    .filter_map(|(file, target)| Some((file?, target?)))
+    .map(|(file, target)| Ok((verified(data, file)?, target)))
+    .collect::<Result<_>>()?;
     let mut written: Vec<&Path> = Vec::new();
     for (from, to) in wanted {
         if let Err(error) = std::fs::copy(&from, to) {
@@ -130,6 +150,10 @@ mod tests {
         }
     }
 
+    fn xml_of(files: &InvoiceFiles) -> &StoredFile {
+        files.xml.as_ref().expect("an invoice has an XML")
+    }
+
     #[test]
     fn the_originals_are_kept_by_context_and_number() {
         let work = tempfile::tempdir().unwrap();
@@ -143,7 +167,7 @@ mod tests {
                 .to_string_lossy()
                 .as_ref()
         );
-        assert!(data.path().join(&files.xml.path).is_file());
+        assert!(data.path().join(&xml_of(&files).path).is_file());
         assert_eq!(files.pdf.sha256.len(), 64);
         assert!(!files.regenerated);
     }
@@ -176,7 +200,7 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let out = tempfile::tempdir().unwrap();
         let files = store(data.path(), 1, "RE-1", &produced(work.path()), false).unwrap();
-        std::fs::write(data.path().join(&files.xml.path), b"changed").unwrap();
+        std::fs::write(data.path().join(&xml_of(&files).path), b"changed").unwrap();
 
         let error = output(
             data.path(),
@@ -221,6 +245,44 @@ mod tests {
         discard(data.path(), &files);
 
         assert!(!data.path().join(&files.pdf.path).exists());
-        assert!(!data.path().join(&files.xml.path).exists());
+        assert!(!data.path().join(&xml_of(&files).path).exists());
+    }
+
+    #[test]
+    fn an_offer_keeps_its_pdf_only_in_a_folder_of_its_own() {
+        let work = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let pdf = produced(work.path()).pdf;
+
+        let files = store_pdf(data.path(), Kind::Offer, 3, "AN 2026/001", &pdf).unwrap();
+
+        assert_eq!(
+            files.pdf.path,
+            PathBuf::from("offers/3/AN_2026-001.pdf")
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert_eq!(files.xml, None);
+        assert_eq!(files.pdf.sha256.len(), 64);
+        assert!(!data.path().join("invoices").exists());
+
+        // handed out as it was kept, and there is no XML to hand out
+        output(data.path(), &files, Some(&out.path().join("a.pdf")), None).unwrap();
+        assert_eq!(
+            std::fs::read(out.path().join("a.pdf")).unwrap(),
+            b"pdf bytes"
+        );
+        assert!(output(
+            data.path(),
+            &files,
+            Some(&out.path().join("b.pdf")),
+            Some(&out.path().join("b.xml"))
+        )
+        .is_err());
+        assert!(!out.path().join("b.pdf").exists());
+
+        discard(data.path(), &files);
+        assert!(!data.path().join(&files.pdf.path).exists());
     }
 }

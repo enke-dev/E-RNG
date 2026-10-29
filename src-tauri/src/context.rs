@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::draft::decimal;
-use crate::model::Settings;
+use crate::model::{Kind, Settings};
 use crate::numbering::Pattern;
 
 /// Palettes of the UI library, `wa-brand-<name>` re-brands the whole UI. The first is the default.
@@ -28,6 +28,9 @@ pub struct Context {
     /// What only the `XRechnung` profile asks for on top
     #[serde(default)]
     pub missing_for_xrechnung: Vec<String>,
+    /// What is missing before an offer can be issued, less than for an invoice
+    #[serde(default)]
+    pub missing_for_offers: Vec<String>,
 }
 
 impl Context {
@@ -39,6 +42,7 @@ impl Context {
             settings,
             missing: Vec::new(),
             missing_for_xrechnung: Vec::new(),
+            missing_for_offers: Vec::new(),
         }
     }
 
@@ -46,15 +50,19 @@ impl Context {
     pub fn checked(mut self) -> Self {
         self.missing = self.settings.missing();
         self.missing_for_xrechnung = self.settings.missing_for_xrechnung();
+        self.missing_for_offers = self.settings.missing_for_offers();
         self
     }
 }
 
 /// What is missing in settings as they are typed, before they are saved
+// the names are those of the same fields of `Context`, the form reads both alike
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Missing {
     pub missing: Vec<String>,
     pub missing_for_xrechnung: Vec<String>,
+    pub missing_for_offers: Vec<String>,
 }
 
 /// What happens with the customers, templates and layouts that belong to a context that is removed
@@ -72,8 +80,10 @@ pub enum Disposition {
 /// What belongs to a context, so the user knows what removing or archiving touches
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ContextUsage {
+    /// Drafts and created invoices, offers are counted apart
     pub drafts: usize,
     pub exported: usize,
+    pub offers: usize,
     pub customers: usize,
     pub templates: usize,
     pub layouts: usize,
@@ -83,23 +93,29 @@ fn blank(text: &str) -> bool {
     text.trim().is_empty()
 }
 
+/// The name and address of the seller, what every document needs
+fn need_seller_and_address(settings: &Settings, need: &mut impl FnMut(&str, bool)) {
+    let seller = &settings.seller;
+    let address = &seller.address;
+    need("seller.name", blank(&seller.name));
+    need("seller.address.street", blank(&address.street));
+    need("seller.address.post_code", blank(&address.post_code));
+    need("seller.address.city", blank(&address.city));
+    need("seller.address.country", address.country.trim().len() != 2);
+}
+
 impl Settings {
     /// Fields that must be filled in before an invoice can be issued, the same things the rule
     /// check refuses later (see `invoice::german`), found early for the form. Paths like the form's.
     pub fn missing(&self) -> Vec<String> {
         let seller = &self.seller;
-        let address = &seller.address;
         let mut missing = Vec::new();
         let mut need = |field: &str, absent: bool| {
             if absent {
                 missing.push(field.to_owned());
             }
         };
-        need("seller.name", blank(&seller.name));
-        need("seller.address.street", blank(&address.street));
-        need("seller.address.post_code", blank(&address.post_code));
-        need("seller.address.city", blank(&address.city));
-        need("seller.address.country", address.country.trim().len() != 2);
+        need_seller_and_address(self, &mut need);
         need(
             "seller.vat_id",
             seller.vat_id.as_deref().is_none_or(blank)
@@ -110,7 +126,7 @@ impl Settings {
             "number_pattern",
             Pattern::parse(&self.number_pattern).is_err(),
         );
-        need("number_reset", self.reset_problem().is_some());
+        need("number_reset", self.reset_problem(Kind::Invoice).is_some());
         if self.vat_free() {
             need("vat_note", blank(&self.vat_note));
         } else {
@@ -121,6 +137,27 @@ impl Settings {
                 }),
             );
         }
+        missing
+    }
+
+    /// What an offer needs: the seller's name and address and a pattern for its numbers, no bank
+    /// account, tax id or contact
+    pub fn missing_for_offers(&self) -> Vec<String> {
+        let mut missing = Vec::new();
+        let mut need = |field: &str, absent: bool| {
+            if absent {
+                missing.push(field.to_owned());
+            }
+        };
+        need_seller_and_address(self, &mut need);
+        need(
+            "offer.number_pattern",
+            Pattern::parse(&self.offer.number_pattern).is_err(),
+        );
+        need(
+            "offer.number_reset",
+            self.reset_problem(Kind::Offer).is_some(),
+        );
         missing
     }
 
@@ -213,6 +250,59 @@ mod tests {
 
         only_tax.seller.tax_number = Some("  ".into());
         assert_eq!(only_tax.missing(), ["seller.vat_id"]);
+    }
+
+    #[test]
+    fn an_offer_only_needs_the_name_and_address_of_the_seller() {
+        let mut bare = Settings::default();
+        assert_eq!(
+            bare.missing_for_offers(),
+            [
+                "seller.name",
+                "seller.address.street",
+                "seller.address.post_code",
+                "seller.address.city",
+            ]
+        );
+
+        bare.seller = settings().seller;
+        bare.seller.iban.clear();
+        bare.seller.vat_id = None;
+        bare.seller.contact_name.clear();
+        assert_eq!(bare.missing_for_offers(), Vec::<String>::new());
+        // an invoice would still miss them
+        assert_eq!(bare.missing(), ["seller.vat_id", "seller.iban"]);
+        assert_eq!(
+            Context::new(bare, "").checked().missing_for_offers,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_reset_the_pattern_cannot_tell_apart_is_reported_per_kind() {
+        let mut monthly_offers = settings();
+        monthly_offers.offer.number_reset = crate::numbering::Reset::Month;
+
+        assert_eq!(monthly_offers.missing_for_offers(), ["offer.number_reset"]);
+        assert_eq!(monthly_offers.missing(), Vec::<String>::new());
+
+        let mut never = monthly_offers;
+        never.offer.number_reset = crate::numbering::Reset::Never;
+        never.offer.number_pattern = "[AN-]NNN".into();
+        assert_eq!(never.missing_for_offers(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_broken_offer_pattern_blocks_offers_and_not_invoices() {
+        let mut broken = settings();
+        broken.offer.number_pattern = "AB".into();
+
+        assert_eq!(broken.missing_for_offers(), ["offer.number_pattern"]);
+        assert_eq!(broken.missing(), Vec::<String>::new());
+        assert_eq!(
+            Context::new(broken, "").checked().missing_for_offers,
+            ["offer.number_pattern"]
+        );
     }
 
     #[test]

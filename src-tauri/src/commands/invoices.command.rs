@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::draft::{build_invoice, totals};
-use crate::model::{InvoiceDraft, ListEntry, StoredInvoice};
+use crate::model::{InvoiceDraft, Kind, ListEntry, StoredInvoice};
 use crate::store::Store;
 use crate::utils::{today, CommandError, CommandResult};
 
@@ -9,10 +9,11 @@ use crate::utils::{today, CommandError, CommandResult};
 pub fn invoices_list(
     store: State<'_, Store>,
     context_id: Option<i64>,
+    kind: Kind,
     with_archived: bool,
 ) -> CommandResult<Vec<ListEntry>> {
     store
-        .invoices(context_id, with_archived)
+        .invoices(context_id, kind, with_archived)
         .map_err(CommandError::from)
 }
 
@@ -21,10 +22,15 @@ pub fn invoice_get(store: State<'_, Store>, id: i64) -> CommandResult<StoredInvo
     store.invoice(id).map_err(CommandError::from)
 }
 
-/// A blank draft dated today, not stored until it is saved.
+/// A blank draft of a kind dated today, with the layout, texts and validity the settings of the
+/// context give it, not stored until it is saved.
 #[tauri::command]
-pub fn invoice_blank() -> InvoiceDraft {
-    InvoiceDraft::blank(&today())
+pub fn invoice_blank(
+    store: State<'_, Store>,
+    context_id: i64,
+    kind: Kind,
+) -> CommandResult<InvoiceDraft> {
+    Ok(store.settings(context_id)?.blank_draft(kind, &today()))
 }
 
 /// Marks an exported invoice as paid on a date (ISO), or as open again.
@@ -39,14 +45,15 @@ pub fn invoice_set_paid(
         .map_err(CommandError::from)
 }
 
-/// Creates (`id` is `None`, under `context_id`) or updates a draft, which stays under the context it
-/// was made under. Whatever state the form is in is saved, the total shown in the list is kept only
-/// while the draft can be calculated.
+/// Creates (`id` is `None`, under `context_id`, of `kind`) or updates a draft, which stays under the
+/// context and kind it was made under. Whatever state the form is in is saved, the total shown in
+/// the list is kept only while the draft can be calculated.
 #[tauri::command]
 pub fn invoice_save(
     store: State<'_, Store>,
     id: Option<i64>,
     context_id: Option<i64>,
+    kind: Kind,
     draft: InvoiceDraft,
 ) -> CommandResult<StoredInvoice> {
     let context_id = match (id, context_id) {
@@ -59,7 +66,7 @@ pub fn invoice_save(
         .ok()
         .map(|invoice| totals(&invoice).gross);
     store
-        .save_draft(id, context_id, &draft, total.as_deref())
+        .save_draft(id, context_id, kind, &draft, total.as_deref())
         .map_err(CommandError::from)
 }
 
