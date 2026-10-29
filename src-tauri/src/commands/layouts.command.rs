@@ -40,6 +40,11 @@ pub fn layouts_custom(
 
 #[tauri::command]
 pub fn layout_save(store: State<'_, Store>, layout: CustomLayout) -> CommandResult<CustomLayout> {
+    save(&store, layout)
+}
+
+/// What `layout_save` does with the store
+pub(crate) fn save(store: &Store, layout: CustomLayout) -> CommandResult<CustomLayout> {
     if layout.name.trim().is_empty() {
         return Err("Bitte dem Layout einen Namen geben.".into());
     }
@@ -311,8 +316,23 @@ pub async fn layout_preview(
     let settings = context_id
         .and_then(|id| store.settings(id).ok())
         .unwrap_or_default();
-    let draft = sample(&settings, layout.as_ref());
-    let invoice = match build_invoice(&for_preview(&draft), &settings, "RE-BEISPIEL") {
+    let sidecars = Sidecars::locate(&app)?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        render_sample(&sidecars, &settings, layout.as_ref(), guides)
+    })
+    .await?
+}
+
+/// The sample invoice in the layout, rendered; what `layout_preview` does without the app
+pub(crate) fn render_sample(
+    sidecars: &Sidecars,
+    settings: &crate::model::Settings,
+    layout: Option<&CustomLayout>,
+    guides: bool,
+) -> CommandResult<Preview> {
+    let draft = sample(settings, layout);
+    let invoice = match build_invoice(&for_preview(&draft), settings, "RE-BEISPIEL") {
         Ok(invoice) => invoice,
         Err(problems) => {
             return Ok(Preview {
@@ -324,15 +344,10 @@ pub async fn layout_preview(
     };
     let branding = Branding {
         guides,
-        ..Branding::for_document(Kind::Invoice, &draft, &settings, &[])
+        ..Branding::for_document(Kind::Invoice, &draft, settings, &[])
     };
-    let sidecars = Sidecars::locate(&app)?;
-
-    let (pages, parts) = tauri::async_runtime::spawn_blocking(move || {
-        let dir = tempfile::tempdir()?;
-        render::render_sample(&sidecars, dir.path(), &invoice, &branding)
-    })
-    .await??;
+    let dir = tempfile::tempdir()?;
+    let (pages, parts) = render::render_sample(sidecars, dir.path(), &invoice, &branding)?;
     Ok(Preview {
         pages,
         problems: Vec::new(),

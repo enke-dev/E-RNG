@@ -23,6 +23,7 @@ import type { Align, InfoField, Part } from '../../utils/api.utils.js';
 import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { text } from '../../utils/form.utils.js';
+import { cleanInvisible, invisibleIn } from '../../utils/invisible.utils.js';
 import { notifyError } from '../../utils/notify.utils.js';
 import styles from './part-form.component.css';
 
@@ -204,6 +205,33 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
     });
   }
 
+  /** Says which invisible characters a text has (a paste brings them) and offers to clean them away */
+  private invisible(part: { text: string }) {
+    const found = invisibleIn(part.text);
+    if (found.length === 0) {
+      return nothing;
+    }
+    return html`
+      <div class="invisible">
+        <span>
+          Enthält unsichtbare Zeichen:
+          ${found.map(({ label, count }) => `${label} (${count})`).join(', ')}. Die Vorschau mit
+          Hilfslinien markiert sie.
+        </span>
+        <wa-button
+          appearance="outlined"
+          size="small"
+          title="Geschützte und andere Leerzeichen werden normale, Zeichen ohne Breite entfallen"
+          @click="${() => {
+            part.text = cleanInvisible(part.text);
+            this.changed();
+          }}"
+          >Ersetzen / Entfernen</wa-button
+        >
+      </div>
+    `;
+  }
+
   private async chooseImage() {
     if (this.item.kind !== 'image') {
       return;
@@ -324,6 +352,7 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
               this.changed();
             }}"
           ></wa-textarea>
+          ${this.invisible(part)}
           <div class="insert">
             <wa-dropdown
               @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) =>
@@ -384,6 +413,7 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
               this.changed();
             }}"
           ></wa-input>
+          ${this.invisible(part)}
           <wa-switch
             ?checked="${part.several_pages_only ?? false}"
             hint="Ein Dokument mit einer einzigen Seite bekommt keine Seitenzahl."

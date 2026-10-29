@@ -5,6 +5,7 @@
 use anyhow::Result;
 use serde::Serialize;
 
+use super::invisible::Mark;
 use super::view::{InvoiceView, PageView};
 use crate::layout::{
     Align, Anchor, CustomLayout, ImageFile, InfoField, PageSetup, Part, PartContent,
@@ -19,6 +20,9 @@ pub struct Run {
     pub text: String,
     pub bold: bool,
     pub italic: bool,
+    /// What the sample draws with the text when the guides are on, never set otherwise
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mark: Option<Mark>,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +66,9 @@ pub enum PartViewContent {
         align: Align,
         several_pages_only: bool,
         color: Option<String>,
+        /// The text with its characters marked, only with the guides on
+        #[serde(skip_serializing_if = "Option::is_none")]
+        marked: Option<Vec<Run>>,
     },
     Line {
         thickness: f64,
@@ -101,6 +108,7 @@ pub fn runs(text: &str) -> Vec<Line> {
                         text: std::mem::take(current),
                         bold,
                         italic,
+                        mark: None,
                     });
                 }
             };
@@ -159,6 +167,7 @@ fn fill_column(
                         text: text.to_owned(),
                         bold: run.bold,
                         italic: run.italic,
+                        mark: None,
                     });
                 }
             };
@@ -323,6 +332,7 @@ fn part_view(
             align: *align,
             several_pages_only: *several_pages_only,
             color: color.clone(),
+            marked: None,
         },
         PartContent::Line { thickness, color } => PartViewContent::Line {
             thickness: *thickness,

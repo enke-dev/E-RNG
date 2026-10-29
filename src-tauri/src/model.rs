@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::invisible::clean;
 use crate::invoice::ProfileKind;
 
 fn germany() -> String {
@@ -16,6 +17,19 @@ pub struct Address {
     pub city: String,
     #[serde(default = "germany")]
     pub country: String,
+}
+
+impl Address {
+    /// Every field one line without what a paste brings along, see `Seller::cleaned`
+    pub fn cleaned(self) -> Self {
+        let line = |text: String| clean(&text, true);
+        Self {
+            street: line(self.street),
+            post_code: line(self.post_code),
+            city: line(self.city),
+            country: line(self.country),
+        }
+    }
 }
 
 impl Default for Address {
@@ -51,6 +65,32 @@ pub struct Seller {
     pub bank_name: Option<String>,
     /// Register entry, managing directors etc., shown in the footer
     pub legal_info: Option<String>,
+}
+
+impl Seller {
+    /// Without what a paste brings along and cannot be seen: no-break spaces, zero-width
+    /// characters, line separators. Only the legal information has more than one line.
+    pub fn cleaned(self) -> Self {
+        let line = |text: String| clean(&text, true);
+        let some_line = |text: Option<String>| text.map(line);
+        Self {
+            name: line(self.name),
+            address: self.address.cleaned(),
+            vat_id: some_line(self.vat_id),
+            tax_number: some_line(self.tax_number),
+            contact_name: line(self.contact_name),
+            phone: line(self.phone),
+            email: line(self.email),
+            mobile: some_line(self.mobile),
+            fax: some_line(self.fax),
+            website: some_line(self.website),
+            iban: line(self.iban),
+            bic: some_line(self.bic),
+            account_holder: some_line(self.account_holder),
+            bank_name: some_line(self.bank_name),
+            legal_info: self.legal_info.map(|text| clean(&text, false)),
+        }
+    }
 }
 
 /// The kinds of document that are written like an invoice and numbered on their own
@@ -345,6 +385,21 @@ pub struct Customer {
     pub email: Option<String>,
     /// Leitweg-ID for public customers, copied into new invoices as buyer reference
     pub buyer_reference: Option<String>,
+}
+
+impl Customer {
+    /// Every field one line without what a paste brings along, see `Seller::cleaned`
+    pub fn cleaned(self) -> Self {
+        let some_line = |text: Option<String>| text.map(|text| clean(&text, true));
+        Self {
+            name: clean(&self.name, true),
+            address: self.address.cleaned(),
+            vat_id: some_line(self.vat_id),
+            email: some_line(self.email),
+            buyer_reference: some_line(self.buyer_reference),
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -759,6 +814,61 @@ mod tests {
         assert!(!serde_json::to_string(&stored("RE-"))
             .unwrap()
             .contains("number_prefix"));
+    }
+
+    #[test]
+    fn a_cleaned_seller_has_one_line_per_field_but_the_legal_information() {
+        let seller = Seller {
+            name: "Muster\u{00A0}GmbH\u{200B}".into(),
+            address: Address {
+                street: "Musterstr.\u{2028}1".into(),
+                ..Address::default()
+            },
+            phone: "+49\u{202F}221\t1".into(),
+            iban: "\u{FEFF}DE89 3704".into(),
+            mobile: Some("0171\u{2011}5".into()),
+            legal_info: Some("HRB 1\u{2029}GF: A\nUSt".into()),
+            ..Seller::default()
+        }
+        .cleaned();
+
+        assert_eq!(seller.name, "Muster GmbH");
+        assert_eq!(seller.address.street, "Musterstr. 1");
+        assert_eq!(seller.address.country, "DE");
+        assert_eq!(seller.phone, "+49 221 1");
+        assert_eq!(seller.iban, "DE89 3704");
+        assert_eq!(seller.mobile.as_deref(), Some("0171-5"));
+        assert_eq!(seller.fax, None);
+        assert_eq!(seller.legal_info.as_deref(), Some("HRB 1\nGF: A\nUSt"));
+    }
+
+    #[test]
+    fn a_cleaned_customer_has_one_line_per_field() {
+        let customer = Customer {
+            id: Some(4),
+            context_id: Some(2),
+            name: "Beispiel\u{00A0}Kunde\u{200B} GmbH".into(),
+            address: Address {
+                street: "Musterweg\u{2028}1".into(),
+                post_code: "\u{FEFF}12345".into(),
+                city: "Musterstadt".into(),
+                country: "DE".into(),
+            },
+            vat_id: None,
+            email: Some("rechnung@kunde.example\u{200B}".into()),
+            buyer_reference: Some("04011000\u{2011}1234512345\u{2011}06".into()),
+        }
+        .cleaned();
+
+        assert_eq!(customer.name, "Beispiel Kunde GmbH");
+        assert_eq!(customer.address.street, "Musterweg 1");
+        assert_eq!(customer.address.post_code, "12345");
+        assert_eq!(customer.email.as_deref(), Some("rechnung@kunde.example"));
+        assert_eq!(
+            customer.buyer_reference.as_deref(),
+            Some("04011000-1234512345-06")
+        );
+        assert_eq!((customer.id, customer.context_id), (Some(4), Some(2)));
     }
 
     #[test]

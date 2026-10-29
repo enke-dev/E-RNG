@@ -25,7 +25,7 @@ pub struct Preview {
 /// The invoice the form makes now, with stand-ins for what is missing, and how it looks. A draft
 /// is shown as one: its title says so and the number is only the pattern (`RE-2026-###`), it gets
 /// a real one when it is created. A stored document is shown as the kind it is.
-fn shown(
+pub(crate) fn shown(
     store: &Store,
     draft: &InvoiceDraft,
     id: Option<i64>,

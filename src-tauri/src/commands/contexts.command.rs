@@ -19,9 +19,11 @@ pub fn contexts_list(store: State<'_, Store>) -> CommandResult<Vec<Context>> {
 #[tauri::command]
 pub fn context_save(
     store: State<'_, Store>,
-    context: Context,
+    mut context: Context,
     units: Option<Vec<UnitDef>>,
 ) -> CommandResult<Context> {
+    // what a paste brings along ends up in the XML and the PDF, so it goes before saving
+    context.settings.seller = context.settings.seller.cleaned();
     let archived = store.all_custom_layouts()?.iter().any(|l| {
         l.archived
             && [

@@ -2,6 +2,7 @@
 //! are not added here, that is what the packaging step does with the result.
 
 pub(crate) mod format;
+mod invisible;
 mod layouts;
 mod parts;
 mod view;
@@ -32,7 +33,7 @@ fn stage(dir: &Path, invoice: &Invoice, branding: &Branding) -> Result<()> {
 
     let mut data = view::build(invoice, branding, &layout.format);
     let mut staged = 0;
-    data.page = view::PageView {
+    let mut page = view::PageView {
         guides: branding.guides,
         marks: branding.marks,
         ..parts::page_view(&layout, &data, &mut |image| {
@@ -40,6 +41,11 @@ fn stage(dir: &Path, invoice: &Invoice, branding: &Branding) -> Result<()> {
             stage_image(image, staged, dir)
         })?
     };
+    // the marks of invisible characters belong to the guides, no other output gets them
+    if branding.guides {
+        invisible::reveal_page(&mut page);
+    }
+    data.page = page;
 
     std::fs::write(dir.join("invoice.typ"), layouts::STANDARD_SOURCE)?;
     std::fs::write(dir.join("prelude.typ"), layouts::PRELUDE)?;
@@ -78,14 +84,20 @@ fn compile(sidecars: &Sidecars, dir: &Path, options: &[&str], output: &str) -> R
     typst(sidecars, dir, &args).map(drop)
 }
 
-/// Writes template, data and logo into `dir` and compiles `invoice.pdf` there.
+/// Writes template, data and logo into `dir` and compiles `invoice.pdf` there. A document has
+/// neither guides nor marks, whatever the branding asks for.
 pub fn render_pdf(
     sidecars: &Sidecars,
     dir: &Path,
     invoice: &Invoice,
     branding: &Branding,
 ) -> Result<PathBuf> {
-    stage(dir, invoice, branding)?;
+    let branding = Branding {
+        guides: false,
+        marks: false,
+        ..branding.clone()
+    };
+    stage(dir, invoice, &branding)?;
     compile(sidecars, dir, &["--pdf-standard", "a-3b"], "invoice.pdf")?;
     Ok(dir.join("invoice.pdf"))
 }
@@ -202,4 +214,101 @@ fn stage_image(image: &ImageFile, number: usize, dir: &Path) -> Result<String> {
     std::fs::copy(&image.path, dir.join(&name))
         .with_context(|| format!("cannot read the image {}", image.path.display()))?;
     Ok(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::draft::{build_invoice, fixtures};
+    use crate::layout::PartContent;
+    use serde_json::Value;
+
+    /// A layout with a text of the characters a paste brings along, and a page number
+    fn pasted() -> CustomLayout {
+        let mut layout = layout::builtin();
+        let pasted = layout
+            .page
+            .parts
+            .iter_mut()
+            .find_map(|part| match &mut part.content {
+                PartContent::Text { text, .. } => Some(text),
+                _ => None,
+            });
+        *pasted.expect("a text part") = "Tel.\t0221\u{00A0}12\u{200B}3 4\nzweite Zeile".into();
+        layout
+    }
+
+    /// `data.json` of the staged invoice
+    fn staged(guides: bool) -> Value {
+        let settings = fixtures::settings();
+        let draft = fixtures::draft();
+        let invoice = build_invoice(&draft, &settings, "RE-1").unwrap();
+        let branding = Branding {
+            guides,
+            custom: Some(pasted()),
+            ..Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[])
+        };
+        let dir = tempfile::tempdir().unwrap();
+        stage(dir.path(), &invoice, &branding).unwrap();
+        serde_json::from_slice(&std::fs::read(dir.path().join("data.json")).unwrap()).unwrap()
+    }
+
+    /// The text of every line of every text part, columns divided by a tab: what a mark must not change
+    fn texts(data: &Value) -> Vec<String> {
+        data["page"]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|part| part["kind"] == "text")
+            .flat_map(|part| part["lines"].as_array().unwrap())
+            .map(|line| {
+                line.as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|column| {
+                        column
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|run| run["text"].as_str().unwrap())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn marks_of_invisible_characters_are_made_for_the_guides_only() {
+        let plain = staged(false);
+        let guided = staged(true);
+
+        // without the guides nothing says mark: the template has nothing to draw
+        let plain_json = plain.to_string();
+        assert!(!plain_json.contains(r#""mark""#), "a mark without guides");
+        assert!(
+            !plain_json.contains(r#""marked""#),
+            "a marked text without guides"
+        );
+        assert_eq!(plain["page"]["guides"], false);
+
+        // with them the same text is there, now with a mark for each character
+        let guided_json = guided.to_string();
+        assert_eq!(guided["page"]["guides"], true);
+        for expected in [
+            r#""kind":"space""#,
+            r#""kind":"column""#,
+            r#""kind":"line-end""#,
+            r#""label":"NBSP""#,
+            r#""label":"ZWSP""#,
+            r#""marked""#,
+        ] {
+            assert!(guided_json.contains(expected), "{expected} is missing");
+        }
+        assert_eq!(texts(&plain), texts(&guided));
+        assert!(texts(&plain)
+            .iter()
+            .any(|line| line == "Tel.\t0221\u{00A0}12\u{200B}3 4"));
+    }
 }

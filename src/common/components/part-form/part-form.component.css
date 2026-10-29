@@ -68,6 +68,16 @@ wa-textarea::part(textarea) {
   gap: var(--wa-space-s);
 }
 
+/* the note under a text with invisible characters: small print like a hint, the button beside it */
+.invisible {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wa-space-s);
+  font-size: var(--wa-font-size-s);
+  color: var(--wa-color-warning-on-quiet);
+}
+
 .warning {
   color: var(--wa-color-warning-on-quiet);
 }

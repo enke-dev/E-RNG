@@ -2,6 +2,9 @@ mod commands;
 mod context;
 mod creation;
 mod draft;
+#[cfg(test)]
+mod end_to_end;
+mod invisible;
 mod invoice;
 mod layout;
 mod layout_bundle;

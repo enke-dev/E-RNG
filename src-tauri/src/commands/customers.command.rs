@@ -11,7 +11,10 @@ pub fn customers_list(store: State<'_, Store>, context_id: i64) -> CommandResult
 
 #[tauri::command]
 pub fn customer_save(store: State<'_, Store>, customer: Customer) -> CommandResult<Customer> {
-    store.save_customer(&customer).map_err(CommandError::from)
+    // what a paste brings along ends up in the XML and the PDF, so it goes before saving
+    store
+        .save_customer(&customer.cleaned())
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]

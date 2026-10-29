@@ -5,6 +5,8 @@
 #let red = rgb("#e5484d")
 #let cyan = rgb("#12a5c0")
 #let orange = rgb("#f5a524")
+// the marks of invisible characters in the sample, see `reveal` in render/invisible.rs
+#let violet = rgb("#8e4ec6")
 
 // the font of an own layout in front of the one the layout is made for
 #let font-of(d, own) = if d.page.font != none { (d.page.font, own) } else { own }
@@ -40,6 +42,41 @@
 // the color a part was given (`#rrggbb`), else the one its kind has
 #let color-of(part, default) = if part.color == none { default } else { rgb(part.color) }
 
+// The marks are made of a font Typst brings along, so the font of a layout needs none of the glyphs.
+// All of them take no room of their own where they can avoid it, the text keeps its widths and its
+// line height (the edges of the glyphs are the baseline): a dot is drawn over a space, an arrow and a
+// pilcrow hang behind the end of a column or line.
+#let mark-font = "DejaVu Sans Mono"
+#let glyph-text(size, body) = text(font: mark-font, fill: violet, weight: "bold", size: size, top-edge: "baseline", bottom-edge: "baseline", body)
+
+#let space-dot() = context {
+  let dot = glyph-text(1.3em)[·]
+  let gap = measure[a a].width - measure[aa].width
+  box(width: 0pt, move(dx: (gap - measure(dot).width) / 2, dy: 0.12em, dot))
+}
+
+#let hanging-glyph(glyph) = box(width: 0pt, move(dx: 0.1em, glyph-text(1em, glyph)))
+
+// a label for a character that is invisible or looks like another; unlike the others it has a width
+#let badge(label) = box(
+  fill: violet,
+  radius: 1pt,
+  inset: (x: 1.5pt),
+  outset: (y: 1pt),
+  text(font: mark-font, size: 0.6em, fill: white, weight: "bold", label),
+)
+
+// what a mark of a run looks like, nothing for a run without one (the guides are off)
+#let mark-of(mark) = if mark == none { none } else if mark.kind == "space" {
+  space-dot()
+} else if mark.kind == "column" {
+  hanging-glyph[→]
+} else if mark.kind == "line-end" {
+  hanging-glyph[¶]
+} else {
+  badge(mark.label)
+}
+
 #let part-body(d, part, base) = {
   let size = part.at("size", default: 9) * 1pt
   let family(own) = if own == none { base } else { (own, ..base) }
@@ -52,7 +89,7 @@
     let cell(runs) = runs.map(r => text(
       weight: if r.bold { "bold" } else { "regular" },
       style: if r.italic { "italic" } else { "normal" },
-      r.text,
+      { mark-of(r.at("mark", default: none)); r.text },
     )).join()
     // a line is its columns, split by tabs; without any tab the part is plain lines of text
     let columns = calc.max(1, ..part.lines.map(line => line.len()))
@@ -110,9 +147,16 @@
       let pages = counter(page).final().first()
       // a document of one page may go without a number
       if not part.several_pages_only or pages > 1 {
-        part.text
+        let filled(text) = text
           .replace("{page}", str(counter(page).get().first()))
           .replace("{pages}", str(pages))
+        // with the guides on the text comes as runs, each with the mark of its character
+        let marked = part.at("marked", default: none)
+        if marked == none {
+          filled(part.text)
+        } else {
+          marked.map(r => { mark-of(r.at("mark", default: none)); filled(r.text) }).join()
+        }
       }
     }
   } else if part.kind == "line" {

@@ -7,6 +7,7 @@ import { mockIPC } from '@tauri-apps/api/mocks';
 
 import unitNames from '../../../src-tauri/data/unit-names.json' with { type: 'json' };
 import type {
+  Address,
   CatalogEntry,
   Context,
   Customer,
@@ -18,6 +19,7 @@ import type {
   NumberReset,
   Position,
   PositionTemplate,
+  Seller,
   Sequence,
   Settings,
   StoredInvoice,
@@ -26,6 +28,7 @@ import type {
   UnitUsage,
 } from './api.utils.js';
 import { today } from './form.utils.js';
+import { cleanInvisible, cleanInvisibleLine } from './invisible.utils.js';
 import { validUntil } from './kind.utils.js';
 
 const address = {
@@ -283,6 +286,47 @@ const contexts: Context[] = [
   missing_for_xrechnung: missingForXRechnung(c.settings),
   missing_for_offers: missingForOffers(c.settings),
 }));
+
+/** Like `Address::cleaned`: every field one line without what a paste brings along */
+const cleanAddress = (address: Address): Address => ({
+  street: cleanInvisibleLine(address.street),
+  post_code: cleanInvisibleLine(address.post_code),
+  city: cleanInvisibleLine(address.city),
+  country: cleanInvisibleLine(address.country),
+});
+
+const someLine = (value: string | null) => (value === null ? null : cleanInvisibleLine(value));
+
+/** Like `Customer::cleaned` */
+const cleanCustomer = (customer: Customer): Customer => ({
+  ...customer,
+  name: cleanInvisibleLine(customer.name),
+  address: cleanAddress(customer.address),
+  vat_id: someLine(customer.vat_id),
+  email: someLine(customer.email),
+  buyer_reference: someLine(customer.buyer_reference),
+});
+
+/** Like `Seller::cleaned`: every field one line but the legal information */
+const cleanSeller = (seller: Seller): Seller => {
+  return {
+    name: cleanInvisibleLine(seller.name),
+    address: cleanAddress(seller.address),
+    vat_id: someLine(seller.vat_id),
+    tax_number: someLine(seller.tax_number),
+    contact_name: cleanInvisibleLine(seller.contact_name),
+    phone: cleanInvisibleLine(seller.phone),
+    email: cleanInvisibleLine(seller.email),
+    mobile: someLine(seller.mobile),
+    fax: someLine(seller.fax),
+    website: someLine(seller.website),
+    iban: cleanInvisibleLine(seller.iban),
+    bic: someLine(seller.bic),
+    account_holder: someLine(seller.account_holder),
+    bank_name: someLine(seller.bank_name),
+    legal_info: seller.legal_info === null ? null : cleanInvisible(seller.legal_info),
+  };
+};
 
 const refreshed = (c: Context): Context => ({
   ...c,
@@ -732,7 +776,11 @@ export function installMocks() {
             },
           });
         case 'context_save': {
-          const context = args['context'] as Context;
+          const given = args['context'] as Context;
+          const context = {
+            ...given,
+            settings: { ...given.settings, seller: cleanSeller(given.settings.seller) },
+          };
           const { number_pattern, number_reset, fiscal_year_start, offer } = context.settings;
           // a pattern that cannot count is refused with the reason, like `Pattern::parse`
           numberParts(number_pattern, fiscal_year_start);
@@ -793,9 +841,11 @@ export function installMocks() {
         case 'customers_list':
           return customers;
         case 'customer_save': {
-          const customer = args['customer'] as Customer;
+          const customer = cleanCustomer(args['customer'] as Customer);
           if (customer.id === null) {
             customers.push({ ...customer, id: customers.length + 1 });
+          } else {
+            customers[customers.findIndex(c => c.id === customer.id)] = customer;
           }
           return customers.at(
             customer.id === null ? -1 : customers.findIndex(c => c.id === customer.id)
