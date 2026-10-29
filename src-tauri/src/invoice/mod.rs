@@ -5,7 +5,7 @@
 //! flat list of findings for the UI and the CII writer behind a proof of validity.
 //!
 //! These checks give early feedback. The authority over a finished file is the validator that runs
-//! on the combined PDF (see the validation gate in the plan).
+//! on the combined PDF (see `docs/development.md`, "How it works").
 
 use en16931::profiles::{self, En16931, XRechnung};
 use en16931::validation::profile::Validated;
@@ -137,7 +137,7 @@ pub fn to_cii(invoice: Invoice, profile: ProfileKind) -> Result<String, Vec<Find
 /// # Errors
 ///
 /// When the product does not fit an invoice amount.
-#[cfg_attr(not(test), allow(dead_code))] // used by the invoice form, see the plan
+#[cfg_attr(not(test), allow(dead_code))] // used by the invoice form
 pub fn line_from_unit_price(
     id: &str,
     name: &str,

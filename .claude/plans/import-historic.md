@@ -16,8 +16,7 @@ The import is for **old, unsigned invoices that went out on paper**: PDF, Word (
 Goal: bring invoices that were written before this app (Word, other tools, ZUGFeRD from elsewhere) into it, so they appear in the list, the filters and the totals. Their numbers count for numbering and stay unique per context, and their original file is archived with a hash. The app never re-renders, never validates and never changes them.
 
 Status: plan, not started. Related:
-- [invoice-creation-flow.md](invoice-creation-flow.md): originals, hashes, `invoice_output`.
-- [units.md](units.md): imported positions carry codes, and labels come from the unit list.
+- The creation step and the kept originals (hashes, `invoice_output`) and the units (imported positions carry codes, labels come from the unit list of the context) in [docs/development.md](../../docs/development.md).
 - [steuerberater-export.md](steuerberater-export.md): imports should be in the period export.
 
 ## Recommendation: imported, locked, not a draft

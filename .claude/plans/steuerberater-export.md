@@ -2,7 +2,7 @@
 
 Goal: hand the tax advisor everything for a period (month, quarter, year) in one step, later optionally as a DATEV import file.
 
-Status: idea, not started. Depends on [multi-context.md](multi-context.md) for the context filter and per-context settings. Tier A alone also works for a single context, so it can start earlier if the order changes.
+Status: idea, not started. Builds on contexts (the context filter and per-context settings, see [docs/development.md](../../docs/development.md)). Tier A alone also works for a single context, so it can start earlier if the order changes.
 
 ## Tiers
 
@@ -20,7 +20,7 @@ Status: idea, not started. Depends on [multi-context.md](multi-context.md) for t
 - Delivery: save dialog, then reveal in Finder. No mail integration.
 - GoBD: only exported (immutable) invoices are included; drafts never.
 - Offers (`kind = 'offer'`, same table) are left out: every query of the export filters `kind = 'invoice'`, also the counts and totals per tax rate.
-- The files come from the invoices' stored originals (PDF and XML written on creation, with their hashes), see [invoice-creation-flow.md](invoice-creation-flow.md): build that first. Invoices created before it have none until their first output regenerates them, the export must do the same for those or list them as "without files".
+- The files come from the invoices' stored originals (PDF and XML written on creation, with their hashes), see [docs/development.md](../../docs/development.md). Invoices created before originals were kept have none until their first output regenerates them, the export must do the same for those or list them as "without files".
 
 ### B. DATEV Buchungsstapel CSV (only if the advisor uses it)
 
@@ -43,7 +43,7 @@ API needs Marktplatz partner registration and OAuth, too heavy for this app. The
 
 1. Does the advisor use DATEV (Unternehmen online / Belegtransfer)? What do they want now: PDFs, list, Buchungsstapel?
 2. Soll- or Ist-Versteuerung, per context?
-3. Credit notes and cancellations: not in the UI yet (see `init.md`), but the export must include them once they exist (sign handling in CSV/EXTF).
+3. Credit notes and cancellations: not in the UI yet, but the export must include them once they exist (sign handling in CSV/EXTF).
 4. Incoming invoices: out of scope, or a simple receipts folder added to the ZIP?
 5. CSV flavour for the overview: German Excel (`;`, decimal comma, UTF-8 BOM) as default?
 

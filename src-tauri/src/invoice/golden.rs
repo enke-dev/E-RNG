@@ -1,4 +1,4 @@
-//! Golden invoices: the cases the plan names, built through the public builder, each one must pass
+//! Golden invoices: the cases the app has to get right, built through the public builder, each one must pass
 //! its profile and serialize. They double as the input set for the external validators later.
 
 use en16931::invoice::{
