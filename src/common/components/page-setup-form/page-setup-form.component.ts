@@ -9,10 +9,13 @@ import '../part-form/part-form.component.js';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 
 import type { Insets, PageSetup, Part } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { text } from '../../utils/form.utils.js';
+import reorderStyles from '../../utils/reorder.utils.css';
+import { indexAfterMove, Reorder } from '../../utils/reorder.utils.js';
 import styles from './page-setup-form.component.css';
 
 const EDGES: [keyof Insets, string][] = [
@@ -98,7 +101,7 @@ const KINDS: Record<Kind, { label: string; make: () => Part }> = {
  * @fires change
  */
 @customElement('erng-page-setup-form')
-export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
+export class PageSetupFormComponent extends ErngElement.withStyles(reorderStyles, styles) {
   @property({ attribute: false })
   setup!: PageSetup;
 
@@ -111,6 +114,13 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
   /** The font families of the layout, a text can be set in them */
   @property({ attribute: false })
   families: string[] = [];
+
+  private readonly reorder = new Reorder(this, {
+    rows: '.part',
+    noun: 'Element',
+    count: () => this.setup.parts.length,
+    move: (from, to) => this.move(from, to),
+  });
 
   /** What the user points at or has open, the sample shows where it is */
   @state() private hovered: number | null = null;
@@ -160,6 +170,28 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
     this.dispatchEvent(new CustomEvent('change', { bubbles: true, composed: true }));
   }
 
+  /** Moves a part; what is hovered or open stays with its part, and the sample is told */
+  private move(from: number, to: number) {
+    const [moved] = this.setup.parts.splice(from, 1);
+    if (!moved) {
+      return;
+    }
+    this.setup.parts.splice(to, 0, moved);
+    this.pointAt(() => {
+      const follow = (i: number | null) => (i === null ? null : indexAfterMove(i, from, to));
+      this.hovered = follow(this.hovered);
+      this.opened = follow(this.opened);
+    });
+    this.dispatchEvent(
+      new CustomEvent<{ from: number; to: number }>('part-move', {
+        detail: { from, to },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    this.changed();
+  }
+
   /** The title of a part: what it is, and for a text the start of it, quiet */
   private summary(part: Part) {
     const what = KINDS[part.kind].label.replace(/ \(.*\)$/, '');
@@ -197,51 +229,62 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
         </div>
 
         <strong>Elemente</strong>
-        ${setup.parts.map(
-          (part, index) => html`
-            <wa-details
-              name="part"
-              ?data-hover="${this.hover === index}"
-              @mouseenter="${() => this.pointAt(() => (this.hovered = index))}"
-              @mouseleave="${() => this.pointAt(() => (this.hovered = null))}"
-              @wa-show="${(e: Event) => e.target === e.currentTarget && this.opening(index)}"
-              @wa-hide="${(e: Event) =>
-                e.target === e.currentTarget &&
-                this.pointAt(() => {
-                  if (this.opened === index) {
-                    this.opened = null;
-                  }
-                })}"
-            >
-              ${this.summary(part)}
-              <div class="stack">
-                <erng-part-form
-                  .item="${part}"
-                  .families="${this.families}"
-                  @change="${() => this.changed()}"
-                ></erng-part-form>
-                <div class="remove">
-                  <wa-button
-                    appearance="outlined"
-                    variant="danger"
-                    title="Element entfernen"
-                    aria-label="Element entfernen"
-                    @click="${() => {
-                      setup.parts.splice(index, 1);
-                      this.pointAt(() => {
-                        this.hovered = null;
+        <span class="muted">
+          Spätere Elemente liegen über früheren, Bilder immer hinter allen anderen.
+        </span>
+        <div class="parts">
+          ${repeat(
+            setup.parts,
+            // the rows follow their part, so what is open stays with it when parts move
+            part => part,
+            (part, index) => html`
+              <div class="part">
+                ${this.reorder.handle(index)}
+                <wa-details
+                  name="part"
+                  ?data-hover="${this.hover === index}"
+                  @mouseenter="${() => this.pointAt(() => (this.hovered = index))}"
+                  @mouseleave="${() => this.pointAt(() => (this.hovered = null))}"
+                  @wa-show="${(e: Event) => e.target === e.currentTarget && this.opening(index)}"
+                  @wa-hide="${(e: Event) =>
+                    e.target === e.currentTarget &&
+                    this.pointAt(() => {
+                      if (this.opened === index) {
                         this.opened = null;
-                      });
-                      this.changed();
-                    }}"
-                  >
-                    <wa-icon name="trash"></wa-icon>
-                  </wa-button>
-                </div>
+                      }
+                    })}"
+                >
+                  ${this.summary(part)}
+                  <div class="stack">
+                    <erng-part-form
+                      .item="${part}"
+                      .families="${this.families}"
+                      @change="${() => this.changed()}"
+                    ></erng-part-form>
+                    <div class="remove">
+                      <wa-button
+                        appearance="outlined"
+                        variant="danger"
+                        title="Element entfernen"
+                        aria-label="Element entfernen"
+                        @click="${() => {
+                          setup.parts.splice(index, 1);
+                          this.pointAt(() => {
+                            this.hovered = null;
+                            this.opened = null;
+                          });
+                          this.changed();
+                        }}"
+                      >
+                        <wa-icon name="trash"></wa-icon>
+                      </wa-button>
+                    </div>
+                  </div>
+                </wa-details>
               </div>
-            </wa-details>
-          `
-        )}
+            `
+          )}
+        </div>
         <div>
           <wa-dropdown
             @wa-select="${(e: CustomEvent<{ item: { value: string } }>) => {

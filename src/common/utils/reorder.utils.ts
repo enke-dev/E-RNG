@@ -118,6 +118,20 @@ export function startReorder(
   handle.addEventListener('pointercancel', cancel);
 }
 
+/** Where the row that was at `index` is after the row at `from` was moved to `to` */
+export function indexAfterMove(index: number, from: number, to: number) {
+  if (index === from) {
+    return to;
+  }
+  if (from < to && index > from && index <= to) {
+    return index - 1;
+  }
+  if (from > to && index >= to && index < from) {
+    return index + 1;
+  }
+  return index;
+}
+
 /** What a host tells `Reorder` about its rows */
 export interface ReorderOptions {
   /** Selector of the rows in the host's shadow root, in order */

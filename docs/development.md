@@ -77,7 +77,7 @@ GOLDEN_OUT=/some/dir cargo test                                      # writes th
 ```
 src/                       frontend
   views/                   invoices and offers (list + detail), invoice-edit, customers, templates, settings (+ root shell and routes)
-  common/                  components (one folder each: `<name>/<name>.component.{ts,css}`, styles always in the css file, `ErngElement.withStyles(styles)`), layouts (split, cards, editor: slots only, split and editor have a `wa-split-panel` the user can move (their slots are the panels, so they style their own slots; the divider position is stored under the `position-key` of the view; the list has a minimum and maximum, the detail a minimum; the editor shows only the form where the minimums of both sides do not fit, a container query), views import no styles), api.utils.ts (typed commands), format and form helpers, `reorder.utils.ts` (the drag and arrow-key reorder of the positions and the units: `Reorder` renders the handle, its styles are `reorder.utils.css`), mock backend
+  common/                  components (one folder each: `<name>/<name>.component.{ts,css}`, styles always in the css file, `ErngElement.withStyles(styles)`), layouts (split, cards, editor: slots only, split and editor have a `wa-split-panel` the user can move (their slots are the panels, so they style their own slots; the divider position is stored under the `position-key` of the view; the list has a minimum and maximum, the detail a minimum; the editor shows only the form where the minimums of both sides do not fit, a container query), views import no styles), api.utils.ts (typed commands), format and form helpers, `reorder.utils.ts` (the drag and arrow-key reorder of the positions, the units and the parts of a layout: `Reorder` renders the handle, its styles are `reorder.utils.css`), mock backend
 src-tauri/src/
   invoice/                 profile choice, rule checks, German finding texts, CII writer, golden test set
   draft.rs                 form draft → invoice model
@@ -132,7 +132,7 @@ margin per page style, so when the first page has another frame the content is l
 (head, table rows, totals, …) are measured and as many as fit go to the first page, the rest follows on pages with the
 other frame.
 
-There is no separate stationery: a letterhead is a picture part as wide as the page (210 mm, at 0 and 0), one per page setup, and pictures always lie behind the other parts. Fonts are a list of uploaded files. Images are PNG, JPG
+The order of the list is the order of drawing: later parts lie over earlier ones (`render/parts.rs` sorts only the pictures to the front, stably, and keeps each part's list index for the sample's boxes), the editor lists them in that order and moves a part by its handle (`erng-page-setup-form`: drag or arrow keys; the rows are keyed by their part, so what is open stays with it, and the hovered and open indices and the sample's boxes follow the move until the next rendering). There is no separate stationery: a letterhead is a picture part as wide as the page (210 mm, at 0 and 0), one per page setup, and pictures always lie behind the other parts. Fonts are a list of uploaded files. Images are PNG, JPG
 or SVG up to 5 MB; a raster image with fewer than 150 dpi at its placed size is flagged, the layout sample marks it with a
 warning triangle (`Branding.marks`, never in a real invoice).
 

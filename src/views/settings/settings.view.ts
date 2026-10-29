@@ -66,6 +66,7 @@ import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
 import { recall, remember } from '../../common/utils/memory.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { takeOpenedLayouts } from '../../common/utils/opened.utils.js';
+import { indexAfterMove } from '../../common/utils/reorder.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
 import styles from './settings.view.css';
 
@@ -1781,6 +1782,20 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     `;
   }
 
+  /** The boxes of the sample follow a moved part, until the next rendering brings the real ones */
+  private partMoved({ first, from, to }: { first: boolean; from: number; to: number }) {
+    const sample = this.sample;
+    if (!sample) {
+      return;
+    }
+    this.sample = {
+      ...sample,
+      parts: sample.parts.map(box =>
+        box.first === first ? { ...box, index: indexAfterMove(box.index, from, to) } : box
+      ),
+    };
+  }
+
   /** The part the pointer is over, in the sample or in the form; the selected one needs no hover */
   private get hovered(): { first: boolean; index: number } | null {
     const over = this.overSample ?? this.overForm;
@@ -1995,6 +2010,8 @@ export class SettingsView extends ErngElement.withStyles(styles) {
               this.overForm = hovered === null ? null : { first, index: hovered };
               this.openPart = opened === null ? null : { first, index: opened };
             }}"
+            @part-move="${(e: CustomEvent<{ first: boolean; from: number; to: number }>) =>
+              this.partMoved(e.detail)}"
             @part-open="${(e: CustomEvent<{ first: boolean; index: number }>) => {
               this.showInSample = {
                 key: regionKey(e.detail),

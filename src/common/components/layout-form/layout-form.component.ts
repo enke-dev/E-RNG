@@ -51,6 +51,16 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
           e.stopPropagation();
           this.pointAt(first, e.detail);
         }}"
+        @part-move="${(e: CustomEvent<{ from: number; to: number }>) => {
+          e.stopPropagation();
+          this.dispatchEvent(
+            new CustomEvent<{ first: boolean; from: number; to: number }>('part-move', {
+              detail: { first, ...e.detail },
+              bubbles: true,
+              composed: true,
+            })
+          );
+        }}"
         @part-open="${(e: CustomEvent<number>) => {
           e.stopPropagation();
           this.dispatchEvent(

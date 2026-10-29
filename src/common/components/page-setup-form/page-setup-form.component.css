@@ -8,6 +8,33 @@
   gap: var(--wa-space-s);
 }
 
+/* the rows of the parts: a handle and the part, the container holds the gap of a drag */
+.parts {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-s);
+  --reorder-radius: var(--wa-border-radius-m);
+}
+
+.part {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--wa-space-xs);
+  border-radius: var(--wa-border-radius-m);
+}
+
+/* an open part grows downwards, the handle stays level with its summary */
+.part > .handle {
+  align-self: flex-start;
+  margin-block-start: 0.25rem;
+}
+
+.part > wa-details {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 wa-details {
   --spacing: var(--wa-space-s);
 }
