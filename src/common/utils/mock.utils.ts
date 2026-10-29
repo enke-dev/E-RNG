@@ -44,9 +44,13 @@ const settings: Settings = {
     contact_name: 'Max Muster',
     phone: '+49 221 123456',
     email: 'max@muster.example',
+    mobile: '+49 171 5551234',
+    fax: null,
+    website: 'https://muster.example',
     iban: 'DE02 1203 0000 0000 2020 51',
     bic: 'BYLADEM1001',
     account_holder: 'Muster Software GmbH',
+    bank_name: 'Musterbank Köln',
     legal_info: null,
   },
   tax_rate: '19',
@@ -320,9 +324,9 @@ const builtinLayout = (): CustomLayout => ({
   uid: '',
   updated_at: '',
   name: 'Klassisch',
-  page: { margins: { top: 20, right: 20, bottom: 36, left: 25 }, parts: [] },
+  page: { margins: { top: 20, right: 20, bottom: 42, left: 25 }, parts: [] },
   first: {
-    margins: { top: 98, right: 20, bottom: 36, left: 25 },
+    margins: { top: 98, right: 20, bottom: 42, left: 25 },
     parts: [
       {
         kind: 'address',

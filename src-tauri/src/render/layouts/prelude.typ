@@ -49,11 +49,30 @@
     set text(size: size, font: family(part.family))
     set text(fill: rgb(part.color)) if part.color != none
     set align(alignment)
-    part.lines.map(runs => runs.map(r => text(
+    let cell(runs) = runs.map(r => text(
       weight: if r.bold { "bold" } else { "regular" },
       style: if r.italic { "italic" } else { "normal" },
       r.text,
-    )).join()).join(linebreak())
+    )).join()
+    // a line is its columns, split by tabs; without any tab the part is plain lines of text
+    let columns = calc.max(1, ..part.lines.map(line => line.len()))
+    if columns == 1 {
+      part.lines.map(line => cell(line.first())).join(linebreak())
+    } else {
+      // all lines share one grid so that the columns line up; the last column of a line with
+      // fewer takes the rest of the width, as the one of a line without a tab does. The rows are
+      // as far apart as the lines of a part without a tab are.
+      context align(alignment, grid(
+        columns: (auto,) * columns,
+        column-gutter: 1.5mm,
+        row-gutter: par.leading,
+        align: left,
+        ..part.lines.map(line => line.enumerate().map(((i, runs)) => grid.cell(
+          colspan: if i == line.len() - 1 { columns - line.len() + 1 } else { 1 },
+          [#cell(runs)],
+        ))).flatten(),
+      ))
+    }
   } else if part.kind == "infos" {
     set text(size: size)
     set text(fill: rgb(part.color)) if part.color != none

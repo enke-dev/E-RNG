@@ -421,9 +421,13 @@ pub(crate) mod fixtures {
                 contact_name: "Max Muster".into(),
                 phone: "+49 221 123456".into(),
                 email: "max@muster.example".into(),
+                mobile: None,
+                fax: None,
+                website: None,
                 iban: "DE02 1203 0000 0000 2020 51".into(),
                 bic: Some("BYLADEM1001".into()),
                 account_holder: Some("Muster Software GmbH".into()),
+                bank_name: None,
                 legal_info: None,
             },
             ..Settings::default()
@@ -680,6 +684,22 @@ mod tests {
         let mut d = draft();
         d.delivery_end = Some(String::new());
         assert!(build_invoice(&for_preview(&d), &settings(), "X").is_ok());
+    }
+
+    #[test]
+    fn the_seller_fields_for_layouts_are_not_in_the_xml() {
+        let d = draft();
+        let plain = build_invoice(&d, &settings(), "RE-1").unwrap();
+        let mut more = settings();
+        more.seller.mobile = Some("0171 555".into());
+        more.seller.fax = Some("+49 221 123457".into());
+        more.seller.website = Some("https://muster.example".into());
+        more.seller.bank_name = Some("Musterbank".into());
+        let full = build_invoice(&d, &more, "RE-1").unwrap();
+
+        let xml = |invoice| crate::invoice::to_cii(invoice, d.profile).unwrap();
+
+        assert_eq!(xml(plain), xml(full));
     }
 
     #[test]

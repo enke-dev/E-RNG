@@ -68,9 +68,21 @@
 
 #let notes = for note in d.vat_notes [#text(size: 8.5pt, fill: muted)[#note] \ ]
 
+// A line of several items (` · ` between them, like the bank details) breaks between the items, never
+// inside one and never right before a dot: each item keeps its dot, they are joined by a space.
+// A line with a long item is left to break wherever it must.
+#let payment-line(line) = {
+  let items = line.split(" · ")
+  if items.len() > 1 and items.all(item => item.len() < 70) {
+    items.enumerate().map(((i, item)) => box(if i < items.len() - 1 { item + " ·" } else { item })).join[ ]
+  } else {
+    line
+  }
+}
+
 #let payment = if d.payment.len() > 0 [
   *Zahlung* \
-  #for line in d.payment [#line \ ]
+  #for line in d.payment [#payment-line(line) \ ]
 ]
 
 #let units = (

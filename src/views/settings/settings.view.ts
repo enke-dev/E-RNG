@@ -570,11 +570,24 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  private optional(key: 'vat_id' | 'tax_number' | 'bic' | 'account_holder', caption: string) {
+  private optional(
+    key:
+      | 'vat_id'
+      | 'tax_number'
+      | 'bic'
+      | 'account_holder'
+      | 'bank_name'
+      | 'mobile'
+      | 'fax'
+      | 'website',
+    caption: string,
+    type = 'text'
+  ) {
     const settings = (this.context as Context).settings;
     return html`
       <wa-input
         label="${caption}"
+        type="${type as WaInput['type']}"
         .value="${settings.seller[key] ?? ''}"
         @input="${(e: Event) => this.edit(s => (s.seller[key] = nullable(text(e))))}"
       ></wa-input>
@@ -1374,10 +1387,14 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       <section>
         <div class="grid">
           ${this.seller('contact_name', 'Ansprechpartner')}
-          ${this.seller('phone', 'Telefon', 'tel')} ${this.seller('email', 'E-Mail', 'email')}
+          ${this.seller('phone', 'Telefon', 'tel')} ${this.optional('mobile', 'Mobil', 'tel')}
+          ${this.optional('fax', 'Fax', 'tel')} ${this.seller('email', 'E-Mail', 'email')}
+          ${this.optional('website', 'Website', 'url')}
         </div>
         <span class="hint">
-          Name, Telefon und E-Mail sind für XRechnung Pflicht, bei ZUGFeRD freiwillig.
+          Name, Telefon und E-Mail sind für XRechnung Pflicht, bei ZUGFeRD freiwillig. Mobil, Fax
+          und Website stehen nicht in der XML-Datei, sie lassen sich nur über Platzhalter in eigenen
+          Layouts zeigen.
         </span>
       </section>
       <wa-textarea
@@ -1431,10 +1448,17 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   private bankPage() {
     return html`
-      <div class="grid">
-        ${this.seller('iban', 'IBAN', 'text', true)} ${this.optional('bic', 'BIC')}
-        ${this.optional('account_holder', 'Kontoinhaber')}
-      </div>
+      <section>
+        <div class="grid">
+          ${this.seller('iban', 'IBAN', 'text', true)} ${this.optional('bic', 'BIC')}
+          ${this.optional('account_holder', 'Kontoinhaber')}
+          ${this.optional('bank_name', 'Name der Bank')}
+        </div>
+        <span class="hint">
+          Der Name der Bank steht nicht in der XML-Datei, er lässt sich nur über den Platzhalter
+          {bank_name} in eigenen Layouts zeigen.
+        </span>
+      </section>
     `;
   }
 

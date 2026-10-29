@@ -16,6 +16,8 @@ use crate::units;
 pub struct Branding {
     /// The legal information of the seller (managing directors, register entry), for `{legal}`
     pub legal: Option<String>,
+    /// What the seller has beyond the invoice data, for the `{seller_*}` placeholders
+    pub seller: SellerDetails,
     /// No VAT is charged: the document shows no rate, no VAT rows and no gross sum, only the reason
     pub vat_free: bool,
     /// The settings have no payment term: the document shows neither a due date nor payment terms
@@ -44,6 +46,16 @@ pub struct Branding {
     pub offer_label: String,
     /// The label of each position's unit, by position: the lines are the positions in order
     pub unit_labels: Vec<String>,
+}
+
+/// The seller's fields that only layouts use: they are not part of the invoice data and not in
+/// the XML.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SellerDetails {
+    pub mobile: Option<String>,
+    pub fax: Option<String>,
+    pub website: Option<String>,
+    pub bank_name: Option<String>,
 }
 
 /// What stands for the day an offer is valid until in the letter texts
@@ -98,6 +110,22 @@ impl Branding {
                 .legal_info
                 .clone()
                 .or_else(|| settings.footer.clone()),
+            seller: {
+                let seller = &settings.seller;
+                let field = |value: &Option<String>| {
+                    value
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_owned)
+                };
+                SellerDetails {
+                    mobile: field(&seller.mobile),
+                    fax: field(&seller.fax),
+                    website: field(&seller.website),
+                    bank_name: field(&seller.bank_name),
+                }
+            },
             vat_free: settings.vat_free(),
             no_payment_term: settings.payment_days.is_none(),
             custom,
@@ -129,6 +157,8 @@ pub struct InvoiceView {
     pub number: String,
     pub issue: YearMonthDay,
     pub seller: PartyView,
+    /// The seller's single fields, one text each, for the `{seller_*}` placeholders
+    pub seller_fields: SellerFields,
     pub buyer: PartyView,
     /// Facts of the invoice by key, what a part of the layout picks its rows from
     pub infos: Vec<Info>,
@@ -212,6 +242,27 @@ pub struct PartyView {
     pub registration: Vec<String>,
 }
 
+/// One plain text per field of the seller, empty when it is not set. Address lines of a street
+/// (several when the address has a second or third line) are joined by line breaks.
+#[derive(Debug, Default, Serialize)]
+pub struct SellerFields {
+    pub street: String,
+    pub postcode_city: String,
+    pub phone: String,
+    pub mobile: String,
+    pub fax: String,
+    pub email: String,
+    pub website: String,
+    pub contact_name: String,
+    pub tax_number: String,
+    pub vat_id: String,
+    pub bank_name: String,
+    /// Grouped like the bank lines
+    pub iban: String,
+    pub bic: String,
+    pub account_holder: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct Labeled {
     pub label: String,
@@ -251,12 +302,16 @@ fn exemption_note(category: &str) -> Option<&'static str> {
     }
 }
 
-fn address_lines(address: &PostalAddress) -> Vec<String> {
-    let town = [address.post_code.as_deref(), address.city.as_deref()]
+fn postcode_city(address: &PostalAddress) -> String {
+    [address.post_code.as_deref(), address.city.as_deref()]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
-        .join(" ");
+        .join(" ")
+}
+
+fn address_lines(address: &PostalAddress) -> Vec<String> {
+    let town = postcode_city(address);
     let country = address
         .country
         .as_ref()
@@ -271,12 +326,21 @@ fn address_lines(address: &PostalAddress) -> Vec<String> {
         .collect()
 }
 
-fn party_view(party: &en16931::invoice::Party, seller: bool) -> PartyView {
+/// `details` are the seller's fields beyond the invoice data, none for the buyer
+fn party_view(party: &en16931::invoice::Party, details: Option<&SellerDetails>) -> PartyView {
+    let seller = details.is_some();
     let contact = &party.contact;
     let contact_lines = [
         contact.name.clone(),
         contact.phone.as_ref().map(|p| format!("Tel. {p}")),
+        details
+            .and_then(|d| d.mobile.as_ref())
+            .map(|m| format!("Mobil {m}")),
+        details
+            .and_then(|d| d.fax.as_ref())
+            .map(|f| format!("Fax {f}")),
         contact.email.clone(),
+        details.and_then(|d| d.website.clone()),
     ];
     let registration = [
         party
@@ -297,7 +361,7 @@ fn party_view(party: &en16931::invoice::Party, seller: bool) -> PartyView {
     }
 }
 
-fn bank_lines(invoice: &Invoice, fmt: &Formatter) -> Vec<Labeled> {
+fn bank_lines(invoice: &Invoice, bank_name: Option<&str>, fmt: &Formatter) -> Vec<Labeled> {
     let Some(PaymentMeans::CreditTransfer(transfers)) =
         invoice.payment.as_ref().and_then(|p| p.means.as_ref())
     else {
@@ -307,6 +371,7 @@ fn bank_lines(invoice: &Invoice, fmt: &Formatter) -> Vec<Labeled> {
         .iter()
         .flat_map(|t| {
             [
+                ("Bank", bank_name.map(str::to_owned)),
                 ("Kontoinhaber", t.account_name.clone()),
                 ("IBAN", t.account_identifier.as_deref().map(|i| fmt.iban(i))),
                 ("BIC", t.provider_identifier.clone()),
@@ -321,9 +386,47 @@ fn bank_lines(invoice: &Invoice, fmt: &Formatter) -> Vec<Labeled> {
         .collect()
 }
 
+fn seller_fields(invoice: &Invoice, details: &SellerDetails, fmt: &Formatter) -> SellerFields {
+    let seller = &invoice.seller;
+    let address = &seller.address;
+    let contact = &seller.contact;
+    let transfer = match invoice.payment.as_ref().and_then(|p| p.means.as_ref()) {
+        Some(PaymentMeans::CreditTransfer(transfers)) => transfers.first(),
+        _ => None,
+    };
+    let own = |value: &Option<String>| value.clone().unwrap_or_default();
+    SellerFields {
+        street: [&address.line1, &address.line2, &address.line3]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n"),
+        postcode_city: postcode_city(address),
+        phone: own(&contact.phone),
+        mobile: own(&details.mobile),
+        fax: own(&details.fax),
+        email: own(&contact.email),
+        website: own(&details.website),
+        contact_name: own(&contact.name),
+        tax_number: own(&seller.tax_registration),
+        vat_id: own(&seller.vat_identifier),
+        bank_name: own(&details.bank_name),
+        iban: transfer
+            .and_then(|t| t.account_identifier.as_deref())
+            .map(|iban| fmt.iban(iban))
+            .unwrap_or_default(),
+        bic: transfer
+            .map(|t| own(&t.provider_identifier))
+            .unwrap_or_default(),
+        account_holder: transfer.map(|t| own(&t.account_name)).unwrap_or_default(),
+    }
+}
+
 /// `with_term`: the payment terms and the due date are part of it, else only how to pay
 fn payment_lines(
     invoice: &Invoice,
+    bank_name: Option<&str>,
     currency: &str,
     fmt: &Formatter,
     with_term: bool,
@@ -343,6 +446,7 @@ fn payment_lines(
         if let Some(PaymentMeans::CreditTransfer(transfers)) = &payment.means {
             for t in transfers {
                 let parts = [
+                    bank_name.map(|n| format!("Bank {n}")),
                     t.account_name.as_ref().map(|n| format!("Kontoinhaber {n}")),
                     t.account_identifier
                         .as_ref()
@@ -618,8 +722,9 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
             month: issue.month(),
             day: issue.day(),
         },
-        seller: party_view(&invoice.seller, true),
-        buyer: party_view(&invoice.buyer, false),
+        seller: party_view(&invoice.seller, Some(&branding.seller)),
+        seller_fields: seller_fields(invoice, &branding.seller, fmt),
+        buyer: party_view(&invoice.buyer, None),
         infos,
         intro: invoice
             .notes
@@ -632,7 +737,13 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         payment: if offer {
             Vec::new()
         } else {
-            payment_lines(invoice, currency, fmt, !branding.no_payment_term)
+            payment_lines(
+                invoice,
+                branding.seller.bank_name.as_deref(),
+                currency,
+                fmt,
+                !branding.no_payment_term,
+            )
         },
         legal: branding.legal.clone(),
         letter: Letter {
@@ -658,7 +769,7 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
             tax_number: invoice.seller.tax_registration.clone(),
             vat_id: invoice.seller.vat_identifier.clone(),
         },
-        bank: bank_lines(invoice, fmt),
+        bank: bank_lines(invoice, branding.seller.bank_name.as_deref(), fmt),
         page: PageView::default(),
     }
 }

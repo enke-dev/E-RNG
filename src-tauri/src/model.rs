@@ -40,9 +40,15 @@ pub struct Seller {
     pub contact_name: String,
     pub phone: String,
     pub email: String,
+    /// Mobile phone, fax and website: only for `{seller_*}` placeholders of layouts, not in the XML
+    pub mobile: Option<String>,
+    pub fax: Option<String>,
+    pub website: Option<String>,
     pub iban: String,
     pub bic: Option<String>,
     pub account_holder: Option<String>,
+    /// The name of the bank, only for `{bank_name}` of layouts, not in the XML
+    pub bank_name: Option<String>,
     /// Register entry, managing directors etc., shown in the footer
     pub legal_info: Option<String>,
 }
@@ -590,6 +596,10 @@ mod tests {
         let settings: Settings = serde_json::from_str(old).unwrap();
 
         assert_eq!(settings.seller.name, "A");
+        assert_eq!(settings.seller.mobile, None);
+        assert_eq!(settings.seller.fax, None);
+        assert_eq!(settings.seller.website, None);
+        assert_eq!(settings.seller.bank_name, None);
         assert_eq!(settings.layout, "standard");
         assert_eq!(settings.intro, None);
         assert_eq!(settings.number_reset, crate::numbering::Reset::FiscalYear);

@@ -44,6 +44,17 @@
   flex: 1 1 18rem;
 }
 
+.insert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wa-space-s);
+}
+
+/* a tab is as wide as a column gap in the field, so it can be seen */
+wa-textarea::part(textarea) {
+  tab-size: 4;
+}
+
 .checks {
   display: flex;
   flex-direction: column;

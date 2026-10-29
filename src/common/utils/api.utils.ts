@@ -17,9 +17,15 @@ export interface Seller {
   contact_name: string;
   phone: string;
   email: string;
+  /** Mobile, fax and website only appear as placeholders in layouts, not in the XML */
+  mobile: string | null;
+  fax: string | null;
+  website: string | null;
   iban: string;
   bic: string | null;
   account_holder: string | null;
+  /** The name of the bank, a placeholder of layouts only */
+  bank_name: string | null;
   legal_info: string | null;
 }
 

@@ -1,6 +1,8 @@
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/color-picker/color-picker.js';
+import '@awesome.me/webawesome/dist/components/dropdown/dropdown.js';
+import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
@@ -9,9 +11,11 @@ import '../anchor-picker/anchor-picker.component.js';
 
 import type WaColorPicker from '@awesome.me/webawesome/dist/components/color-picker/color-picker.js';
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
+import type WaTextarea from '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import { open } from '@tauri-apps/plugin-dialog';
 import { html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { createRef, ref } from 'lit/directives/ref.js';
 
 import type { Align, InfoField, Part } from '../../utils/api.utils.js';
 import { api } from '../../utils/api.utils.js';
@@ -43,9 +47,45 @@ const ALIGNS: [Align, string][] = [
 /** What Typst brings along, besides the fonts of the layout */
 export const BUILTIN_FAMILIES = ['Libertinus Serif', 'New Computer Modern', 'DejaVu Sans Mono'];
 
-/** The placeholders a text can use, for the hint under it */
-const PLACEHOLDERS =
-  '{seller_name} {seller_address} {seller_contact} {seller_registration} {legal} {bank}';
+/** The placeholders a text can use, as groups of name and caption, for the menu that inserts them */
+const PLACEHOLDERS: [string, [string, string][]][] = [
+  [
+    'Unternehmen',
+    [
+      ['seller_name', 'Name'],
+      ['seller_street', 'Straße'],
+      ['seller_postcode_city', 'PLZ und Ort'],
+      ['seller_contact_name', 'Ansprechpartner'],
+      ['seller_phone', 'Telefon'],
+      ['seller_mobile', 'Mobil'],
+      ['seller_fax', 'Fax'],
+      ['seller_email', 'E-Mail'],
+      ['seller_website', 'Website'],
+      ['seller_vat_id', 'USt-IdNr.'],
+      ['seller_tax_number', 'Steuernummer'],
+    ],
+  ],
+  [
+    'Bankverbindung',
+    [
+      ['bank_name', 'Name der Bank'],
+      ['account_holder', 'Kontoinhaber'],
+      ['iban', 'IBAN'],
+      ['bic', 'BIC'],
+    ],
+  ],
+  [
+    'Mehrere Zeilen',
+    [
+      ['seller_address', 'Anschrift'],
+      ['seller_contact', 'Ansprechpartner, Telefon, E-Mail'],
+      ['seller_registration', 'USt-IdNr. und Steuernummer'],
+      ['legal', 'Rechtliche Angaben'],
+      ['bank', 'Bankverbindung'],
+      ['valid_until', 'Gültig bis (Angebote)'],
+    ],
+  ],
+];
 
 /** Presets of the color picker: black, the letterhead's black and the greys the parts have by default */
 const SWATCHES = [
@@ -71,6 +111,8 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
   /** The font families a text can be set in besides the one of the layout */
   @property({ attribute: false })
   families: string[] = [];
+
+  #text = createRef<WaTextarea>();
 
   private changed() {
     this.requestUpdate();
@@ -143,6 +185,21 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
         >
       </div>
     `;
+  }
+
+  /** Puts `snippet` where the cursor is, or over the selection, and keeps the cursor behind it */
+  private insertText(part: { text: string }, snippet: string) {
+    const area = this.#text.value;
+    const field = area?.shadowRoot?.querySelector('textarea');
+    const start = field?.selectionStart ?? part.text.length;
+    const end = field?.selectionEnd ?? part.text.length;
+    part.text = part.text.slice(0, start) + snippet + part.text.slice(end);
+    this.changed();
+    // the new value is in the field after the render
+    void this.updateComplete.then(() => {
+      area?.focus();
+      area?.setSelectionRange(start + snippet.length, start + snippet.length);
+    });
   }
 
   private async chooseImage() {
@@ -257,13 +314,44 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
           <wa-textarea
             label="Text"
             rows="3"
-            hint="**fett**, *kursiv*. Platzhalter: ${PLACEHOLDERS}"
+            hint="**fett**, *kursiv*. Eine Zeile mit Platzhaltern, die alle leer sind, entfällt samt ihrem Text. Ein Tabulator teilt eine Zeile in Spalten, die untereinander ausgerichtet sind."
+            ${ref(this.#text)}
             .value="${part.text}"
             @input="${(e: Event) => {
               part.text = text(e);
               this.changed();
             }}"
           ></wa-textarea>
+          <div class="insert">
+            <wa-dropdown
+              @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) =>
+                this.insertText(part, `{${e.detail.item.value}}`)}"
+            >
+              <wa-button slot="trigger" appearance="outlined" size="small" with-caret
+                >Platzhalter einfügen</wa-button
+              >
+              ${PLACEHOLDERS.map(
+                ([group, names]) => html`
+                  <h3>${group}</h3>
+                  ${names.map(
+                    ([name, caption]) => html`
+                      <wa-dropdown-item value="${name}">
+                        ${caption}
+                        <span slot="details">{${name}}</span>
+                      </wa-dropdown-item>
+                    `
+                  )}
+                `
+              )}
+            </wa-dropdown>
+            <!-- the Tab key stays what it is in a form, moving on: a column is put in by button -->
+            <wa-button
+              appearance="outlined"
+              size="small"
+              @click="${() => this.insertText(part, '\t')}"
+              >Spalte einfügen</wa-button
+            >
+          </div>
           <div class="fields styled">
             <wa-select
               class="family"

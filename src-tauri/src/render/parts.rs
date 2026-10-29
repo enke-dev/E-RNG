@@ -50,7 +50,7 @@ pub enum PartViewContent {
         low_res: bool,
     },
     Text {
-        lines: Vec<Vec<Run>>,
+        lines: Vec<Line>,
         family: Option<String>,
         size: f64,
         align: Align,
@@ -80,10 +80,17 @@ pub struct PartView {
     pub content: PartViewContent,
 }
 
-/// Text with `**bold**` and `*italic*` as lines of runs. A backslash keeps a star as it is.
-pub fn runs(text: &str) -> Vec<Vec<Run>> {
+/// One line of a text as columns, a tab in the text starts the next one; every column is a piece
+/// of text cut into runs. A value of several lines makes more of these: the first one is in this
+/// line and the others follow it, with nothing in the other columns.
+pub type Line = Vec<Vec<Run>>;
+
+/// Text with `**bold**` and `*italic*` as lines of columns of runs. A backslash keeps a star as it
+/// is, a bold or italic run goes on over a tab.
+pub fn runs(text: &str) -> Vec<Line> {
     text.lines()
         .map(|line| {
+            let mut columns: Line = Vec::new();
             let mut out: Vec<Run> = Vec::new();
             let (mut bold, mut italic) = (false, false);
             let mut current = String::new();
@@ -112,57 +119,100 @@ pub fn runs(text: &str) -> Vec<Vec<Run>> {
                             italic = !italic;
                         }
                     }
+                    '\t' => {
+                        flush(&mut current, &mut out, bold, italic);
+                        columns.push(std::mem::take(&mut out));
+                    }
                     other => current.push(other),
                 }
             }
             flush(&mut current, &mut out, bold, italic);
-            out
+            columns.push(out);
+            columns
         })
         .collect()
 }
 
-/// Puts the data of the company into the `{placeholders}` of runs. A value of several lines
-/// breaks the line it stands in.
-pub fn fill(lines: Vec<Vec<Run>>, value: &dyn Fn(&str) -> Option<String>) -> Vec<Vec<Run>> {
+/// The runs of one column with the `{placeholders}` filled in, as lines (a value of several lines
+/// breaks it), and whether there was a placeholder and whether one of them had something to say.
+fn fill_column(
+    column: Vec<Run>,
+    value: &dyn Fn(&str) -> Option<String>,
+) -> (Vec<Vec<Run>>, bool, bool) {
+    let mut result: Vec<Vec<Run>> = vec![Vec::new()];
+    let (mut replaced, mut said) = (false, false);
+    for run in column {
+        let mut rest = run.text.as_str();
+        while !rest.is_empty() {
+            let found = rest.find('{').and_then(|open| {
+                let close = rest[open..].find('}')? + open;
+                Some((open, close, value(&rest[open + 1..close])?))
+            });
+            let (before, replacement, after) = match found {
+                Some((open, close, text)) => (&rest[..open], Some(text), &rest[close + 1..]),
+                None => (rest, None, ""),
+            };
+            let push = |text: &str, result: &mut Vec<Vec<Run>>| {
+                if !text.is_empty() {
+                    result.last_mut().expect("a line").push(Run {
+                        text: text.to_owned(),
+                        bold: run.bold,
+                        italic: run.italic,
+                    });
+                }
+            };
+            push(before, &mut result);
+            if let Some(text) = replacement {
+                replaced = true;
+                said |= !text.trim().is_empty();
+                for (i, part) in text.split('\n').enumerate() {
+                    if i > 0 {
+                        result.push(Vec::new());
+                    }
+                    push(part, &mut result);
+                }
+            }
+            rest = after;
+        }
+    }
+    (result, replaced, said)
+}
+
+/// Puts the data of the company into the `{placeholders}` of lines. A value of several lines
+/// breaks the line it stands in. A line with placeholders that all come out empty goes, the fixed
+/// text on it too (`Tel.: {seller_phone}`), so an unset field leaves no gap and no label behind;
+/// a line without placeholders stays, even when it is empty.
+pub fn fill(lines: Vec<Line>, value: &dyn Fn(&str) -> Option<String>) -> Vec<Line> {
     lines
         .into_iter()
         .flat_map(|line| {
-            let mut result: Vec<Vec<Run>> = vec![Vec::new()];
-            for run in line {
-                let mut rest = run.text.as_str();
-                while !rest.is_empty() {
-                    let found = rest.find('{').and_then(|open| {
-                        let close = rest[open..].find('}')? + open;
-                        Some((open, close, value(&rest[open + 1..close])?))
-                    });
-                    let (before, replacement, after) = match found {
-                        Some((open, close, text)) => {
-                            (&rest[..open], Some(text), &rest[close + 1..])
-                        }
-                        None => (rest, None, ""),
-                    };
-                    let push = |text: &str, result: &mut Vec<Vec<Run>>| {
-                        if !text.is_empty() {
-                            result.last_mut().expect("a line").push(Run {
-                                text: text.to_owned(),
-                                bold: run.bold,
-                                italic: run.italic,
-                            });
-                        }
-                    };
-                    push(before, &mut result);
-                    if let Some(text) = replacement {
-                        for (i, part) in text.split('\n').enumerate() {
-                            if i > 0 {
-                                result.push(Vec::new());
-                            }
-                            push(part, &mut result);
-                        }
-                    }
-                    rest = after;
-                }
+            let width = line.len();
+            let filled: Vec<_> = line
+                .into_iter()
+                .map(|column| fill_column(column, value))
+                .collect();
+            let replaced = filled.iter().any(|(_, replaced, _)| *replaced);
+            let said = filled.iter().any(|(_, _, said)| *said);
+            if replaced && !said {
+                return Vec::new();
             }
-            result
+            // every column starts in the first line, its further lines go under it
+            let height = filled
+                .iter()
+                .map(|(lines, _, _)| lines.len())
+                .max()
+                .unwrap_or(1);
+            let mut rows: Vec<Line> = vec![vec![Vec::new(); width]; height];
+            filled
+                .into_iter()
+                .enumerate()
+                .for_each(|(column, (lines, _, _))| {
+                    lines
+                        .into_iter()
+                        .enumerate()
+                        .for_each(|(row, runs)| rows[row][column] = runs);
+                });
+            rows
         })
         .collect()
 }
@@ -288,8 +338,25 @@ fn part_view(
 
 /// What a `{placeholder}` of a text part stands for.
 fn placeholder(view: &InvoiceView, name: &str) -> Option<String> {
+    let fields = &view.seller_fields;
     match name {
         "seller_name" => Some(view.seller.name.clone()),
+        // single fields: the plain value, empty when it is not set
+        "seller_street" => Some(fields.street.clone()),
+        "seller_postcode_city" => Some(fields.postcode_city.clone()),
+        "seller_phone" => Some(fields.phone.clone()),
+        "seller_mobile" => Some(fields.mobile.clone()),
+        "seller_fax" => Some(fields.fax.clone()),
+        "seller_email" => Some(fields.email.clone()),
+        "seller_website" => Some(fields.website.clone()),
+        "seller_contact_name" => Some(fields.contact_name.clone()),
+        "seller_tax_number" => Some(fields.tax_number.clone()),
+        "seller_vat_id" => Some(fields.vat_id.clone()),
+        "bank_name" => Some(fields.bank_name.clone()),
+        "iban" => Some(fields.iban.clone()),
+        "bic" => Some(fields.bic.clone()),
+        "account_holder" => Some(fields.account_holder.clone()),
+        // blocks of lines
         "seller_address" => Some(view.seller.address.join("\n")),
         "seller_contact" => Some(view.seller.contact.join("\n")),
         "seller_registration" => Some(view.seller.registration.join("\n")),
@@ -355,10 +422,16 @@ pub fn page_view(
 mod tests {
     use super::*;
 
-    fn texts(lines: &[Vec<Run>]) -> Vec<String> {
+    /// The text of every line, its columns divided by a tab
+    fn texts(lines: &[Line]) -> Vec<String> {
         lines
             .iter()
-            .map(|l| l.iter().map(|r| r.text.as_str()).collect())
+            .map(|line| {
+                line.iter()
+                    .map(|column| column.iter().map(|r| r.text.as_str()).collect::<String>())
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
             .collect()
     }
 
@@ -367,8 +440,8 @@ mod tests {
         let lines = runs("**Muster** GmbH\nein *Satz*");
 
         assert_eq!(texts(&lines), ["Muster GmbH", "ein Satz"]);
-        assert!(lines[0][0].bold && !lines[0][1].bold);
-        assert!(lines[1][1].italic && !lines[1][0].italic);
+        assert!(lines[0][0][0].bold && !lines[0][0][1].bold);
+        assert!(lines[1][0][1].italic && !lines[1][0][0].italic);
     }
 
     #[test]
@@ -388,6 +461,212 @@ mod tests {
 
         assert_eq!(placeholder(&view, "legal").as_deref(), Some("HRB 1"));
         assert_eq!(placeholder(&view, "footer").as_deref(), Some("HRB 1"));
+    }
+
+    fn seller_view(
+        settings: &crate::model::Settings,
+        format: &crate::model::Format,
+    ) -> InvoiceView {
+        use crate::draft::{build_invoice, fixtures};
+        use crate::render::view::{build, Branding};
+
+        let draft = fixtures::draft();
+        let invoice = build_invoice(&draft, settings, "RE-1").unwrap();
+        build(
+            &invoice,
+            &Branding::for_document(crate::model::Kind::Invoice, &draft, settings, &[]),
+            format,
+        )
+    }
+
+    const SINGLE: [&str; 15] = [
+        "seller_name",
+        "seller_street",
+        "seller_postcode_city",
+        "seller_phone",
+        "seller_mobile",
+        "seller_fax",
+        "seller_email",
+        "seller_website",
+        "seller_contact_name",
+        "seller_tax_number",
+        "seller_vat_id",
+        "bank_name",
+        "iban",
+        "bic",
+        "account_holder",
+    ];
+
+    #[test]
+    fn single_seller_fields_are_placeholders_with_their_plain_value() {
+        use crate::draft::fixtures;
+
+        let mut settings = fixtures::settings();
+        settings.seller.address.street = "Hauptstraße 5\nHinterhaus".into();
+        settings.seller.tax_number = Some("123/456/78901".into());
+        settings.seller.mobile = Some(" 0171 555 ".into());
+        settings.seller.fax = Some("+49 221 123457".into());
+        settings.seller.website = Some("https://muster.example".into());
+        settings.seller.bank_name = Some("Musterbank".into());
+        let view = seller_view(
+            &settings,
+            &crate::model::Format {
+                iban_groups: true,
+                ..crate::model::Format::default()
+            },
+        );
+
+        let values = SINGLE.map(|name| placeholder(&view, name).unwrap());
+
+        assert_eq!(
+            values,
+            [
+                "Muster Software GmbH",
+                // a second address line follows the first in the same placeholder
+                "Hauptstraße 5\nHinterhaus",
+                "50667 Köln",
+                "+49 221 123456",
+                "0171 555",
+                "+49 221 123457",
+                "max@muster.example",
+                "https://muster.example",
+                "Max Muster",
+                "123/456/78901",
+                "DE123456789",
+                "Musterbank",
+                "DE02 1203 0000 0000 2020 51",
+                "BYLADEM1001",
+                "Muster Software GmbH",
+            ]
+        );
+    }
+
+    #[test]
+    fn single_seller_fields_are_empty_when_the_seller_has_none() {
+        use crate::draft::fixtures;
+
+        let mut settings = fixtures::settings();
+        settings.seller.vat_id = None;
+        settings.seller.contact_name = String::new();
+        settings.seller.phone = String::new();
+        settings.seller.email = String::new();
+        settings.seller.bic = None;
+        settings.seller.account_holder = None;
+        // blank text is as good as none
+        settings.seller.mobile = Some("  ".into());
+        let view = seller_view(&settings, &crate::model::Format::default());
+
+        let empty = [
+            "seller_phone",
+            "seller_mobile",
+            "seller_fax",
+            "seller_email",
+            "seller_website",
+            "seller_contact_name",
+            "seller_tax_number",
+            "seller_vat_id",
+            "bank_name",
+            "bic",
+            "account_holder",
+        ];
+        assert!(empty
+            .iter()
+            .all(|name| placeholder(&view, name).as_deref() == Some("")));
+        // what is set still comes through
+        assert_eq!(
+            placeholder(&view, "seller_postcode_city").as_deref(),
+            Some("50667 Köln")
+        );
+    }
+
+    #[test]
+    fn the_iban_placeholder_follows_the_grouping_of_the_layout() {
+        use crate::draft::fixtures;
+
+        let mut settings = fixtures::settings();
+        settings.seller.iban = "DE02120300000000202051".into();
+        let iban = |groups| {
+            let view = seller_view(
+                &settings,
+                &crate::model::Format {
+                    iban_groups: groups,
+                    ..crate::model::Format::default()
+                },
+            );
+            placeholder(&view, "iban").unwrap()
+        };
+
+        assert_eq!(iban(true), "DE02 1203 0000 0000 2020 51");
+        assert_eq!(iban(false), "DE02120300000000202051");
+    }
+
+    fn values(name: &str) -> Option<String> {
+        match name {
+            "set" => Some("x".into()),
+            "empty" | "also" => Some(String::new()),
+            "blank" => Some("  ".into()),
+            "two" => Some("a\nb".into()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_line_whose_placeholders_are_all_empty_goes_with_its_fixed_text() {
+        let filled = fill(
+            runs("{set}\n{empty}\n**{empty}**\n{empty} {also}\n\nTel: {empty}\n{empty}{set}\n{unknown}\nSt.-Nr.: {blank}"),
+            &values,
+        );
+
+        // a label in front of nothing goes with it, a line written empty is the author's
+        assert_eq!(texts(&filled), ["x", "", "x", "{unknown}"]);
+    }
+
+    #[test]
+    fn a_line_without_placeholders_is_never_dropped() {
+        let filled = fill(runs("Tel:\n\nnur Text\nTel:\t"), &values);
+
+        assert_eq!(texts(&filled), ["Tel:", "", "nur Text", "Tel:\t"]);
+    }
+
+    #[test]
+    fn a_placeholder_that_says_something_keeps_the_line_whatever_the_others_say() {
+        let filled = fill(runs("{empty} Mobil {set}\nFax {empty}, Tel {set}"), &values);
+
+        assert_eq!(texts(&filled), [" Mobil x", "Fax , Tel x"]);
+    }
+
+    #[test]
+    fn a_tab_splits_a_line_into_columns_and_a_row_goes_when_its_values_are_empty() {
+        let filled = fill(
+            runs("Telefon:\t{set}\nMobil:\t{empty}\nFax:\t{also}\nWeb:\t{set}\n\nKontakt"),
+            &values,
+        );
+
+        assert_eq!(texts(&filled), ["Telefon:\tx", "Web:\tx", "", "Kontakt"]);
+        // every column of a line is there, a line without a tab has the one
+        assert_eq!(
+            filled.iter().map(Vec::len).collect::<Vec<_>>(),
+            [2, 2, 1, 1]
+        );
+    }
+
+    #[test]
+    fn markdown_works_in_every_column_and_goes_on_over_a_tab() {
+        let lines = runs("**Telefon:**\t*{set}* ok\n**a\tb**");
+
+        assert_eq!(texts(&lines), ["Telefon:\t{set} ok", "a\tb"]);
+        assert!(lines[0][0][0].bold && !lines[0][1][0].bold);
+        assert!(lines[0][1][0].italic && !lines[0][1][1].italic);
+        // the bold run is open when the tab comes, so the next column is bold too
+        assert!(lines[1][0][0].bold && lines[1][1][0].bold);
+    }
+
+    #[test]
+    fn a_value_of_several_lines_in_a_column_goes_under_its_first_line() {
+        let filled = fill(runs("Anschrift:\t{two}\t{set}"), &values);
+
+        // the other columns have nothing in the lines that follow
+        assert_eq!(texts(&filled), ["Anschrift:\ta\tx", "\tb\t"]);
     }
 
     #[test]
@@ -485,7 +764,7 @@ mod tests {
         );
 
         assert_eq!(texts(&filled), ["Muster", "a", "b end", "{unknown}"]);
-        assert!(filled[0][0].bold);
+        assert!(filled[0][0][0].bold);
     }
 
     #[test]

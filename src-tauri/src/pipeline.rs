@@ -637,6 +637,138 @@ mod tests {
         assert!(red.matches("#ff0000").count() >= 2, "{red}");
     }
 
+    /// The settings of the fixture seller with every field a layout can show, and a legal text of
+    /// four lines.
+    fn full_seller() -> crate::model::Settings {
+        let mut settings = crate::draft::fixtures::settings();
+        settings.seller.mobile = Some("+49 171 5551234".into());
+        settings.seller.fax = Some("+49 221 123457".into());
+        settings.seller.website = Some("www.muster-software.example".into());
+        settings.seller.bank_name = Some("Musterbank Köln eG".into());
+        settings.seller.tax_number = Some("123/456/78901".into());
+        settings.seller.legal_info = Some(
+            "Geschäftsführer: Max Muster, Erika Beispiel\nAmtsgericht Köln, HRB 12345\n\
+             Sitz der Gesellschaft: Köln\nHaftung auf Grundlage der AGB"
+                .into(),
+        );
+        settings
+    }
+
+    /// The built-in layout with all fields of the seller set: the contact column shows them all, and
+    /// no column of the footer runs into the text under it or off the printable area. `RENDER_OUT`
+    /// keeps the PDF.
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn the_builtin_layout_shows_every_seller_field_and_its_footer_fits() {
+        use crate::draft::{build_invoice, fixtures};
+        let sidecars = Sidecars::in_repo();
+        let settings = full_seller();
+        let draft = fixtures::draft();
+        let invoice = build_invoice(&draft, &settings, "RE-2026-001").unwrap();
+        let branding = Branding {
+            marks: true,
+            ..Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[])
+        };
+        let dir = tempfile::tempdir().unwrap();
+
+        let (_, boxes) = render::render_sample(&sidecars, dir.path(), &invoice, &branding).unwrap();
+
+        // the footer of the first page: columns (name, contact, registration) over the legal text
+        let on_first = |index: usize| {
+            boxes
+                .iter()
+                .find(|b| b.page == 1 && b.first && b.index == index)
+                .unwrap_or_else(|| panic!("no part {index} in {boxes:#?}"))
+        };
+        let legal = on_first(4);
+        [1, 2, 3].iter().for_each(|index| {
+            let column = on_first(*index);
+            assert!(
+                column.y + column.h <= legal.y,
+                "column {index} runs into the legal text: {column:?} {legal:?}"
+            );
+        });
+        // desktop printers leave 5 mm blank at the edge of A4
+        assert!(legal.y + legal.h <= 292.0, "{legal:?}");
+
+        let produced = produce(
+            &sidecars,
+            dir.path(),
+            &invoice,
+            ProfileKind::En16931,
+            &branding,
+        )
+        .unwrap();
+        assert!(
+            produced.report.valid,
+            "{:#?}",
+            produced.report.errors().collect::<Vec<_>>()
+        );
+        if let Ok(keep) = std::env::var("RENDER_OUT") {
+            std::fs::create_dir_all(&keep).unwrap();
+            std::fs::copy(
+                &produced.pdf,
+                format!("{keep}/builtin-all-seller-fields.pdf"),
+            )
+            .unwrap();
+        }
+    }
+
+    /// A text part with tabs is one grid: a row whose values are empty is gone, so the rows below
+    /// move up inside their columns. `RENDER_OUT` keeps a PDF of both.
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn a_tabbed_footer_part_lines_up_and_loses_the_rows_without_a_value() {
+        use crate::draft::{build_invoice, fixtures};
+        use crate::layout::{builtin, Align, Anchor, Part, PartContent};
+        let sidecars = Sidecars::in_repo();
+        let draft = fixtures::draft();
+        let render = |name: &str, mobile: Option<&str>| {
+            let mut settings = full_seller();
+            settings.seller.mobile = mobile.map(Into::into);
+            let invoice = build_invoice(&draft, &settings, "RE-2026-001").unwrap();
+            let mut layout = builtin();
+            layout.first = None;
+            layout.page.parts = vec![Part {
+                anchor: Anchor::TopLeft,
+                x: 25.0,
+                y: 240.0,
+                width: Some(60.0),
+                content: PartContent::Text {
+                    text:
+                        "**Kontakt**\nTelefon:\t{seller_phone}\nMobil:\t{seller_mobile}\n\
+                           Fax:\t{seller_fax}\nSt.-Nr.:\t{seller_tax_number}\nWeb: {seller_website}"
+                            .into(),
+                    family: None,
+                    size: 9.0,
+                    align: Align::Left,
+                    color: None,
+                },
+            }];
+            let branding = Branding {
+                custom: Some(layout),
+                marks: true,
+                ..Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[])
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let (_, boxes) =
+                render::render_sample(&sidecars, dir.path(), &invoice, &branding).unwrap();
+            if let Ok(keep) = std::env::var("RENDER_OUT") {
+                std::fs::create_dir_all(&keep).unwrap();
+                let pdf = render::render_pdf(&sidecars, dir.path(), &invoice, &branding).unwrap();
+                std::fs::copy(pdf, format!("{keep}/tabbed-footer-{name}.pdf")).unwrap();
+            }
+            boxes.into_iter().find(|b| b.page == 1).unwrap()
+        };
+
+        let all = render("all", Some("+49 171 5551234"));
+        let without = render("no-mobile", None);
+
+        // the missing row takes its height with it: one line of 9 pt and its gap
+        assert!(all.h - without.h > 3.0, "{all:?} {without:?}");
+        assert!((all.w - without.w).abs() < 0.5, "{all:?} {without:?}");
+    }
+
     /// Enough of base64 for a fixture.
     fn base64_decode(text: &str) -> Vec<u8> {
         const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
