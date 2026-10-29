@@ -12,6 +12,7 @@ export type Defaults = Pick<
   | 'intro'
   | 'closing'
   | 'invoice_wording'
+  | 'offer_reference'
   | 'offer'
 >;
 
@@ -28,6 +29,7 @@ export function inheritedDefaults(from: Defaults): Defaults {
     intro: from.intro,
     closing: from.closing,
     invoice_wording: from.invoice_wording,
+    offer_reference: from.offer_reference,
     offer: from.offer,
   });
 }

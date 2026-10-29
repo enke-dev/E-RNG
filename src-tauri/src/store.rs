@@ -1490,6 +1490,7 @@ impl Store {
         draft.delivery_end = draft.delivery_end.map(|_| today.into());
         draft.frozen = None;
         draft.frozen_layout = None;
+        draft.frozen_offers = Vec::new();
         self.save_draft(None, source.context_id, source.kind, &draft, None)
     }
 
@@ -1574,6 +1575,20 @@ impl Store {
             })
         })
         .collect()
+    }
+
+    /// The numbers of the created offers linked to an invoice, oldest first: what an invoice that
+    /// names its offers prints. A draft offer has no number yet and is left out.
+    pub fn offer_numbers(&self, invoice_id: i64) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT o.number FROM document_links l JOIN invoices o ON o.id = l.offer_id
+             WHERE l.invoice_id = ?1 AND o.number IS NOT NULL ORDER BY o.id",
+        )?;
+        let numbers = statement
+            .query_map([invoice_id], |r| r.get(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        Ok(numbers)
     }
 
     /// Links an offer to an invoice of the same context, nothing happens when they are linked.
@@ -1813,6 +1828,10 @@ impl Store {
         let mut draft = stored.draft;
         draft.frozen = Some(frozen.clone());
         draft.frozen_layout = frozen_layout.cloned();
+        // what the invoice names, as `offer_numbers` told the render
+        if kind == Kind::Invoice && draft.offer_reference {
+            draft.frozen_offers = self.offer_numbers(id)?;
+        }
         let changed = self.conn().execute(
             "UPDATE invoices SET number = ?1, counter = ?2, issued_on = ?3, status = 'exported',
                  draft = ?4, total = ?5, files = ?6, exported_at = datetime('now'),
@@ -3791,6 +3810,89 @@ mod tests {
         assert_eq!(draft_end.status, Status::Draft);
         assert_eq!(draft_end.customer_name, "Dritte KG");
         assert_eq!(store.links(b.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_invoice_that_names_its_offers_freezes_their_numbers_when_it_is_created() {
+        let store = Store::in_memory().unwrap();
+        let first = create_as(&store, 1, Kind::Offer, "AN-2026-001");
+        let second = create_as(&store, 1, Kind::Offer, "AN-2026-002");
+        let open = draft_of(&store, 1, Kind::Offer, "Dritte KG");
+        let naming = InvoiceDraft {
+            offer_reference: true,
+            ..draft()
+        };
+        let named = store
+            .save_draft(None, 1, Kind::Invoice, &naming, None)
+            .unwrap()
+            .id;
+        let silent = store
+            .save_draft(None, 1, Kind::Invoice, &draft(), None)
+            .unwrap()
+            .id;
+        for offer in [second.id, first.id, open.id] {
+            store.link(offer, named).unwrap();
+            store.link(offer, silent).unwrap();
+        }
+
+        // oldest first, an offer that has no number yet is left out
+        assert_eq!(
+            store.offer_numbers(named).unwrap(),
+            ["AN-2026-001", "AN-2026-002"]
+        );
+
+        let created = store
+            .finalize(
+                named,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
+            .unwrap();
+        let unnamed = store
+            .finalize(
+                silent,
+                &at("RE-2026-002", 2),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
+            .unwrap();
+        assert_eq!(created.draft.frozen_offers, ["AN-2026-001", "AN-2026-002"]);
+        assert!(unnamed.draft.frozen_offers.is_empty());
+
+        // a link that changes later does not change what the invoice froze
+        store.unlink(first.id, named).unwrap();
+        assert_eq!(
+            store.invoice(named).unwrap().draft.frozen_offers,
+            ["AN-2026-001", "AN-2026-002"]
+        );
+        // a copy keeps the choice, and none of what was frozen
+        let copy = store.duplicate(named, "2026-10-20").unwrap();
+        assert!(copy.draft.offer_reference);
+        assert!(copy.draft.frozen_offers.is_empty());
+    }
+
+    #[test]
+    fn an_invoice_from_an_offer_starts_with_the_choice_of_the_settings() {
+        let store = Store::in_memory().unwrap();
+        let offer = create_as(&store, 1, Kind::Offer, "AN-2026-001");
+        let mut settings = settings();
+
+        let silent = store
+            .invoice_from_offer(offer.id, "2026-10-20", &settings)
+            .unwrap();
+        settings.offer_reference = true;
+        let naming = store
+            .invoice_from_offer(offer.id, "2026-10-20", &settings)
+            .unwrap();
+
+        assert!(!silent.draft.offer_reference);
+        assert!(naming.draft.offer_reference);
+        assert_eq!(store.offer_numbers(naming.id).unwrap(), ["AN-2026-001"]);
     }
 
     #[test]

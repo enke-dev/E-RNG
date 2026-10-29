@@ -478,6 +478,8 @@ pub(crate) mod fixtures {
             closing: None,
             frozen: None,
             frozen_layout: None,
+            offer_reference: false,
+            frozen_offers: Vec::new(),
         }
     }
 }

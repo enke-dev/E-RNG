@@ -1654,6 +1654,13 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           .filter(l => !l.archived || l.id === settings.layout)
           .map(l => html`<wa-option value="${l.id}">${l.name}</wa-option>`)}
       </wa-select>
+      <wa-switch
+        ?checked="${settings.offer_reference}"
+        hint="Neue Rechnungen nennen die Nummer des Angebots, mit dem sie verknüpft sind. Jede Rechnung kann das ändern."
+        @change="${(e: Event) => this.edit(s => (s.offer_reference = (e.target as WaSwitch).checked))}"
+      >
+        Angebotsnummer auf der Rechnung angeben
+      </wa-switch>
     `;
   }
 

@@ -84,6 +84,8 @@ pub enum InfoField {
     DueDate,
     BuyerReference,
     PrecedingInvoice,
+    /// Invoices that name the offers they are linked to
+    OfferReference,
     TaxNumber,
     VatId,
 }
@@ -369,6 +371,7 @@ pub fn builtin() -> CustomLayout {
                     InfoField::DueDate,
                     InfoField::BuyerReference,
                     InfoField::PrecedingInvoice,
+                    InfoField::OfferReference,
                 ],
                 labels: true,
                 align: Align::Right,

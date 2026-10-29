@@ -14,6 +14,7 @@ const defaults = (): Defaults => ({
   intro: 'Hallo',
   closing: 'Tschüss',
   invoice_wording: { title: 'Faktura', draft_title: '', number_label: '' },
+  offer_reference: true,
   offer: {
     number_pattern: '[O-]YYYY-NNN',
     number_reset: 'never',
@@ -26,7 +27,7 @@ const defaults = (): Defaults => ({
 });
 
 describe('inheritedDefaults', () => {
-  it('takes the invoice defaults, the counter resets, the fiscal year and the offer settings along', () => {
+  it('takes the invoice defaults, the counter resets, the fiscal year, the offer reference and the offer settings along', () => {
     expect(inheritedDefaults(defaults())).toEqual(defaults());
   });
 

@@ -63,6 +63,7 @@ const settings: Settings = {
     draft_title: 'Rechnungsentwurf',
     number_label: 'Rechnungsnummer',
   },
+  offer_reference: false,
   offer: {
     number_pattern: '[AN-]YYYY-NNN',
     number_reset: 'fiscal_year',
@@ -496,6 +497,7 @@ const draftOf = (customer: Customer): InvoiceDraft => ({
   layout: null,
   intro: null,
   closing: null,
+  offer_reference: false,
   frozen: null,
 });
 
@@ -1028,6 +1030,7 @@ export function installMocks() {
             delivery_date: today(),
             delivery_end: null,
             validity_days: kind === 'offer' ? own.offer.validity_days : null,
+            offer_reference: kind === 'invoice' && own.offer_reference,
             layout: (kind === 'offer' && own.offer.layout) || own.layout,
             intro: (kind === 'offer' ? own.offer.intro : own.intro) ?? '',
             closing: (kind === 'offer' ? own.offer.closing : own.closing) ?? '',
@@ -1099,6 +1102,7 @@ export function installMocks() {
             layout: own.layout,
             intro: own.intro ?? '',
             closing: own.closing ?? '',
+            offer_reference: own.offer_reference,
           };
           const invoice: StoredInvoice = {
             id: nextId(),

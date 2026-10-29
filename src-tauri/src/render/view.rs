@@ -38,6 +38,10 @@ pub struct Branding {
     pub wording: Wording,
     /// Offers: the day it is valid until
     pub valid_until: Option<Date>,
+    /// Invoices: the numbers of the offers it names, none when it names no offer
+    pub offers: Vec<String>,
+    /// The label of the offers' row: "Zu Angebot", by what offers are called
+    pub offer_label: String,
     /// The label of each position's unit, by position: the lines are the positions in order
     pub unit_labels: Vec<String>,
 }
@@ -106,6 +110,12 @@ impl Branding {
                 .valid_until()
                 .filter(|_| kind == Kind::Offer)
                 .and_then(|day| Date::parse(&day).ok()),
+            offers: if kind == Kind::Invoice && draft.offer_reference {
+                draft.frozen_offers.clone()
+            } else {
+                Vec::new()
+            },
+            offer_label: format!("Zu {}", settings.wording(Kind::Offer).title),
             intro: pick(draft.intro.as_deref(), settings.intro(kind)),
             closing: pick(draft.closing.as_deref(), settings.closing(kind)),
             unit_labels: draft.positions.iter().map(Position::unit_label).collect(),
@@ -406,6 +416,13 @@ fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Dat
             "preceding-invoice",
             "Zu Rechnung",
             original.reference.as_str().to_owned(),
+        ));
+    }
+    if !branding.offers.is_empty() {
+        infos.push(text(
+            "offer-reference",
+            &branding.offer_label,
+            branding.offers.join(", "),
         ));
     }
     if let Some(number) = &invoice.seller.tax_registration {
@@ -927,6 +944,43 @@ mod tests {
         let branding = Branding::for_document(Kind::Offer, &draft, &settings, &[]);
         let view = build(&invoice, &branding, &Format::default());
         assert_eq!(view.totals.last().unwrap().label, "Gesamtbetrag");
+    }
+
+    #[test]
+    fn an_invoice_names_the_offers_it_froze_when_it_chose_to() {
+        let mut settings = crate::draft::fixtures::settings();
+        let mut draft = InvoiceDraft {
+            offer_reference: true,
+            frozen_offers: vec!["AN-2026-003".into(), "AN-2026-007".into()],
+            ..crate::draft::fixtures::draft()
+        };
+        let invoice = crate::draft::build_invoice(&draft, &settings, "RE-1").unwrap();
+        let row = |draft: &InvoiceDraft, kind, settings: &Settings| {
+            let branding = Branding::for_document(kind, draft, settings, &[]);
+            build(&invoice, &branding, &Format::default())
+                .infos
+                .into_iter()
+                .find(|i| i.key == "offer-reference")
+                .map(|i| (i.label, i.value))
+        };
+
+        assert_eq!(
+            row(&draft, Kind::Invoice, &settings),
+            Some(("Zu Angebot".into(), "AN-2026-003, AN-2026-007".into()))
+        );
+        // called what the settings call offers
+        settings.offer.wording.title = "Offerte".into();
+        assert_eq!(
+            row(&draft, Kind::Invoice, &settings).map(|r| r.0),
+            Some("Zu Offerte".into())
+        );
+        // no choice, no offers, or an offer: no row
+        draft.offer_reference = false;
+        assert_eq!(row(&draft, Kind::Invoice, &settings), None);
+        draft.offer_reference = true;
+        assert_eq!(row(&draft, Kind::Offer, &settings), None);
+        draft.frozen_offers.clear();
+        assert_eq!(row(&draft, Kind::Invoice, &settings), None);
     }
 
     #[test]

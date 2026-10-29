@@ -78,6 +78,8 @@ export interface Settings {
   intro: string | null;
   closing: string | null;
   invoice_wording: Wording;
+  /** New invoices name the offers they are linked to, each invoice may choose otherwise */
+  offer_reference: boolean;
   offer: OfferSettings;
 }
 
@@ -201,6 +203,8 @@ export interface InvoiceDraft {
   layout: string | null;
   intro: string | null;
   closing: string | null;
+  /** Invoices: the document names the numbers of the offers it is linked to */
+  offer_reference: boolean;
   frozen: Settings | null;
 }
 
@@ -381,6 +385,7 @@ export type InfoField =
   | 'due-date'
   | 'buyer-reference'
   | 'preceding-invoice'
+  | 'offer-reference'
   | 'tax-number'
   | 'vat-id';
 

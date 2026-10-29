@@ -175,6 +175,8 @@ pub struct Settings {
     pub closing: Option<String>,
     /// What invoices call themselves
     pub invoice_wording: Wording,
+    /// New invoices name the offers they are linked to, each invoice may choose otherwise
+    pub offer_reference: bool,
     /// Numbers, validity, texts and wording of offers
     pub offer: OfferSettings,
 }
@@ -195,6 +197,7 @@ impl Default for Settings {
             intro: None,
             closing: None,
             invoice_wording: Wording::invoice(),
+            offer_reference: false,
             offer: OfferSettings::default(),
         }
     }
@@ -293,8 +296,9 @@ impl Settings {
         draft.layout = Some(self.layout_for(kind).to_owned());
         draft.intro = Some(self.intro(kind).unwrap_or_default().to_owned());
         draft.closing = Some(self.closing(kind).unwrap_or_default().to_owned());
-        if kind == Kind::Offer {
-            draft.validity_days = self.offer.validity_days;
+        match kind {
+            Kind::Offer => draft.validity_days = self.offer.validity_days,
+            Kind::Invoice => draft.offer_reference = self.offer_reference,
         }
         draft
     }
@@ -450,6 +454,12 @@ pub struct InvoiceDraft {
     /// The own layout it was made with, frozen like the settings
     #[serde(default)]
     pub frozen_layout: Option<CustomLayout>,
+    /// Invoices: the document names the numbers of the offers it is linked to
+    #[serde(default)]
+    pub offer_reference: bool,
+    /// The numbers of the linked offers, as they were when the invoice was created
+    #[serde(default)]
+    pub frozen_offers: Vec<String>,
 }
 
 impl InvoiceDraft {
@@ -478,6 +488,8 @@ impl InvoiceDraft {
             closing: None,
             frozen: None,
             frozen_layout: None,
+            offer_reference: false,
+            frozen_offers: Vec::new(),
         }
     }
 }
@@ -670,6 +682,20 @@ mod tests {
         assert_eq!(invoice.intro.as_deref(), Some("Rechnungstext"));
         assert_eq!(invoice.closing.as_deref(), Some(""));
         assert_eq!(invoice.validity_days, None);
+        assert!(!invoice.offer_reference);
+        settings.offer_reference = true;
+        assert!(
+            settings
+                .blank_draft(Kind::Invoice, "2026-10-17")
+                .offer_reference
+        );
+        // an offer names no offers
+        assert!(
+            !settings
+                .blank_draft(Kind::Offer, "2026-10-17")
+                .offer_reference
+        );
+        settings.offer_reference = false;
 
         // an offer without a layout of its own takes the invoices'
         let offer = settings.blank_draft(Kind::Offer, "2026-10-17");

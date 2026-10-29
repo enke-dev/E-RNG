@@ -219,7 +219,7 @@ pub fn create(
     data: &Path,
     id: i64,
 ) -> Result<Created, ProduceError> {
-    let stored = store.invoice(id).map_err(failed)?;
+    let mut stored = store.invoice(id).map_err(failed)?;
     if stored.status != Status::Draft {
         return Err(failed("the invoice is created already"));
     }
@@ -229,6 +229,10 @@ pub fn create(
         ));
     };
     let settings = store.settings(stored.context_id).map_err(failed)?;
+    // the offers it is linked to now are the ones it names, `finalize` freezes the same
+    if stored.kind == Kind::Invoice && stored.draft.offer_reference {
+        stored.draft.frozen_offers = store.offer_numbers(id).map_err(failed)?;
+    }
     let sequence = next_sequence(store, id)?;
     let number = sequence.next_number.clone();
     let (files, total, layout, warnings) = match stored.kind {
@@ -524,6 +528,35 @@ mod tests {
             assert!(out.path().join("a.pdf").is_file());
             // an offer is not made again
             assert!(regenerate(&Sidecars::in_repo(), &store, data.path(), id).is_err());
+        }
+
+        #[test]
+        #[ignore = "needs the sidecars: bun run generate:sidecars"]
+        fn an_invoice_that_names_its_offers_freezes_them_and_stays_valid() {
+            let (store, context, data) = setup();
+            let sidecars = Sidecars::in_repo();
+            let offer = store
+                .save_draft(None, context, Kind::Offer, &draft(), None)
+                .unwrap()
+                .id;
+            let offer = create(&sidecars, &store, &Creating::default(), data.path(), offer)
+                .unwrap()
+                .invoice;
+            let naming = InvoiceDraft {
+                offer_reference: true,
+                ..draft()
+            };
+            let id = store
+                .save_draft(None, context, Kind::Invoice, &naming, None)
+                .unwrap()
+                .id;
+            store.link(offer.id, id).unwrap();
+
+            let created = create(&sidecars, &store, &Creating::default(), data.path(), id).unwrap();
+
+            // the XML has no reference to an offer, only the document does
+            assert_eq!(created.invoice.draft.frozen_offers, ["AN-2026-001"]);
+            assert!(created.invoice.files.unwrap().xml.is_some());
         }
 
         #[test]

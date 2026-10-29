@@ -171,6 +171,7 @@ fn info(view: &InvoiceView, field: InfoField, long: bool) -> Option<InfoRow> {
         InfoField::DueDate => "due-date",
         InfoField::BuyerReference => "buyer-reference",
         InfoField::PrecedingInvoice => "preceding-invoice",
+        InfoField::OfferReference => "offer-reference",
         InfoField::TaxNumber => "tax-number",
         InfoField::VatId => "vat-id",
     };
@@ -408,6 +409,42 @@ mod tests {
             Some("")
         );
         assert!(info(&view_of(Kind::Invoice), InfoField::ValidUntil, false).is_none());
+    }
+
+    #[test]
+    fn the_builtin_layout_shows_the_offers_an_invoice_names() {
+        use crate::draft::{build_invoice, fixtures};
+        use crate::model::InvoiceDraft;
+        use crate::render::view::{build, Branding};
+
+        let settings = fixtures::settings();
+        let draft = InvoiceDraft {
+            offer_reference: true,
+            frozen_offers: vec!["AN-2026-003".into()],
+            ..fixtures::draft()
+        };
+        let invoice = build_invoice(&draft, &settings, "RE-1").unwrap();
+        let view = build(
+            &invoice,
+            &Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[]),
+            &crate::model::Format::default(),
+        );
+        let builtin = crate::layout::builtin();
+        let shown: Vec<_> = builtin
+            .page
+            .parts
+            .iter()
+            .chain(builtin.first.iter().flat_map(|first| &first.parts))
+            .filter_map(|part| match &part.content {
+                PartContent::Infos { fields, .. } => Some(fields),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|field| info(&view, *field, false))
+            .collect();
+
+        let row = shown.iter().find(|row| row.label == "Zu Angebot").unwrap();
+        assert_eq!(row.value, "AN-2026-003");
     }
 
     #[test]

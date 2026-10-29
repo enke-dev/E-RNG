@@ -195,6 +195,11 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     return this.stored?.status === 'exported';
   }
 
+  /** An invoice that is not created yet and may name the offers it is linked to: they show in the preview */
+  private get namesOffers() {
+    return this.kind === 'invoice' && !this.locked && this.draft?.offer_reference === true;
+  }
+
   private get texts() {
     return KINDS[this.kind];
   }
@@ -691,6 +696,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       this.linkable = undefined;
       this.links = await api.documentLinks(this.stored.id);
       this.announce();
+      this.namesOffers && void this.renderPreview();
     } catch (error) {
       notifyError(error);
     }
@@ -704,6 +710,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       await api.documentUnlink(...this.ends(other.id));
       this.links = await api.documentLinks(this.stored.id);
       this.announce();
+      this.namesOffers && void this.renderPreview();
     } catch (error) {
       notifyError(error);
     }
@@ -1110,6 +1117,21 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                     )}
                   </erng-list>
                 `
+          }
+          ${
+            this.kind === 'invoice' && this.draft && this.links.some(l => l.kind === 'offer')
+              ? html`
+                  <wa-switch
+                    ?checked="${this.draft.offer_reference}"
+                    ?disabled="${this.locked}"
+                    hint="Steht bei den Angaben zur Rechnung. Mehrere Angebote werden alle genannt."
+                    @change="${(e: Event) =>
+                      this.edit(d => (d.offer_reference = (e.target as WaSwitch).checked))}"
+                  >
+                    Angebotsnummer auf der Rechnung angeben
+                  </wa-switch>
+                `
+              : nothing
           }
           <wa-button
             class="add-link"

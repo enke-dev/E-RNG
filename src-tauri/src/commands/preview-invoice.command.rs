@@ -45,13 +45,24 @@ fn shown(
             .masked(issue_day(&draft.issue_date), current.calendar()),
     };
 
+    // a created invoice names the offers it froze, a draft those it is linked to now
+    let offers = match id {
+        Some(id) if is_draft && kind == Kind::Invoice && draft.offer_reference => {
+            Some(store.offer_numbers(id)?)
+        }
+        _ => None,
+    };
+
     let customs = store.all_custom_layouts()?;
     Ok(
         build_invoice(&for_preview(draft), &current, &number).map(|invoice| {
-            let branding = Branding {
+            let mut branding = Branding {
                 draft: is_draft,
                 ..Branding::for_document(kind, draft, &settings, &customs)
             };
+            if let Some(offers) = offers {
+                branding.offers = offers;
+            }
             (invoice, branding)
         }),
     )

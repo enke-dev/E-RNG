@@ -27,6 +27,7 @@ const FIELDS: [InfoField, string][] = [
   ['due-date', 'Fällig am'],
   ['buyer-reference', 'Käuferreferenz'],
   ['preceding-invoice', 'Bezugsrechnung'],
+  ['offer-reference', 'Angebot (Rechnungen)'],
   ['tax-number', 'Steuernummer'],
   ['vat-id', 'USt-IdNr.'],
 ];
