@@ -1,15 +1,15 @@
 {
-  "version": "0.6.1",
+  "version": "0.6.2",
   "notes": "See the assets to download this version and install.",
-  "pub_date": "2026-10-29T23:19:40.202Z",
+  "pub_date": "2026-10-29T23:56:52.364Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzJIL0JXS1VpbHlwdE1weUh5QWlPTWxBOGxGTXpOeHJ4c01uK20xbDBBR2VBMFJVOG5uS0VUcEtiS3A4OGhoRjBGalllMEdkenRxNkg4Y2tLWmxpQlE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzE1OTY2CWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuNi4xCmdTdllUMlNGSXpleXdiRWZWY05nUlF5cm90VUV2VDZiZkFOVTRjTUFaMm9HTTJDL1VrN0pHbmtKMEFzN1pmN0Rra09BV0JiQTJhODdjbzBhUVg1bEF3PT0K",
-      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/690228579"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Z3kvNWNkb2s5ZUU2Tkg3MktXUU96bzl4cENzTXpQK2dwaXJnM055bHdnS1BudE9vczdYSFd3aEFCWklUMnU5OEk4dHNBQzVxMUZJZVpEa1RXTFhadEFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzE4MTk4CWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuNi4yCjNnaUpobmpWWDNuQXNGWWZ6a3BGVVRJU0RTZWc5a0RydlhWK1hkOUtDNnhaR05mc0dqa0NxYkJDekRmd21VS2sxUTEwNkxoZXVlSjZWT0dDMkl2K0F3PT0K",
+      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/690310029"
     },
     "darwin-aarch64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzJIL0JXS1VpbHlwdE1weUh5QWlPTWxBOGxGTXpOeHJ4c01uK20xbDBBR2VBMFJVOG5uS0VUcEtiS3A4OGhoRjBGalllMEdkenRxNkg4Y2tLWmxpQlE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzE1OTY2CWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuNi4xCmdTdllUMlNGSXpleXdiRWZWY05nUlF5cm90VUV2VDZiZkFOVTRjTUFaMm9HTTJDL1VrN0pHbmtKMEFzN1pmN0Rra09BV0JiQTJhODdjbzBhUVg1bEF3PT0K",
-      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/690228579"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Z3kvNWNkb2s5ZUU2Tkg3MktXUU96bzl4cENzTXpQK2dwaXJnM055bHdnS1BudE9vczdYSFd3aEFCWklUMnU5OEk4dHNBQzVxMUZJZVpEa1RXTFhadEFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzE4MTk4CWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuNi4yCjNnaUpobmpWWDNuQXNGWWZ6a3BGVVRJU0RTZWc5a0RydlhWK1hkOUtDNnhaR05mc0dqa0NxYkJDekRmd21VS2sxUTEwNkxoZXVlSjZWT0dDMkl2K0F3PT0K",
+      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/690310029"
     }
   }
 }
