@@ -563,10 +563,9 @@ fn line_views(
             let rate = if branding.vat_free {
                 String::new()
             } else {
-                l.vat.rate.map_or_else(
-                    || "USt. frei".to_owned(),
-                    |r| format!("{} USt.", fmt.percent(&r.to_string())),
-                )
+                l.vat
+                    .rate
+                    .map_or_else(|| "frei".to_owned(), |r| fmt.percent(&r.to_string()))
             };
             let adjustments = l
                 .allowances

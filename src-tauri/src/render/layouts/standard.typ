@@ -29,6 +29,8 @@
   for note in d.intro [#note \ ]
 }
 
+// the rate gets a column of its own when VAT is charged, without VAT every line has none
+#let with-rate = d.lines.any(l => l.vat_rate != "")
 #let positions = (
   parts: d.lines.map(l => (
     l.pos,
@@ -36,15 +38,20 @@
      #for a in l.adjustments [\ #text(size: 8.5pt, fill: muted)[#a]]],
     l.quantity,
     l.unit,
-    [#l.unit_price #if l.vat_rate != "" [#text(size: 8pt, fill: muted)[(#l.vat_rate)]]],
+    l.unit_price,
+    ..if with-rate { (l.vat_rate,) },
     l.net,
   )),
   make: rows => table(
-    columns: (auto, 1fr, auto, auto, auto, auto),
-    align: (left, left, right, left, right, right),
+    columns: (auto, 1fr, auto, auto, auto, ..if with-rate { (auto,) }, auto),
+    align: (left, left, right, left, right, ..if with-rate { (right,) }, right),
     stroke: (x, y) => (bottom: if y == 0 { 0.8pt } else { rule }),
     inset: (x: 4pt, y: 5pt),
-    table.header[*Pos.*][*Beschreibung*][*Menge*][*Einheit*][*Einzelpreis*][*Netto*],
+    table.header(
+      [*Pos.*], [*Beschreibung*], [*Menge*], [*Einheit*], [*Einzelpreis*],
+      ..if with-rate { ([*USt.*],) },
+      [*Netto*],
+    ),
     ..rows.flatten(),
   ),
 )

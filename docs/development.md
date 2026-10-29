@@ -119,7 +119,8 @@ icon; only the actions inside a list (remove a position, save it as a template) 
 ## Layouts
 
 A layout is a **frame** and **parts**. The frame (`PageSetup.margins`) is where the flowing content (title, intro, the
-positions, totals, notices, payment, closing: `render/layouts/standard.typ`) stays; the parts are placed around it by
+positions, totals, notices, payment, closing: `render/layouts/standard.typ`; the positions have a column `USt.` with the rate of each line
+unless no VAT is charged) stays; the parts are placed around it by
 an anchor (one of the nine points of the page) and an offset in millimetres towards the inside: information block
 (`infos`), the address, an image, a text (bold and italic as markdown, `{placeholders}`, a font family),
 the page number, a rule. Text, rule, page number, infos and address can have a color (`color`, `#rrggbb`, none keeps the grey or black of the kind; on infos and address the labels and the sender line stay grey; pictures have none): it is checked where a layout comes in (`CustomLayout::invalid_color`, in `layout_save` and when a layout file is read), `prelude.typ` sets it as the text fill or the stroke of the rule. Every page has such a setup; the first page can have one of its own (`first`) with the same
