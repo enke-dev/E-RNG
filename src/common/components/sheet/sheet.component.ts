@@ -55,13 +55,21 @@ export class SheetComponent extends ErngElement.withStyles(styles) {
     }
   }
 
-  /** Scrolls to a region, it is in the document after the next frame */
+  /**
+   * Scrolls the sheet to a region, it is in the document after the next frame. Only the sheet
+   * moves: `scrollIntoView` would scroll every pane around it as well, the form beside it too.
+   */
   private bringIntoView(key: string) {
-    requestAnimationFrame(() =>
-      this.renderRoot
-        .querySelector(`[data-key="${key}"]`)
-        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    );
+    requestAnimationFrame(() => {
+      const region = this.renderRoot.querySelector(`[data-key="${key}"]`);
+      if (!region) {
+        return;
+      }
+      const box = region.getBoundingClientRect();
+      const own = this.getBoundingClientRect();
+      const top = box.top + box.height / 2 - (own.top + own.height / 2);
+      this.scrollBy({ top, behavior: 'smooth' });
+    });
   }
 
   protected override willUpdate(changed: PropertyValues<this>) {

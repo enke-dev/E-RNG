@@ -234,6 +234,8 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   @state() private editing: CustomLayout | undefined;
   /** The invoices the selected own layout is used by, unknown while they are looked up */
   @state() private usage: LayoutUsage[] | undefined;
+  /** A layout is being stored, the button waits for it */
+  @state() private savingLayout = false;
   /** The sample invoice in the layout of the form */
   @state() private sample: Preview | undefined;
   @state() private sampleError = '';
@@ -514,8 +516,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       }
       return;
     }
-    // what the user is typing stays when the list reloads
-    if (this.editing?.id === layout.id && this.layoutChanged) {
+    // the layout in the form stays as it is when the list reloads: what the user is typing, and
+    // after saving the sample, the open part and the scroll position
+    if (this.editing?.id === layout.id) {
       return;
     }
     this.editing = structuredClone(layout);
@@ -1202,16 +1205,38 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       if (layout.name.trim() === '') {
         throw new Error('Bitte dem Layout einen Namen geben.');
       }
-      const saved = await api.layoutSave(layout);
-      this.keep(saved);
-      await this.loadLayouts();
-      goto(`/settings/${LAYOUT}${saved.id}`);
+      // asked before storing: keeping what was stored gives the layout in the form its id
+      const isNew = layout.id === null;
+      this.savingLayout = true;
+      try {
+        const saved = await api.layoutSave(layout);
+        this.keep(saved);
+        if (isNew) {
+          // a new layout gets its own address, going there loads the lists
+          goto(`/settings/${LAYOUT}${saved.id}`);
+        } else {
+          await this.loadLayouts();
+        }
+      } finally {
+        this.savingLayout = false;
+      }
     });
   }
 
-  /** What was stored is what the form shows now, so there is nothing left to save */
+  /**
+   * What was stored is what the form shows now, so there is nothing left to save. The form keeps its
+   * objects and takes only what storing sets: its rows are keyed by the parts, new ones would
+   * close the open part and move the form.
+   */
   private keep(saved: CustomLayout) {
-    this.editing = structuredClone(saved);
+    const editing = this.editing;
+    if (editing && (editing.id === saved.id || editing.id === null)) {
+      const { id, uid, updated_at, archived } = saved;
+      Object.assign(editing, { id, uid, updated_at, archived });
+      this.requestUpdate();
+    } else {
+      this.editing = structuredClone(saved);
+    }
     this.#layoutSaved = JSON.stringify(this.editing);
   }
 
@@ -2121,6 +2146,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           slot="primary"
           variant="brand"
           ?disabled="${isNew ? layout.name.trim() === '' : !this.layoutChanged}"
+          ?loading="${this.savingLayout}"
           @click="${this.saveLayout}"
         >
           Speichern

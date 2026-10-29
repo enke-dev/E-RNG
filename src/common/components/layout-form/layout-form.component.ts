@@ -9,7 +9,7 @@ import '../format-form/format-form.component.js';
 import '../page-setup-form/page-setup-form.component.js';
 
 import type { PropertyValues } from 'lit';
-import { html } from 'lit';
+import { html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import type { CustomLayout, PageSetup } from '../../utils/api.utils.js';
@@ -89,6 +89,13 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
   @property({ type: Boolean }) guides = false;
 
   protected override updated(changed: PropertyValues<this>) {
+    // one setup for all pages: its tab is the one in front
+    if (!this.layout.first) {
+      const tabs = this.renderRoot.querySelector('wa-tab-group');
+      if (tabs) {
+        tabs.active = 'page';
+      }
+    }
     if (changed.has('tab') && this.tab && this.layout.first) {
       const tabs = this.renderRoot.querySelector('wa-tab-group');
       if (tabs) {
@@ -107,6 +114,9 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
   override render() {
     const l = this.layout;
     const families = [...new Set(l.fonts.map(f => f.family))];
+    // the tabs and panels stay whether the first page has its own setup or not, the one of the
+    // first page is only hidden and its setup comes and goes: WebKit scrolls the pane away when tabs
+    // or panels are removed while the click on the checkbox is still being handled
     return html`
       <div class="cards">
         <wa-card>
@@ -165,26 +175,19 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
               Erste Seite weicht ab
             </wa-checkbox>
 
-            ${
-              l.first
-                ? html`
-                    <wa-tab-group
-                      @wa-tab-show="${(e: CustomEvent<{ name: string }>) =>
-                        e.target === e.currentTarget &&
-                        this.pointAt(e.detail.name === 'first', { hovered: null, opened: null })}"
-                    >
-                      <wa-tab slot="nav" panel="first">Erste Seite</wa-tab>
-                      <wa-tab slot="nav" panel="page">Folgeseiten</wa-tab>
-                      <wa-tab-panel name="first"
-                        >${this.setup(l.first, families, true)}</wa-tab-panel
-                      >
-                      <wa-tab-panel name="page"
-                        >${this.setup(l.page, families, false)}</wa-tab-panel
-                      >
-                    </wa-tab-group>
-                  `
-                : this.setup(l.page, families, false)
-            }
+            <wa-tab-group
+              class="${l.first ? '' : 'single'}"
+              @wa-tab-show="${(e: CustomEvent<{ name: string }>) =>
+                e.target === e.currentTarget &&
+                this.pointAt(e.detail.name === 'first', { hovered: null, opened: null })}"
+            >
+              <wa-tab slot="nav" panel="first">Erste Seite</wa-tab>
+              <wa-tab slot="nav" panel="page">${l.first ? 'Folgeseiten' : 'Alle Seiten'}</wa-tab>
+              <wa-tab-panel name="first"
+                >${l.first ? this.setup(l.first, families, true) : nothing}</wa-tab-panel
+              >
+              <wa-tab-panel name="page">${this.setup(l.page, families, false)}</wa-tab-panel>
+            </wa-tab-group>
           </div>
         </wa-card>
       </div>

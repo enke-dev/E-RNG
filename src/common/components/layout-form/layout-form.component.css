@@ -7,3 +7,26 @@
   flex-direction: column;
   gap: var(--wa-space-m);
 }
+
+/* both setups share one cell and the hidden one keeps its size: switching between them never
+   changes the height of the form, so the pane does not jump when it is scrolled to the end */
+wa-tab-group::part(body) {
+  display: grid;
+}
+
+wa-tab-panel {
+  grid-area: 1 / 1;
+
+  &:not([active]) {
+    display: block;
+    visibility: hidden;
+  }
+}
+
+/* one setup for all pages: only its tab, „Alle Seiten“ */
+wa-tab-group.single {
+  & wa-tab[panel='first'],
+  & wa-tab-panel[name='first'] {
+    display: none;
+  }
+}
