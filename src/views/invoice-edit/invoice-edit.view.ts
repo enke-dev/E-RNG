@@ -42,12 +42,13 @@ import type {
   ProduceError,
   Settings,
   StoredInvoice,
+  Unit,
 } from '../../common/utils/api.utils.js';
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
-import { formatDate, money, UNITS } from '../../common/utils/format.utils.js';
+import { formatDate, money } from '../../common/utils/format.utils.js';
 import {
   draftTitle,
   haystack,
@@ -58,8 +59,10 @@ import {
   validUntil,
 } from '../../common/utils/kind.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
-import { startReorder } from '../../common/utils/reorder.utils.js';
+import reorderStyles from '../../common/utils/reorder.utils.css';
+import { Reorder } from '../../common/utils/reorder.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
+import { firstUnit, pick, unitLabel, unitOf } from '../../common/utils/units.utils.js';
 import styles from './invoice-edit.view.css';
 
 const blankCustomer = (): Customer => ({
@@ -72,13 +75,23 @@ const blankCustomer = (): Customer => ({
   buyer_reference: null,
 });
 
+/** The value of the unit select for a unit that is not in the list */
+const NOT_LISTED = 'not-listed';
+
 @customElement('erng-invoice-edit')
-export class InvoiceEditView extends ErngElement.withStyles(styles) {
+export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, styles) {
   /** `new` or the id of a stored invoice */
   @property({ attribute: 'invoice-id' }) invoiceId = 'new';
 
   /** What is edited, for good: the list makes one element per kind */
   @property() kind: Kind = 'invoice';
+
+  private readonly reorder = new Reorder(this, {
+    rows: '.position:not(.head)',
+    noun: 'Position',
+    count: () => this.draft?.positions.length ?? 0,
+    move: (from, to) => this.movePosition(from, to),
+  });
 
   @state() private stored: StoredInvoice | undefined;
   @state() private draft: InvoiceDraft | undefined;
@@ -86,6 +99,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   /** The context the invoice is made under: its own when stored, else the active one */
   @state() private contextId: number | undefined;
   @state() private customers: Customer[] = [];
+  /** The units of the invoice's context, what the positions pick from */
+  @state() private units: Unit[] = [];
   @state() private layouts: LayoutInfo[] = [];
   @state() private check: Check | undefined;
   @state() private busy = false;
@@ -205,18 +220,22 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         return;
       }
       const settings = context.settings;
-      const [customers, layouts] = await Promise.all([
+      const [customers, layouts, units] = await Promise.all([
         api.customersList(contextId),
         api.layoutsList(contextId),
+        api.unitsList(contextId),
       ]);
       this.contextId = contextId;
       this.layouts = layouts;
+      this.units = units;
       this.settings = settings;
       this.customers = customers;
       if (stored === undefined) {
         this.stored = undefined;
         // with the default layout and texts of its kind, which it can change for itself
         this.draft = await api.invoiceBlank(contextId, this.kind);
+        // a new position starts with the first unit of the list
+        this.draft.positions.forEach(position => Object.assign(position, firstUnit(units)));
       } else {
         this.stored = stored;
         this.draft = stored.draft;
@@ -570,7 +589,9 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     if (from === 'template') {
       void this.openTemplates();
     } else {
-      this.edit(d => d.positions.push({ description: '', quantity: null, unit: null, price: '' }));
+      this.edit(d =>
+        d.positions.push({ description: '', quantity: null, ...firstUnit(this.units), price: '' })
+      );
     }
   }
 
@@ -581,25 +602,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         draft.positions.splice(to, 0, moved);
       }
     });
-  }
-
-  private handleReorderStart(event: PointerEvent, index: number) {
-    const rows = [
-      ...(this.shadowRoot?.querySelectorAll<HTMLElement>('.position:not(.head)') ?? []),
-    ];
-    startReorder(event, rows, index, to => this.movePosition(index, to));
-  }
-
-  /** The handle is a button: the arrow keys move the position, for those without a pointer */
-  private async handleReorderKey(event: KeyboardEvent, index: number) {
-    const to = event.key === 'ArrowUp' ? index - 1 : event.key === 'ArrowDown' ? index + 1 : index;
-    if (to === index || to < 0 || to >= (this.draft?.positions.length ?? 0)) {
-      return;
-    }
-    event.preventDefault();
-    this.movePosition(index, to);
-    await this.updateComplete;
-    this.shadowRoot?.querySelectorAll<HTMLElement>('.handle')[to]?.focus();
   }
 
   private async openTemplates() {
@@ -614,11 +616,11 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 
   private addTemplate(template: PositionTemplate) {
     this.edit(draft => {
-      const { description, quantity, unit, price } = template;
+      const { description, quantity, unit, unit_label, price } = template;
       const first = draft.positions[0];
       const untouched =
         draft.positions.length === 1 && first?.description === '' && first.price === '';
-      const position = { description, quantity, unit, price };
+      const position = { description, quantity, unit, unit_label, price };
       if (untouched) {
         draft.positions[0] = position;
       } else {
@@ -895,6 +897,39 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   }
 
   /** Called with the positions grid whenever it is (re)rendered or removed */
+  /**
+   * The unit of a position, picked from the list of the context. One that is not in it (deleted,
+   * renamed since, from an older invoice) still shows, and can be switched; a locked invoice just
+   * shows what it was made with.
+   */
+  private unitSelect(position: Position, index: number, locked: boolean) {
+    const current = unitOf(this.units, position);
+    return html`
+      <wa-select
+        label="Einheit"
+        size="s"
+        ?disabled="${locked}"
+        .value="${current ? String(current.id) : NOT_LISTED}"
+        @change="${(e: Event) => {
+          const id = String((e.target as WaSelect).value);
+          const unit = this.units.find(u => String(u.id) === id);
+          this.editPosition(index, pos => pick(pos, unit));
+        }}"
+      >
+        ${this.units.map(u => html`<wa-option value="${String(u.id)}">${u.label}</wa-option>`)}
+        ${
+          current
+            ? nothing
+            : html`
+                <wa-option value="${NOT_LISTED}">
+                  ${unitLabel(position)}${locked ? '' : ' (nicht in der Liste)'}
+                </wa-option>
+              `
+        }
+      </wa-select>
+    `;
+  }
+
   private renderPositions(locked: boolean) {
     const draft = this.draft as InvoiceDraft;
     return html`
@@ -910,15 +945,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         ${draft.positions.map(
           (p, i) => html`
             <div class="position">
-              <button
-                class="handle"
-                title="Position verschieben (ziehen oder mit den Pfeiltasten)"
-                ?disabled="${locked || draft.positions.length === 1}"
-                @pointerdown="${(e: PointerEvent) => this.handleReorderStart(e, i)}"
-                @keydown="${(e: KeyboardEvent) => void this.handleReorderKey(e, i)}"
-              >
-                ⠿
-              </button>
+              ${this.reorder.handle(i, locked)}
               <wa-textarea
                 label="Beschreibung"
                 rows="3"
@@ -937,23 +964,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                 .value="${p.quantity ?? ''}"
                 @input="${(e: Event) => this.editPosition(i, pos => (pos.quantity = nullable(text(e))))}"
               ></wa-input>
-              <wa-select
-                label="Einheit"
-                size="s"
-                ?disabled="${locked}"
-                .value="${p.unit ?? 'C62'}"
-                @change="${(e: Event) =>
-                  this.editPosition(
-                    i,
-                    pos =>
-                      (pos.unit =
-                        (e.target as WaSelect).value === 'C62'
-                          ? null
-                          : String((e.target as WaSelect).value))
-                  )}"
-              >
-                ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
-              </wa-select>
+              ${this.unitSelect(p, i, locked)}
               <wa-input
                 label="Preis (netto)"
                 inputmode="decimal"
@@ -1044,7 +1055,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                         <strong>${t.description}</strong>
                         <span class="muted"
                           >${t.quantity ?? '1'}
-                          ${unitLabel(t.unit)}${t.price.trim() ? ` × ${t.price} €` : ''}</span
+                          ${unitLabel(t)}${t.price.trim() ? ` × ${t.price} €` : ''}</span
                         >
                       </button>`
                   )}
@@ -1576,10 +1587,6 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
 /** A number like `12/26` is a name, not a folder: what a file name cannot hold becomes a dash */
 function fileName(name: string): string {
   return name.replace(/[/\\:*?"<>|]/g, '-');
-}
-
-function unitLabel(code: string | null): string {
-  return UNITS.find(u => u.code === (code ?? 'C62'))?.label ?? code ?? '';
 }
 
 function isProduceError(error: unknown): error is ProduceError {

@@ -15,30 +15,33 @@ import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.
 import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
-import type { PositionTemplate } from '../../common/utils/api.utils.js';
+import type { PositionTemplate, Unit } from '../../common/utils/api.utils.js';
 import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { activeContext, contextsOf, label } from '../../common/utils/context.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
-import { UNITS } from '../../common/utils/format.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
+import { firstUnit, pick, unitLabel, unitOf } from '../../common/utils/units.utils.js';
 import styles from './templates.view.css';
 
-const blank = (): PositionTemplate => ({
+const blank = (units: Unit[]): PositionTemplate => ({
   id: null,
   context_id: null,
   description: '',
   quantity: null,
-  unit: null,
+  ...firstUnit(units),
   price: '',
 });
 
-const unitLabel = (code: string | null) => UNITS.find(u => u.code === (code ?? 'C62'))?.label ?? '';
+/** The value of the unit select for a unit that is not in the list */
+const NOT_LISTED = 'not-listed';
 
 /** Saved positions the invoice form can start from, as cards like the customers */
 @customElement('erng-templates')
 export class TemplatesView extends ErngElement.withStyles(styles) {
   @state() private templates: PositionTemplate[] = [];
+  /** The units of the active context, what the positions pick from */
+  @state() private units: Unit[] = [];
   @state() private editing: PositionTemplate | undefined;
   @state() private query = '';
   @state() private unit = 'all';
@@ -52,7 +55,10 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
     try {
       const context = activeContext.get()?.id;
       if (context != null) {
-        this.templates = await api.templatesList(context);
+        [this.templates, this.units] = await Promise.all([
+          api.templatesList(context),
+          api.unitsList(context),
+        ]);
       }
     } catch (error) {
       notifyError(error);
@@ -105,14 +111,42 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
 
   private get shown(): PositionTemplate[] {
     const query = this.query.trim().toLowerCase();
+    const unit = this.units.find(u => String(u.id) === this.unit);
     return this.templates.filter(
       t =>
-        (this.unit === 'all' || (t.unit ?? 'C62') === this.unit) &&
+        (this.unit === 'all' || (unit !== undefined && unitOf([unit], t) !== undefined)) &&
         [t.description, ...contextsOf(t.context_id).map(label)]
           .join(' ')
           .toLowerCase()
           .includes(query)
     );
+  }
+
+  /** The unit of the position, from the list of the context; one that is not in it still shows */
+  private unitSelect(template: PositionTemplate) {
+    const current = unitOf(this.units, template);
+    return html`
+      <wa-select
+        label="Einheit"
+        .value="${current ? String(current.id) : NOT_LISTED}"
+        @change="${(e: Event) => {
+          const id = String((e.target as WaSelect).value);
+          const unit = this.units.find(u => String(u.id) === id);
+          this.change(t => pick(t, unit));
+        }}"
+      >
+        ${this.units.map(u => html`<wa-option value="${String(u.id)}">${u.label}</wa-option>`)}
+        ${
+          current
+            ? nothing
+            : html`
+                <wa-option value="${NOT_LISTED}">
+                  ${unitLabel(template)} (nicht in der Liste)
+                </wa-option>
+              `
+        }
+      </wa-select>
+    `;
   }
 
   override render() {
@@ -134,9 +168,14 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
             @change="${(e: Event) => (this.unit = String((e.target as WaSelect).value))}"
           >
             <wa-option value="all">Alle Einheiten</wa-option>
-            ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
+            ${this.units.map(u => html`<wa-option value="${String(u.id)}">${u.label}</wa-option>`)}
           </wa-select>
-          <wa-button slot="actions" size="s" variant="brand" @click="${() => this.edit(blank())}">
+          <wa-button
+            slot="actions"
+            size="s"
+            variant="brand"
+            @click="${() => this.edit(blank(this.units))}"
+          >
             Neue Position
           </wa-button>
         </erng-filter-bar>
@@ -158,7 +197,7 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
                       <strong>${t.description}</strong>
                       <div class="muted">
                         ${t.quantity ?? '1'}
-                        ${unitLabel(t.unit)}${t.price.trim() ? ` × ${t.price} €` : ''}
+                        ${unitLabel(t)}${t.price.trim() ? ` × ${t.price} €` : ''}
                       </div>
                       ${
                         contextsOf(t.context_id).length > 0
@@ -203,17 +242,7 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
                         .value="${editing.quantity ?? ''}"
                         @input="${(e: Event) => this.change(t => (t.quantity = nullable(text(e))))}"
                       ></wa-input>
-                      <wa-select
-                        label="Einheit"
-                        .value="${editing.unit ?? 'C62'}"
-                        @change="${(e: Event) =>
-                          this.change(t => {
-                            const unit = String((e.target as WaSelect).value);
-                            t.unit = unit === 'C62' ? null : unit;
-                          })}"
-                      >
-                        ${UNITS.map(u => html`<wa-option value="${u.code}">${u.label}</wa-option>`)}
-                      </wa-select>
+                      ${this.unitSelect(editing)}
                       <wa-input
                         label="Preis (netto)"
                         inputmode="decimal"

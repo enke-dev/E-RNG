@@ -342,15 +342,51 @@ pub struct Position {
     pub description: String,
     /// Empty means 1
     pub quantity: Option<String>,
-    /// UN/ECE unit code, empty means piece
+    /// UN/ECE rec. 20 code, empty means C62 (older data)
     pub unit: Option<String>,
+    /// The label as it was picked, so renaming or deleting a unit never changes a created invoice;
+    /// empty (older data): what the code was printed as then
+    #[serde(default)]
+    pub unit_label: Option<String>,
     /// Net price per unit
     pub price: String,
 }
 
 impl Position {
+    /// The unit code, blank is piece
+    pub fn unit_code(&self) -> &str {
+        self.unit
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .unwrap_or("C62")
+    }
+
+    /// The label the unit is shown with: the one it was picked with, else what the code was
+    /// printed as before units had labels
+    pub fn unit_label(&self) -> String {
+        self.unit_label
+            .as_deref()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map_or_else(
+                || crate::units::legacy_label(self.unit_code()),
+                str::to_owned,
+            )
+    }
+
+    /// The same position with code and label filled in, for what is read from the store: older
+    /// rows have neither, and are never rewritten for it.
+    pub fn normalized(self) -> Self {
+        Self {
+            unit: Some(self.unit_code().to_owned()),
+            unit_label: Some(self.unit_label()),
+            ..self
+        }
+    }
+
     /// The same position as another one: description (case aside), quantity (empty is 1), unit
-    /// (empty is piece) and price compare as the user means them, `2` is `2,00`.
+    /// (code and label, empty is piece) and price compare as the user means them, `2` is `2,00`.
     pub fn same_as(&self, other: &Position) -> bool {
         use crate::draft::decimal;
         let quantity = |p: &Position| {
@@ -360,18 +396,11 @@ impl Position {
                 .filter(|q| !q.is_empty())
                 .map_or(Some(rust_decimal::Decimal::ONE), decimal)
         };
-        let unit = |p: &Position| {
-            p.unit
-                .as_deref()
-                .map(str::trim)
-                .filter(|u| !u.is_empty())
-                .unwrap_or("C62")
-                .to_owned()
-        };
         let price = |p: &Position| decimal(&p.price);
         self.description.trim().to_lowercase() == other.description.trim().to_lowercase()
             && quantity(self) == quantity(other)
-            && unit(self) == unit(other)
+            && self.unit_code() == other.unit_code()
+            && self.unit_label() == other.unit_label()
             && price(self) == price(other)
     }
 }

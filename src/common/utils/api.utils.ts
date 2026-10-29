@@ -145,8 +145,35 @@ export interface Customer {
 export interface Position {
   description: string;
   quantity: string | null;
+  /** UN/ECE rec. 20 code */
   unit: string | null;
+  /** The label the unit was picked with: a created invoice keeps it whatever becomes of the unit */
+  unit_label: string | null;
   price: string;
+}
+
+/** A unit of a context's list, which the positions of its documents pick from */
+export interface Unit {
+  id: number | null;
+  context_id: number;
+  code: string;
+  label: string;
+}
+
+/** A unit without a place, what a new context starts with */
+export type UnitDef = Pick<Unit, 'code' | 'label'>;
+
+/** A rec. 20 / 21 code with its English name, and a German one if the code is common (listed first) */
+export interface CatalogEntry {
+  code: string;
+  name: string;
+  de?: string;
+}
+
+/** What changing or deleting a unit reaches: saved positions and drafts, never created documents */
+export interface UnitUsage {
+  templates: { id: number; description: string; context_id: number | null }[];
+  drafts: { invoice_id: number; kind: Kind; customer: string }[];
 }
 
 export interface PositionTemplate extends Position {
@@ -508,7 +535,9 @@ export function errorText(error: unknown): string {
 export const api = {
   contextsList: () => invoke<Context[]>('contexts_list'),
   contextBlank: () => invoke<Context>('context_blank'),
-  contextSave: (context: Context) => invoke<Context>('context_save', { context }),
+  /** A new context (`id` null) starts with `units` as its list, none: the defaults */
+  contextSave: (context: Context, units?: UnitDef[]) =>
+    invoke<Context>('context_save', { context, units: units ?? null }),
   contextArchive: (id: number) => invoke<Context>('context_archive', { id }),
   contextUsage: (id: number) => invoke<ContextUsage>('context_usage', { id }),
   contextRemove: (id: number, what: Disposition) => invoke<null>('context_remove', { id, what }),
@@ -543,6 +572,19 @@ export const api = {
   templateSave: (template: PositionTemplate) =>
     invoke<PositionTemplate>('template_save', { template }),
   templateDelete: (id: number) => invoke<null>('template_delete', { id }),
+
+  unitsList: (contextId: number) => invoke<Unit[]>('units_list', { contextId }),
+  unitsCatalog: () => invoke<CatalogEntry[]>('units_catalog'),
+  /** How many drafts and saved positions use each unit, by unit id */
+  unitsCounts: (contextId: number) => invoke<Record<string, number>>('units_counts', { contextId }),
+  /** Adds a unit (`id` null); drafts and saved positions follow a changed label or code */
+  unitSave: (unit: Unit) => invoke<Unit>('unit_save', { unit }),
+  unitUsage: (id: number) => invoke<UnitUsage>('unit_usage', { id }),
+  /** A unit in use needs the one that takes its place, in the same context */
+  unitDelete: (id: number, replacement: number | null) =>
+    invoke<null>('unit_delete', { id, replacement }),
+  unitsReorder: (contextId: number, ids: number[]) =>
+    invoke<null>('units_reorder', { contextId, ids }),
 
   /** The documents of one kind, `null` lists those of all contexts; archived ones only when asked */
   invoicesList: (contextId: number | null, kind: Kind, withArchived = false) =>

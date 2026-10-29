@@ -14,6 +14,7 @@ mod pipeline;
 mod render;
 mod sidecar;
 mod store;
+mod units;
 mod utils;
 
 use tauri::menu::{Menu, MenuItem, MenuItemKind};
@@ -161,6 +162,13 @@ pub fn run() {
             commands::templates_command::template_delete,
             commands::templates_command::template_save,
             commands::templates_command::templates_list,
+            commands::units_command::unit_delete,
+            commands::units_command::unit_save,
+            commands::units_command::unit_usage,
+            commands::units_command::units_catalog,
+            commands::units_command::units_counts,
+            commands::units_command::units_list,
+            commands::units_command::units_reorder,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -4,6 +4,7 @@ use crate::context::{Context, ContextUsage, Disposition, Missing, BRANDS};
 use crate::model::{Kind, Settings};
 use crate::numbering::{reset_problem, Calendar, Pattern, Reset};
 use crate::store::{Sequence, Store};
+use crate::units::UnitDef;
 use crate::utils::{issue_day, today, CommandError, CommandResult};
 
 /// Every context with what is missing in it, archived ones included (the UI hides them)
@@ -13,9 +14,14 @@ pub fn contexts_list(store: State<'_, Store>) -> CommandResult<Vec<Context>> {
 }
 
 /// Creates (`id` is `None`) or updates a context. An incomplete one is saved as well, the data is
-/// filled in step by step, `missing` tells what is still to do.
+/// filled in step by step, `missing` tells what is still to do. A new context starts with `units`
+/// as its list of units (none: the defaults); an existing one keeps its own.
 #[tauri::command]
-pub fn context_save(store: State<'_, Store>, context: Context) -> CommandResult<Context> {
+pub fn context_save(
+    store: State<'_, Store>,
+    context: Context,
+    units: Option<Vec<UnitDef>>,
+) -> CommandResult<Context> {
     let archived = store.all_custom_layouts()?.iter().any(|l| {
         l.archived
             && [
@@ -39,7 +45,9 @@ pub fn context_save(store: State<'_, Store>, context: Context) -> CommandResult<
     {
         return Err(problem.into());
     }
-    store.save_context(&context).map_err(CommandError::from)
+    store
+        .save_context(&context, units.as_deref())
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]

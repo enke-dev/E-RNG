@@ -357,7 +357,7 @@ mod tests {
         fn setup() -> (Store, i64, tempfile::TempDir) {
             let store = Store::in_memory().unwrap();
             let context = store
-                .save_context(&Context::new(settings(), ""))
+                .save_context(&Context::new(settings(), ""), None)
                 .unwrap()
                 .id
                 .unwrap();

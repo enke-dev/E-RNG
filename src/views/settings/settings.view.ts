@@ -15,6 +15,7 @@ import '../../common/components/list/list-group/list-group.component.js';
 import '../../common/components/list/list-item/list-item.component.js';
 import '../../common/components/page/page.component.js';
 import '../../common/components/scope-select/scope-select.component.js';
+import '../../common/components/unit-list/unit-list.component.js';
 import '../../common/layouts/editor/editor.layout.js';
 import '../../common/layouts/split/split.layout.js';
 
@@ -58,7 +59,7 @@ import {
   loadContexts,
   switchContext,
 } from '../../common/utils/context.utils.js';
-import { inheritedDefaults } from '../../common/utils/defaults.utils.js';
+import { inheritedDefaults, inheritedUnits } from '../../common/utils/defaults.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { parseDays } from '../../common/utils/kind.utils.js';
 import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
@@ -68,10 +69,11 @@ import { takeOpenedLayouts } from '../../common/utils/opened.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
 import styles from './settings.view.css';
 
-/** The pages of a context, saved together */
+/** The pages of a context: all but the units are saved together, the units save themselves */
 const PAGES = [
   ['company', 'Unternehmen'],
   ['bank', 'Bankverbindung'],
+  ['units', 'Einheiten'],
   ['offers', 'Angebote'],
   ['invoices', 'Rechnungen'],
 ] as const;
@@ -100,7 +102,7 @@ const RESET_NAMES: Record<NumberReset, string> = {
 };
 
 /** `context-<id>-<page>`, or `context-new-<page>` for one that is not stored yet */
-const CONTEXT_PAGE = /^context-(new|\d+)-(company|bank|offers|invoices)$/;
+const CONTEXT_PAGE = /^context-(new|\d+)-(company|bank|offers|invoices|units)$/;
 
 /** What the form calls the fields that must be filled in before an invoice can be issued */
 const FIELD_LABELS: Record<string, string> = {
@@ -654,7 +656,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     }
     try {
       const wasNew = context.id === null;
-      const saved = await api.contextSave(context);
+      // a new context starts with a copy of the units of the one in use
+      const from = activeContext.get()?.id;
+      const units = wasNew && from != null ? inheritedUnits(await api.unitsList(from)) : undefined;
+      const saved = await api.contextSave(context, units);
       await loadContexts();
       if (wasNew && saved.id !== null) {
         // the one just made is the one to work in
@@ -1227,7 +1232,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         <span slot="action" class="row">${extra}</span>
         ${
           open === id
-            ? PAGES.map(
+            ? PAGES.filter(([page]) => id !== 'new' || page !== 'units').map(
                 ([page, caption]) => html`
                   <erng-list-item
                     ?selected="${this.contextRoute?.page === page}"
@@ -1693,6 +1698,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   private contextPage(context: Context, page: Page) {
+    if (page === 'units') {
+      // the units are saved by their own dialogs, there is no form to save here
+      return context.id === null
+        ? html`<wa-callout slot="detail" variant="neutral">
+            Ein neuer Kontext übernimmt die Einheiten des aktiven. Nach dem Speichern lassen sie
+            sich hier ändern.
+          </wa-callout>`
+        : html`<erng-unit-list slot="detail" context-id="${context.id}"></erng-unit-list>`;
+    }
     const settings = context.settings;
     const content = {
       company: () => this.companyPage(settings),

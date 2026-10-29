@@ -1,10 +1,13 @@
+import type { ReactiveControllerHost, TemplateResult } from 'lit';
+import { html } from 'lit';
+
 /**
  * Drag and drop reordering of rows with pointer events, so it works the same in every webview
  * (the HTML5 drag and drop API is unreliable inside them).
  *
  * Call it from `pointerdown` on a drag handle. The dragged row follows the pointer, the other rows
  * slide apart to open the gap where it would land, and a dashed `.drop-slot` marks that gap (the
- * rows' container needs `position: relative`, the styles of both live with the caller). The slot is
+ * rows' container needs `position: relative`, the styles are `reorder.utils.css`). The slot is
  * the one nearest to the dragged row, with a dead band so a swap needs a deliberate move back, too.
  * On release `done` gets the new index.
  */
@@ -113,4 +116,67 @@ export function startReorder(
   handle.addEventListener('pointermove', move);
   handle.addEventListener('pointerup', up);
   handle.addEventListener('pointercancel', cancel);
+}
+
+/** What a host tells `Reorder` about its rows */
+export interface ReorderOptions {
+  /** Selector of the rows in the host's shadow root, in order */
+  rows: string;
+  /** What is moved, as the handle's title says it: "Position", "Einheit" */
+  noun: string;
+  /** How many rows there are, a single one cannot move */
+  count: () => number;
+  /** Moves the row; the handle keeps its focus on the row's new place once this is done */
+  move: (from: number, to: number) => void | Promise<void>;
+}
+
+/**
+ * The handle of a reorderable row, for the pointer (`startReorder`) and the keyboard (arrow keys,
+ * and the focus follows the row). The host renders `handle(index)` as the first child of each row
+ * and adds `reorder.utils.css` to its styles. It needs no lifecycle, so it is no Lit controller.
+ */
+export class Reorder {
+  constructor(
+    private readonly host: ReactiveControllerHost & { shadowRoot: ShadowRoot | null },
+    private readonly options: ReorderOptions
+  ) {}
+
+  private query<T extends HTMLElement>(selector: string) {
+    return [...(this.host.shadowRoot?.querySelectorAll<T>(selector) ?? [])];
+  }
+
+  private start(event: PointerEvent, index: number) {
+    startReorder(
+      event,
+      this.query(this.options.rows),
+      index,
+      to => void this.options.move(index, to)
+    );
+  }
+
+  private async key(event: KeyboardEvent, index: number) {
+    const to = event.key === 'ArrowUp' ? index - 1 : event.key === 'ArrowDown' ? index + 1 : index;
+    if (to === index || to < 0 || to >= this.options.count()) {
+      return;
+    }
+    event.preventDefault();
+    await this.options.move(index, to);
+    await this.host.updateComplete;
+    this.query('.handle')[to]?.focus();
+  }
+
+  /** The button to drag or to press the arrow keys on; `locked` disables it for a row that cannot move */
+  handle(index: number, locked = false): TemplateResult {
+    return html`
+      <button
+        class="handle"
+        title="${this.options.noun} verschieben (ziehen oder mit den Pfeiltasten)"
+        ?disabled="${locked || this.options.count() === 1}"
+        @pointerdown="${(e: PointerEvent) => this.start(e, index)}"
+        @keydown="${(e: KeyboardEvent) => void this.key(e, index)}"
+      >
+        ⠿
+      </button>
+    `;
+  }
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import type { Unit } from './api.utils.js';
 import type { Defaults } from './defaults.utils.js';
-import { inheritedDefaults } from './defaults.utils.js';
+import { inheritedDefaults, inheritedUnits } from './defaults.utils.js';
 
 const defaults = (): Defaults => ({
   tax_rate: '7',
@@ -44,5 +45,30 @@ describe('inheritedDefaults', () => {
 
     expect(from.offer.wording.title).toBe('Offerte');
     expect(from.invoice_wording.title).toBe('Faktura');
+  });
+});
+
+describe('inheritedUnits', () => {
+  const units: Unit[] = [
+    { id: 4, context_id: 1, code: 'HUR', label: 'Stunde' },
+    { id: 2, context_id: 1, code: 'C62', label: 'Lizenz' },
+  ];
+
+  it('takes the units along in their order, without the ids of the context they came from', () => {
+    expect(inheritedUnits(units)).toEqual([
+      { code: 'HUR', label: 'Stunde' },
+      { code: 'C62', label: 'Lizenz' },
+    ]);
+  });
+
+  it('does not share anything with the units it came from', () => {
+    const copy = inheritedUnits(units);
+
+    const [first] = copy;
+    if (first) {
+      first.label = 'Std.';
+    }
+
+    expect(units[0]?.label).toBe('Stunde');
   });
 });

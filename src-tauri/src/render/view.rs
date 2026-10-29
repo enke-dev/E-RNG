@@ -1,5 +1,5 @@
 //! The invoice as the template wants it: strings only, German formatting, one place for the
-//! presentation rules (unit names, address lines, which totals to show). Money is never computed
+//! presentation rules (address lines, which totals to show). Money is never computed
 //! here, every figure comes from the reconciled invoice.
 
 use en16931::invoice::{DocumentKind, PaymentMeans, PostalAddress};
@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::format::Formatter;
 use super::parts::PartView;
-use crate::model::{CustomLayout, Format, Insets, InvoiceDraft, Kind, Settings, Wording};
+use crate::model::{CustomLayout, Format, Insets, InvoiceDraft, Kind, Position, Settings, Wording};
+use crate::units;
 
 /// What the user adds to the plain invoice data: look and feel of the document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -37,6 +38,8 @@ pub struct Branding {
     pub wording: Wording,
     /// Offers: the day it is valid until
     pub valid_until: Option<Date>,
+    /// The label of each position's unit, by position: the lines are the positions in order
+    pub unit_labels: Vec<String>,
 }
 
 /// What stands for the day an offer is valid until in the letter texts
@@ -105,6 +108,7 @@ impl Branding {
                 .and_then(|day| Date::parse(&day).ok()),
             intro: pick(draft.intro.as_deref(), settings.intro(kind)),
             closing: pick(draft.closing.as_deref(), settings.closing(kind)),
+            unit_labels: draft.positions.iter().map(Position::unit_label).collect(),
         }
     }
 }
@@ -222,23 +226,6 @@ pub struct Total {
     pub label: String,
     pub value: String,
     pub strong: bool,
-}
-
-fn unit_name(code: &str) -> String {
-    match code {
-        "C62" | "H87" => "Stk.",
-        "HUR" => "Std.",
-        "DAY" => "Tag(e)",
-        "MON" => "Monat(e)",
-        "WEE" => "Woche(n)",
-        "KGM" => "kg",
-        "LTR" => "l",
-        "MTR" => "m",
-        "KWH" => "kWh",
-        "LS" => "pauschal",
-        other => other,
-    }
-    .to_owned()
 }
 
 /// The statement an invoice needs when it carries no VAT, for breakdowns that only name a category
@@ -430,6 +417,16 @@ fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Dat
     infos
 }
 
+/// What the unit of a line is called: the label of its position. Without one (a `Branding` that
+/// was not made from a draft) the name of the code in the catalog, else the code.
+fn unit_label(branding: &Branding, index: usize, code: &str) -> String {
+    branding
+        .unit_labels
+        .get(index)
+        .cloned()
+        .unwrap_or_else(|| units::catalog_name(code).map_or_else(|| code.to_owned(), str::to_owned))
+}
+
 /// The positions of the table.
 fn line_views(
     invoice: &Invoice,
@@ -440,7 +437,8 @@ fn line_views(
     invoice
         .lines
         .iter()
-        .map(|l| {
+        .enumerate()
+        .map(|(index, l)| {
             let rate = if branding.vat_free {
                 String::new()
             } else {
@@ -465,7 +463,7 @@ fn line_views(
                 description: l.item.description.clone(),
                 adjustments,
                 quantity: fmt.trimmed(&l.quantity.to_string()),
-                unit: unit_name(l.unit_code.as_str()),
+                unit: unit_label(branding, index, l.unit_code.as_str()),
                 unit_price: fmt.money(l.price.net_price, currency),
                 vat_rate: rate,
                 net: fmt.money(l.net_amount, currency),
@@ -987,5 +985,49 @@ mod tests {
         assert_eq!(offer.intro.as_deref(), Some("Angebotstext"));
         assert_eq!(invoice.custom.and_then(|c| c.id), Some(2));
         assert_eq!(invoice.intro.as_deref(), Some("Rechnungstext"));
+    }
+
+    #[test]
+    fn a_line_prints_the_label_of_its_position_while_the_xml_keeps_the_code() {
+        let settings = crate::draft::fixtures::settings();
+        let mut draft = crate::draft::fixtures::draft();
+        draft.positions = vec![
+            Position {
+                description: "Layout".into(),
+                unit: Some("C62".into()),
+                unit_label: Some("Seite".into()),
+                ..draft.positions[0].clone()
+            },
+            // older data: no label, printed as the code always was
+            Position {
+                description: "Beratung".into(),
+                unit: Some("HUR".into()),
+                unit_label: None,
+                ..draft.positions[0].clone()
+            },
+        ];
+        let invoice = crate::draft::build_invoice(&draft, &settings, "RE-2026-001").unwrap();
+        let branding = Branding::for_document(Kind::Invoice, &draft, &settings, &[]);
+
+        let view = build(&invoice, &branding, &Format::default());
+
+        assert_eq!(view.lines[0].unit, "Seite");
+        assert_eq!(view.lines[1].unit, "Std.");
+        assert_eq!(invoice.lines[0].unit_code.as_str(), "C62");
+    }
+
+    #[test]
+    fn a_line_without_a_label_uses_the_name_of_its_code_in_the_catalog() {
+        let settings = crate::draft::fixtures::settings();
+        let mut draft = crate::draft::fixtures::draft();
+        draft.positions[0].unit = Some("MIN".into());
+        draft.positions[1].unit = Some("ACR".into());
+        let invoice = crate::draft::build_invoice(&draft, &settings, "RE-2026-001").unwrap();
+
+        let view = build(&invoice, &Branding::default(), &Format::default());
+
+        // German where there is a curated name, English for the rest of the list
+        assert_eq!(view.lines[0].unit, "Minute");
+        assert_eq!(view.lines[1].unit, "acre");
     }
 }

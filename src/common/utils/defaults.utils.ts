@@ -1,4 +1,4 @@
-import type { Settings } from './api.utils.js';
+import type { Settings, Unit, UnitDef } from './api.utils.js';
 
 /** The settings that are defaults for documents, not facts about the issuer */
 export type Defaults = Pick<
@@ -30,4 +30,9 @@ export function inheritedDefaults(from: Defaults): Defaults {
     invoice_wording: from.invoice_wording,
     offer: from.offer,
   });
+}
+
+/** The units a new context starts with: those of the one in use, in their order, as copies */
+export function inheritedUnits(from: Unit[]): UnitDef[] {
+  return from.map(({ code, label }) => ({ code, label }));
 }

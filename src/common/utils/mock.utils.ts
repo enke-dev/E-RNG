@@ -5,7 +5,9 @@
  */
 import { mockIPC } from '@tauri-apps/api/mocks';
 
+import unitNames from '../../../src-tauri/data/unit-names.json' with { type: 'json' };
 import type {
+  CatalogEntry,
   Context,
   Customer,
   CustomLayout,
@@ -14,10 +16,14 @@ import type {
   Linked,
   ListEntry,
   NumberReset,
+  Position,
   PositionTemplate,
   Sequence,
   Settings,
   StoredInvoice,
+  Unit,
+  UnitDef,
+  UnitUsage,
 } from './api.utils.js';
 import { today } from './form.utils.js';
 import { validUntil } from './kind.utils.js';
@@ -358,13 +364,22 @@ const builtinLayout = (): CustomLayout => ({
 });
 
 const templates: PositionTemplate[] = [
-  { id: 1, context_id: null, description: 'Beratung', quantity: '1', unit: 'HUR', price: '95,00' },
+  {
+    id: 1,
+    context_id: null,
+    description: 'Beratung',
+    quantity: '1',
+    unit: 'HUR',
+    unit_label: 'Std.',
+    price: '95,00',
+  },
   {
     id: 2,
     context_id: null,
     description: 'Reisekosten',
     quantity: null,
-    unit: null,
+    unit: 'C62',
+    unit_label: 'Stk.',
     price: '42,50',
   },
   {
@@ -373,9 +388,92 @@ const templates: PositionTemplate[] = [
     description: 'Wartungsvertrag',
     quantity: '12',
     unit: 'MON',
+    unit_label: 'Monat(e)',
     price: '49,00',
   },
 ];
+
+/** What every context starts with, the same as `units::DEFAULTS` */
+const DEFAULT_UNITS: UnitDef[] = [
+  { code: 'C62', label: 'Stk.' },
+  { code: 'HUR', label: 'Std.' },
+  { code: 'LS', label: 'pauschal' },
+];
+
+/** The units of all contexts, in the order of their lists; the shared template uses "Monat(e)" */
+const units: Unit[] = [
+  ...[...DEFAULT_UNITS, { code: 'MON', label: 'Monat(e)' }].map(u => ({ ...u, context_id: 1 })),
+  ...DEFAULT_UNITS.map(u => ({ ...u, context_id: 2 })),
+].map((u, i) => ({ ...u, id: i + 1 }));
+
+const nextUnitId = () => Math.max(0, ...units.map(u => u.id as number)) + 1;
+
+const unitsOf = (contextId: number) => units.filter(u => u.context_id === contextId);
+
+/** The same names the app ships (`units::catalog`) */
+const catalog: CatalogEntry[] = unitNames.units;
+
+const namesUnit = (unit: Unit) => (p: Pick<Position, 'unit' | 'unit_label'>) =>
+  (p.unit ?? 'C62') === unit.code && p.unit_label === unit.label;
+
+/** The drafts of the context and the saved positions it sees, what a unit change reaches */
+const reachedBy = (unit: Unit) => {
+  const names = namesUnit(unit);
+  return {
+    templates: templates.filter(
+      t => (t.context_id === null || t.context_id === unit.context_id) && names(t)
+    ),
+    drafts: invoices.filter(
+      i => i.context_id === unit.context_id && i.status === 'draft' && i.draft.positions.some(names)
+    ),
+    names,
+  };
+};
+
+const usageOf = (unit: Unit): UnitUsage => {
+  const { templates: saved, drafts } = reachedBy(unit);
+  return {
+    templates: saved.map(t => ({
+      id: t.id as number,
+      description: t.description,
+      context_id: t.context_id,
+    })),
+    drafts: drafts.map(i => ({
+      invoice_id: i.id,
+      kind: i.kind,
+      customer: i.draft.customer.name,
+    })),
+  };
+};
+
+/** Drafts and saved positions that named `from` name `to` instead */
+function retarget(from: Unit, to: UnitDef) {
+  const { templates: saved, drafts, names } = reachedBy(from);
+  const point = (p: Pick<Position, 'unit' | 'unit_label'>) => {
+    p.unit = to.code;
+    p.unit_label = to.label;
+  };
+  saved.forEach(point);
+  drafts.forEach(i => i.draft.positions.filter(names).forEach(point));
+}
+
+/** Mirrors `units::check`, roughly: the code is only looked at for case and spaces */
+function checkedUnit(unit: UnitDef, others: Unit[]): UnitDef {
+  const label = unit.label.trim();
+  if (label === '') {
+    throw 'Eine Bezeichnung ist erforderlich.';
+  }
+  if (unit.code !== unit.code.trim() || unit.code === '') {
+    throw `Der Code „${unit.code}“ ist nicht zulässig: it contains whitespace`;
+  }
+  if (unit.code !== unit.code.toUpperCase()) {
+    throw `Der Code „${unit.code}“ ist nicht zulässig: did you mean "${unit.code.toUpperCase()}"?`;
+  }
+  if (others.some(o => o.label.trim().toLowerCase() === label.toLowerCase())) {
+    throw `Die Bezeichnung „${label}“ gibt es schon.`;
+  }
+  return { code: unit.code, label };
+}
 
 const draftOf = (customer: Customer): InvoiceDraft => ({
   customer,
@@ -383,7 +481,15 @@ const draftOf = (customer: Customer): InvoiceDraft => ({
   delivery_date: '2026-10-01',
   delivery_end: null,
   validity_days: null,
-  positions: [{ description: 'Beratung', quantity: '10', unit: 'HUR', price: '95,00' }],
+  positions: [
+    {
+      description: 'Beratung',
+      quantity: '10',
+      unit: 'HUR',
+      unit_label: 'Std.',
+      price: '95,00',
+    },
+  ],
   profile: 'en16931',
   buyer_reference: null,
   note: null,
@@ -638,6 +744,10 @@ export function installMocks() {
               brand: context.brand || 'orange',
             });
             contexts.push(saved);
+            const given = (args['units'] as UnitDef[] | null) ?? [];
+            (given.length > 0 ? given : DEFAULT_UNITS).forEach(u =>
+              units.push({ ...u, id: nextUnitId(), context_id: saved.id as number })
+            );
             return saved;
           }
           const at = contexts.findIndex(c => c.id === context.id);
@@ -662,6 +772,7 @@ export function installMocks() {
           };
         }
         case 'context_remove':
+          units.splice(0, units.length, ...units.filter(u => u.context_id !== args['id']));
           contexts.splice(
             contexts.findIndex(c => c.id === args['id']),
             1
@@ -790,6 +901,67 @@ export function installMocks() {
             1
           );
           return null;
+        case 'units_list':
+          return unitsOf(args['contextId']).map(u => ({ ...u }));
+        case 'units_catalog':
+          return catalog;
+        case 'plugin:opener|open_url':
+          window.open(String(args['url']), '_blank', 'noopener');
+          return null;
+        case 'units_counts':
+          return Object.fromEntries(
+            unitsOf(args['contextId']).map(u => {
+              const usage = usageOf(u);
+              return [u.id, usage.templates.length + usage.drafts.length];
+            })
+          );
+        case 'unit_save': {
+          const unit = args['unit'] as Unit;
+          const before = unit.id === null ? undefined : units.find(u => u.id === unit.id);
+          const context = before?.context_id ?? unit.context_id;
+          const def = checkedUnit(
+            unit,
+            unitsOf(context).filter(u => u.id !== unit.id)
+          );
+          if (!before) {
+            const added = { ...def, id: nextUnitId(), context_id: context };
+            units.push(added);
+            return { ...added };
+          }
+          const old = { ...before };
+          Object.assign(before, def);
+          retarget(old, def);
+          return { ...before };
+        }
+        case 'unit_usage':
+          return usageOf(units.find(u => u.id === args['id']) as Unit);
+        case 'unit_delete': {
+          const unit = units.find(u => u.id === args['id']) as Unit;
+          const target = units.find(u => u.id === args['replacement']);
+          if (unitsOf(unit.context_id).length < 2) {
+            throw 'Die letzte Einheit kann nicht gelöscht werden.';
+          }
+          const usage = usageOf(unit);
+          if (usage.templates.length + usage.drafts.length > 0) {
+            if (!target || target.context_id !== unit.context_id || target === unit) {
+              throw 'Die Einheit wird noch verwendet, bitte eine Ersatz-Einheit wählen.';
+            }
+            retarget(unit, target);
+          }
+          units.splice(units.indexOf(unit), 1);
+          return null;
+        }
+        case 'units_reorder': {
+          const ids = args['ids'] as number[];
+          const own = unitsOf(args['contextId']);
+          units.splice(
+            0,
+            units.length,
+            ...units.filter(u => u.context_id !== args['contextId']),
+            ...ids.map(id => own.find(u => u.id === id) as Unit)
+          );
+          return null;
+        }
         case 'invoice_draft_pdf':
           return null;
         case 'preview_invoice': {
@@ -1023,6 +1195,12 @@ export function installMocks() {
           return [];
         case 'plugin:dialog|save':
           return '/tmp/mock-export';
+        // `ask` is a message with two custom buttons: the question is answered yes (the label of the
+        // first button), except the one that stops leaving a form with edits
+        case 'plugin:dialog|message': {
+          const [ok, cancel] = (args['buttons']?.OkCancelCustom ?? ['Ok', 'Abbrechen']) as string[];
+          return args['title'] === 'Änderungen verwerfen?' ? cancel : ok;
+        }
         case 'plugin:updater|check':
           return null;
         default:

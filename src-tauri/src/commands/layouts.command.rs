@@ -274,7 +274,8 @@ fn sample(settings: &crate::model::Settings, layout: Option<&CustomLayout>) -> I
         .map(|n| Position {
             description: format!("Beispielposition {n}"),
             quantity: Some(n.to_string()),
-            unit: None,
+            unit: Some("C62".into()),
+            unit_label: Some("Stk.".into()),
             price: "12.50".into(),
         })
         .collect();

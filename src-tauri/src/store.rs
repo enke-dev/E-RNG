@@ -16,9 +16,10 @@ use crate::context::{Context, ContextUsage, Disposition, BRANDS};
 use crate::draft::{build_invoice, totals};
 use crate::model::{
     CustomLayout, Customer, InvoiceDraft, InvoiceFiles, Kind, LayoutUsage, Linked, ListEntry,
-    PositionTemplate, Settings, Status, StoredInvoice,
+    Position, PositionTemplate, Settings, Status, StoredInvoice,
 };
 use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
+use crate::units::{self, DraftRef, TemplateRef, Unit, UnitDef, UnitUsage};
 
 pub struct Store(Mutex<Connection>);
 
@@ -35,7 +36,7 @@ pub struct Sequence {
     pub floor: Option<u32>,
 }
 
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -101,6 +102,219 @@ fn migrate(conn: &Connection) -> Result<()> {
     if version < 9 {
         migrate_to_links(conn)?;
     }
+    if version < 10 {
+        migrate_to_units(conn)?;
+    }
+    Ok(())
+}
+
+/// A unit as a position names it: code and label
+type UnitKey = (String, String);
+
+/// What the drafts and saved positions that a context's units reach call their units, in the order
+/// of their ids: the context's own and the shared saved positions, then its drafts. Created
+/// documents are not looked at, they keep their labels.
+struct Held {
+    templates: Vec<(TemplateRef, UnitKey)>,
+    drafts: Vec<(DraftRef, Vec<UnitKey>)>,
+}
+
+fn key_of(position: &Position) -> UnitKey {
+    (position.unit_code().to_owned(), position.unit_label())
+}
+
+fn held(conn: &Connection, context: i64) -> Result<Held> {
+    let mut statement = conn.prepare(
+        "SELECT id, json, context_id FROM templates
+         WHERE context_id IS NULL OR context_id = ?1 ORDER BY id",
+    )?;
+    let rows = statement
+        .query_map([context], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let templates = rows
+        .into_iter()
+        .map(|(id, json, context_id)| {
+            let position: Position = serde_json::from_str(&json)?;
+            Ok((
+                TemplateRef {
+                    id,
+                    description: position.description.clone(),
+                    context_id,
+                },
+                key_of(&position),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut statement = conn.prepare(
+        "SELECT id, kind, draft FROM invoices
+         WHERE context_id = ?1 AND status = 'draft' ORDER BY id",
+    )?;
+    let rows = statement
+        .query_map([context], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let drafts = rows
+        .into_iter()
+        .map(|(invoice_id, kind, json)| {
+            let draft: InvoiceDraft = serde_json::from_str(&json)?;
+            Ok((
+                DraftRef {
+                    invoice_id,
+                    kind: Kind::from_column(&kind),
+                    customer: draft.customer.name.clone(),
+                },
+                draft.positions.iter().map(key_of).collect(),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Held { templates, drafts })
+}
+
+impl Held {
+    fn usage_of(&self, key: &UnitKey) -> UnitUsage {
+        UnitUsage {
+            templates: self
+                .templates
+                .iter()
+                .filter(|(_, k)| k == key)
+                .map(|(r, _)| r.clone())
+                .collect(),
+            drafts: self
+                .drafts
+                .iter()
+                .filter(|(_, keys)| keys.contains(key))
+                .map(|(r, _)| r.clone())
+                .collect(),
+        }
+    }
+}
+
+/// Points the position at another unit when it names `from`, returns whether it did. Only the two
+/// fields are written, the rest of the stored position stays as it is.
+fn retarget(position: &mut serde_json::Value, from: &UnitKey, to: &UnitKey) -> Result<bool> {
+    let named: Position = serde_json::from_value(position.clone())?;
+    if &key_of(&named) != from {
+        return Ok(false);
+    }
+    position["unit"] = to.0.clone().into();
+    position["unit_label"] = to.1.clone().into();
+    Ok(true)
+}
+
+/// Drafts of the context and saved positions it sees (shared ones included) that name the unit
+/// `from` take `to` instead, in the caller's transaction. Nothing else about them changes, not even
+/// the time they were saved: the lists keep their order.
+fn rewrite_positions(conn: &Connection, context: i64, from: &UnitKey, to: &UnitKey) -> Result<()> {
+    let templates = conn
+        .prepare("SELECT id, json FROM templates WHERE context_id IS NULL OR context_id = ?1")?
+        .query_map([context], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for (id, json) in templates {
+        let mut value: serde_json::Value = serde_json::from_str(&json)?;
+        if retarget(&mut value, from, to)? {
+            conn.execute(
+                "UPDATE templates SET json = ?1 WHERE id = ?2",
+                params![serde_json::to_string(&value)?, id],
+            )?;
+        }
+    }
+    let drafts = conn
+        .prepare("SELECT id, draft FROM invoices WHERE context_id = ?1 AND status = 'draft'")?
+        .query_map([context], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for (id, json) in drafts {
+        let mut value: serde_json::Value = serde_json::from_str(&json)?;
+        let changed = value["positions"].as_array_mut().map_or(Ok(false), |all| {
+            all.iter_mut().try_fold(false, |changed, position| {
+                retarget(position, from, to).map(|hit| hit || changed)
+            })
+        })?;
+        if changed {
+            conn.execute(
+                "UPDATE invoices SET draft = ?1 WHERE id = ?2",
+                params![serde_json::to_string(&value)?, id],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Appends units to the list of a context, skipping a label the list has already (case aside)
+fn append_units(conn: &Connection, context: i64, wanted: &[UnitDef]) -> Result<()> {
+    let mut sort: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(sort) + 1, 0) FROM units WHERE context_id = ?1",
+        [context],
+        |r| r.get(0),
+    )?;
+    let mut labels: Vec<String> = conn
+        .prepare("SELECT label FROM units WHERE context_id = ?1")?
+        .query_map([context], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .iter()
+        .map(|l| l.trim().to_lowercase())
+        .collect();
+    for unit in wanted {
+        let label = unit.label.trim().to_lowercase();
+        if labels.contains(&label) {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO units (context_id, code, label, sort) VALUES (?1, ?2, ?3, ?4)",
+            params![context, unit.code, unit.label, sort],
+        )?;
+        labels.push(label);
+        sort += 1;
+    }
+    Ok(())
+}
+
+/// Units are a list per context. Each context gets the defaults, nothing else is looked at: a
+/// position whose unit is not in the list shows as such and can be changed. A context that has
+/// units already (a database that was stamped back) is left alone.
+fn migrate_to_units(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS units (
+             id INTEGER PRIMARY KEY,
+             context_id INTEGER NOT NULL,
+             code TEXT NOT NULL,
+             label TEXT NOT NULL,
+             sort INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS units_context ON units (context_id);",
+    )?;
+    let contexts = tx
+        .prepare("SELECT id FROM contexts ORDER BY id")?
+        .query_map([], |r| r.get::<_, i64>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for context in contexts {
+        let present: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM units WHERE context_id = ?1",
+            [context],
+            |r| r.get(0),
+        )?;
+        if present == 0 {
+            append_units(&tx, context, &units::defaults())?;
+        }
+    }
+    tx.execute_batch("PRAGMA user_version = 10;")?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -306,6 +520,43 @@ fn migrate_to_contexts(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn read_unit(row: &Row) -> rusqlite::Result<Unit> {
+    Ok(Unit {
+        id: Some(row.get("id")?),
+        context_id: row.get("context_id")?,
+        code: row.get("code")?,
+        label: row.get("label")?,
+    })
+}
+
+fn units_in(conn: &Connection, context: i64) -> Result<Vec<Unit>> {
+    let mut statement = conn.prepare(
+        "SELECT id, context_id, code, label FROM units WHERE context_id = ?1 ORDER BY sort, id",
+    )?;
+    let rows = statement.query_map([context], read_unit)?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+fn unit_row(conn: &Connection, id: i64) -> Result<Unit> {
+    conn.query_row(
+        "SELECT id, context_id, code, label FROM units WHERE id = ?1",
+        [id],
+        read_unit,
+    )
+    .optional()?
+    .ok_or_else(|| anyhow!("unknown unit"))
+}
+
+/// A unit def as a unit of a list, for the checks
+fn placed(context: i64, unit: &UnitDef) -> Unit {
+    Unit {
+        id: None,
+        context_id: context,
+        code: unit.code.clone(),
+        label: unit.label.clone(),
+    }
+}
+
 fn new_uid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -444,7 +695,10 @@ impl Store {
 
     /// Creates a context (`id` is `None`) or updates one. A new one without a brand gets the default
     /// for the first, a random one that is not in use for the others. Archiving is its own step.
-    pub fn save_context(&self, context: &Context) -> Result<Context> {
+    ///
+    /// A new context starts with `units` as its list (none or empty: the defaults), an existing one
+    /// keeps its own.
+    pub fn save_context(&self, context: &Context, units: Option<&[UnitDef]>) -> Result<Context> {
         let id = if let Some(id) = context.id {
             let brand = if context.brand.is_empty() {
                 BRANDS[0].to_owned()
@@ -473,9 +727,27 @@ impl Store {
                 brand,
                 settings: context.settings.clone(),
             })?;
+            let start = match units {
+                Some(given) if !given.is_empty() => given.to_vec(),
+                _ => units::defaults(),
+            };
+            // what is handed in is checked like a unit typed in, before the context exists, and
+            // stored as the check normalizes it
+            let start = start
+                .iter()
+                .enumerate()
+                .map(|(i, unit)| {
+                    let before: Vec<Unit> = start[..i].iter().map(|u| placed(0, u)).collect();
+                    units::check(unit, &before)
+                })
+                .collect::<Result<Vec<_>>>()?;
             let conn = self.conn();
-            conn.execute("INSERT INTO contexts (json) VALUES (?1)", [json])?;
-            conn.last_insert_rowid()
+            let tx = conn.unchecked_transaction()?;
+            tx.execute("INSERT INTO contexts (json) VALUES (?1)", [json])?;
+            let id = tx.last_insert_rowid();
+            append_units(&tx, id, &start)?;
+            tx.commit()?;
+            id
         };
         self.context(id)
     }
@@ -586,6 +858,7 @@ impl Store {
                 }
             };
         }
+        tx.execute("DELETE FROM units WHERE context_id = ?1", [id])?;
         // ids are reused, a later context must not inherit the floors
         tx.execute("DELETE FROM number_floors WHERE context_id = ?1", [id])?;
         tx.execute("DELETE FROM contexts WHERE id = ?1", [id])?;
@@ -686,6 +959,7 @@ impl Store {
                 let mut template: PositionTemplate = serde_json::from_str(&json)?;
                 template.id = Some(id);
                 template.context_id = context_id;
+                template.position = template.position.normalized();
                 Ok(template)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -754,6 +1028,7 @@ impl Store {
             let mut template: PositionTemplate = serde_json::from_str(&json)?;
             template.id = Some(id);
             template.context_id = context_id;
+            template.position = template.position.normalized();
             Ok(template)
         })
         .collect()
@@ -762,6 +1037,155 @@ impl Store {
     pub fn delete_template(&self, id: i64) -> Result<()> {
         self.conn()
             .execute("DELETE FROM templates WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    // units
+
+    /// The units of a context in the order the user keeps them
+    pub fn units(&self, context: i64) -> Result<Vec<Unit>> {
+        units_in(&self.conn(), context)
+    }
+
+    /// Adds a unit to the end of a context's list (`id` is `None`) or changes one. A new label or
+    /// code reaches the drafts and saved positions that used the old one, in the same step, and
+    /// nothing else: created invoices keep the label in their positions.
+    pub fn save_unit(&self, unit: &Unit) -> Result<Unit> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let saved = if let Some(id) = unit.id {
+            let before = unit_row(&tx, id)?;
+            let others: Vec<Unit> = units_in(&tx, before.context_id)?
+                .into_iter()
+                .filter(|u| u.id != Some(id))
+                .collect();
+            let def = units::check(
+                &UnitDef {
+                    code: unit.code.clone(),
+                    label: unit.label.clone(),
+                },
+                &others,
+            )?;
+            tx.execute(
+                "UPDATE units SET code = ?1, label = ?2 WHERE id = ?3",
+                params![def.code, def.label, id],
+            )?;
+            let (from, to) = (
+                (before.code.clone(), before.label.clone()),
+                (def.code.clone(), def.label.clone()),
+            );
+            if from != to {
+                rewrite_positions(&tx, before.context_id, &from, &to)?;
+            }
+            Unit {
+                id: Some(id),
+                context_id: before.context_id,
+                code: def.code,
+                label: def.label,
+            }
+        } else {
+            let known: bool = tx.query_row(
+                "SELECT COUNT(*) > 0 FROM contexts WHERE id = ?1",
+                [unit.context_id],
+                |r| r.get(0),
+            )?;
+            if !known {
+                bail!("unknown context");
+            }
+            let def = units::check(
+                &UnitDef {
+                    code: unit.code.clone(),
+                    label: unit.label.clone(),
+                },
+                &units_in(&tx, unit.context_id)?,
+            )?;
+            append_units(&tx, unit.context_id, std::slice::from_ref(&def))?;
+            Unit {
+                id: Some(tx.last_insert_rowid()),
+                context_id: unit.context_id,
+                code: def.code,
+                label: def.label,
+            }
+        };
+        tx.commit()?;
+        Ok(saved)
+    }
+
+    /// Where a unit is used by what changing or deleting it reaches
+    pub fn unit_usage(&self, id: i64) -> Result<UnitUsage> {
+        let conn = self.conn();
+        let unit = unit_row(&conn, id)?;
+        Ok(held(&conn, unit.context_id)?.usage_of(&(unit.code, unit.label)))
+    }
+
+    /// How many drafts and saved positions use each unit of a context, by unit id
+    pub fn unit_counts(&self, context: i64) -> Result<std::collections::BTreeMap<i64, usize>> {
+        let conn = self.conn();
+        let held = held(&conn, context)?;
+        Ok(units_in(&conn, context)?
+            .into_iter()
+            .filter_map(|u| {
+                let usage = held.usage_of(&(u.code, u.label));
+                Some((u.id?, usage.templates.len() + usage.drafts.len()))
+            })
+            .collect())
+    }
+
+    /// Deletes a unit. One that drafts or saved positions still use needs a `replacement` of the
+    /// same context, they take it over in the same step. The last unit of a context stays.
+    pub fn delete_unit(&self, id: i64, replacement: Option<i64>) -> Result<()> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let unit = unit_row(&tx, id)?;
+        if units_in(&tx, unit.context_id)?.len() < 2 {
+            bail!("Die letzte Einheit kann nicht gelöscht werden.");
+        }
+        let target = match replacement {
+            Some(other) if other == id => {
+                bail!("Die Einheit kann nicht durch sich selbst ersetzt werden.")
+            }
+            Some(other) => {
+                let target = unit_row(&tx, other)?;
+                if target.context_id != unit.context_id {
+                    bail!("Die Ersatz-Einheit gehört zu einem anderen Kontext.");
+                }
+                Some(target)
+            }
+            None => None,
+        };
+        let key = (unit.code, unit.label);
+        if !held(&tx, unit.context_id)?.usage_of(&key).is_empty() {
+            let Some(target) = target else {
+                bail!("Die Einheit wird noch verwendet, bitte eine Ersatz-Einheit wählen.");
+            };
+            rewrite_positions(&tx, unit.context_id, &key, &(target.code, target.label))?;
+        }
+        tx.execute("DELETE FROM units WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Puts the units of a context in the order of `ids`, which must name each of them once
+    pub fn reorder_units(&self, context: i64, ids: &[i64]) -> Result<()> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let mut have: Vec<i64> = units_in(&tx, context)?
+            .into_iter()
+            .filter_map(|u| u.id)
+            .collect();
+        let mut asked = ids.to_vec();
+        have.sort_unstable();
+        asked.sort_unstable();
+        if have != asked {
+            bail!("the order must name every unit of the context once");
+        }
+        for (position, id) in (0_i64..).zip(ids) {
+            tx.execute(
+                "UPDATE units SET sort = ?1 WHERE id = ?2",
+                params![position, id],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -974,6 +1398,11 @@ impl Store {
             .optional()?
             .ok_or_else(|| anyhow!("unknown invoice"))?;
         invoice.draft = serde_json::from_str(&draft)?;
+        // older rows have no labels, they are read as what the codes were printed as
+        invoice.draft.positions = std::mem::take(&mut invoice.draft.positions)
+            .into_iter()
+            .map(Position::normalized)
+            .collect();
         invoice.files = files.map(|f| serde_json::from_str(&f)).transpose()?;
         Ok(invoice)
     }
@@ -1457,7 +1886,9 @@ mod tests {
     fn context(store: &Store, seller: &str) -> Context {
         let mut settings = settings();
         settings.seller.name = seller.into();
-        store.save_context(&Context::new(settings, "")).unwrap()
+        store
+            .save_context(&Context::new(settings, ""), None)
+            .unwrap()
     }
 
     #[test]
@@ -1472,7 +1903,7 @@ mod tests {
         let mut changed = first.clone();
         changed.settings.payment_days = Some(30);
         changed.settings.seller.iban.clear();
-        let saved = store.save_context(&changed).unwrap();
+        let saved = store.save_context(&changed, None).unwrap();
 
         assert_eq!(
             store.settings(first.id.unwrap()).unwrap().payment_days,
@@ -1563,6 +1994,7 @@ mod tests {
                 description: description.into(),
                 quantity: None,
                 unit: None,
+                unit_label: None,
                 price: price.into(),
             },
         };
@@ -1590,6 +2022,7 @@ mod tests {
                 description: description.into(),
                 quantity: Some("2".into()),
                 unit: Some("HUR".into()),
+                unit_label: None,
                 price: "95,00".into(),
             },
         };
@@ -2303,6 +2736,7 @@ mod tests {
                 description: description.into(),
                 quantity: None,
                 unit: None,
+                unit_label: None,
                 price: "10".into(),
             },
         };
@@ -2338,6 +2772,7 @@ mod tests {
                     description: "x".into(),
                     quantity: None,
                     unit: None,
+                    unit_label: None,
                     price: "1".into(),
                 },
             })
@@ -2414,7 +2849,9 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let mut with_layout = settings();
         with_layout.layout = "custom-7".into();
-        let a = store.save_context(&Context::new(with_layout, "")).unwrap();
+        let a = store
+            .save_context(&Context::new(with_layout, ""), None)
+            .unwrap();
         assert!(store.is_default_layout("custom-7").unwrap());
         assert!(!store.is_default_layout("custom-8").unwrap());
 
@@ -3231,7 +3668,7 @@ mod tests {
         let mut with_offer_layout = settings();
         with_offer_layout.offer.layout = Some(layout.key());
         store
-            .save_context(&Context::new(with_offer_layout, ""))
+            .save_context(&Context::new(with_offer_layout, ""), None)
             .unwrap();
         assert!(store.is_default_layout(&layout.key()).unwrap());
     }
@@ -3547,5 +3984,473 @@ mod tests {
         // nothing was stored
         assert_eq!(store.invoices(None, Kind::Invoice, true).unwrap().len(), 1);
         assert_eq!(store.links(drafted.id).unwrap(), Vec::new());
+    }
+
+    // units
+
+    fn position(description: &str, unit: Option<&str>, label: Option<&str>) -> Position {
+        Position {
+            description: description.into(),
+            quantity: None,
+            unit: unit.map(Into::into),
+            unit_label: label.map(Into::into),
+            price: "1".into(),
+        }
+    }
+
+    fn saved_position(
+        store: &Store,
+        context: Option<i64>,
+        unit: Option<&str>,
+        label: Option<&str>,
+    ) -> PositionTemplate {
+        store
+            .save_template(&PositionTemplate {
+                id: None,
+                context_id: context,
+                position: position("Leistung", unit, label),
+            })
+            .unwrap()
+    }
+
+    /// A draft of a context with one position that names a unit
+    fn draft_with_unit(store: &Store, context: i64, unit: &str, label: &str) -> StoredInvoice {
+        let mut named = draft();
+        named.positions = vec![position("Leistung", Some(unit), Some(label))];
+        store
+            .save_draft(None, context, Kind::Invoice, &named, None)
+            .unwrap()
+    }
+
+    fn unit_of(store: &Store, context: i64, label: &str) -> Unit {
+        store
+            .units(context)
+            .unwrap()
+            .into_iter()
+            .find(|u| u.label == label)
+            .unwrap()
+    }
+
+    fn labels(store: &Store, context: i64) -> Vec<String> {
+        store
+            .units(context)
+            .unwrap()
+            .into_iter()
+            .map(|u| u.label)
+            .collect()
+    }
+
+    fn new_unit(context: i64, code: &str, label: &str) -> Unit {
+        Unit {
+            id: None,
+            context_id: context,
+            code: code.into(),
+            label: label.into(),
+        }
+    }
+
+    /// What is stored of a draft or an exported invoice, byte for byte
+    fn stored_draft(store: &Store, id: i64) -> String {
+        store
+            .conn()
+            .query_row("SELECT draft FROM invoices WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    }
+
+    fn stored_template(store: &Store, id: i64) -> String {
+        store
+            .conn()
+            .query_row("SELECT json FROM templates WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_version_nine_database_gets_the_default_units_per_context() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch("DROP TABLE units; PRAGMA user_version = 9;")
+            .unwrap();
+        let body = serde_json::to_string(&ContextBody {
+            brand: "blue".into(),
+            settings: settings(),
+        })
+        .unwrap();
+        conn.execute("INSERT INTO contexts (json) VALUES (?1), (?1)", [body])
+            .unwrap();
+
+        let store = Store::init(conn).unwrap();
+
+        let version: i32 = store
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        for context in [1, 2] {
+            assert_eq!(labels(&store, context), ["Stk.", "Std.", "pauschal"]);
+        }
+
+        // stamped back, it migrates again and nothing is added twice
+        store
+            .conn()
+            .execute_batch("PRAGMA user_version = 9;")
+            .unwrap();
+        migrate(&store.conn()).unwrap();
+        assert_eq!(labels(&store, 1).len(), 3);
+        assert_eq!(labels(&store, 2).len(), 3);
+    }
+
+    #[test]
+    fn a_context_starts_with_the_default_units() {
+        let store = Store::in_memory().unwrap();
+
+        let first = context(&store, "A");
+
+        assert_eq!(
+            store.units(first.id.unwrap()).unwrap().len(),
+            units::DEFAULTS.len()
+        );
+        assert_eq!(
+            labels(&store, first.id.unwrap()),
+            ["Stk.", "Std.", "pauschal"]
+        );
+    }
+
+    #[test]
+    fn a_new_context_starts_with_the_units_it_is_given_or_the_defaults() {
+        let store = Store::in_memory().unwrap();
+        let given = [
+            UnitDef {
+                code: "DAY".into(),
+                label: "Tag".into(),
+            },
+            UnitDef {
+                code: "C62".into(),
+                // stored trimmed, like a unit typed in
+                label: " Lizenz ".into(),
+            },
+        ];
+        let mut with_settings = settings();
+        with_settings.seller.name = "B".into();
+
+        let own = store
+            .save_context(&Context::new(with_settings.clone(), ""), Some(&given))
+            .unwrap();
+        let empty = store
+            .save_context(&Context::new(with_settings, ""), Some(&[]))
+            .unwrap();
+
+        assert_eq!(labels(&store, own.id.unwrap()), ["Tag", "Lizenz"]);
+        assert_eq!(
+            labels(&store, empty.id.unwrap()),
+            ["Stk.", "Std.", "pauschal"]
+        );
+        // saving an existing context keeps its units
+        store.save_context(&own, Some(&[])).unwrap();
+        assert_eq!(labels(&store, own.id.unwrap()), ["Tag", "Lizenz"]);
+    }
+
+    #[test]
+    fn units_that_are_handed_to_a_new_context_are_checked_and_nothing_is_made_when_they_fail() {
+        let store = Store::in_memory().unwrap();
+        let twice = [("C62", "Stk."), ("HUR", "stk.")].map(|(code, label)| UnitDef {
+            code: code.into(),
+            label: label.into(),
+        });
+
+        let refused = store.save_context(&Context::new(settings(), ""), Some(&twice));
+
+        assert!(refused.is_err());
+        assert!(store.contexts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn units_are_added_changed_and_checked() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let second = context(&store, "B").id.unwrap();
+
+        let license = store
+            .save_unit(&new_unit(first, "C62", "  Lizenz "))
+            .unwrap();
+        assert_eq!(license.label, "Lizenz");
+        assert_eq!(license.context_id, first);
+        // several labels per code, but a label only once per context, case aside
+        assert!(store.save_unit(&new_unit(first, "HUR", "lizenz")).is_err());
+        assert!(store.save_unit(&new_unit(second, "HUR", "lizenz")).is_ok());
+        assert!(store.save_unit(&new_unit(first, "kwh", "kWh")).is_err());
+        assert!(store.save_unit(&new_unit(first, "KWH", " ")).is_err());
+        assert!(store.save_unit(&new_unit(9999, "KWH", "kWh")).is_err());
+
+        // a change keeps the unit in its context and its place
+        let renamed = store
+            .save_unit(&Unit {
+                label: "Software-Lizenz".into(),
+                context_id: second,
+                ..license
+            })
+            .unwrap();
+        assert_eq!(renamed.context_id, first);
+        assert_eq!(
+            labels(&store, first),
+            ["Stk.", "Std.", "pauschal", "Software-Lizenz"]
+        );
+        // it may keep its own label
+        assert!(store.save_unit(&renamed).is_ok());
+        assert!(store
+            .save_unit(&Unit {
+                label: "std.".into(),
+                ..renamed
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn units_are_put_in_the_order_they_are_given() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        let mut ids: Vec<i64> = store
+            .units(first)
+            .unwrap()
+            .into_iter()
+            .filter_map(|u| u.id)
+            .collect();
+
+        ids.reverse();
+        store.reorder_units(first, &ids).unwrap();
+
+        assert_eq!(labels(&store, first), ["pauschal", "Std.", "Stk."]);
+        assert_eq!(labels(&store, other), ["Stk.", "Std.", "pauschal"]);
+        // every unit of the context, once
+        assert!(store.reorder_units(first, &ids[1..]).is_err());
+        assert!(store
+            .reorder_units(first, &[ids[0], ids[0], ids[1]])
+            .is_err());
+        let foreign = store.units(other).unwrap()[0].id.unwrap();
+        assert!(store
+            .reorder_units(first, &[ids[0], ids[1], foreign])
+            .is_err());
+    }
+
+    #[test]
+    fn renaming_a_unit_reaches_drafts_and_saved_positions_but_not_created_invoices() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        let hours = unit_of(&store, first, "Std.");
+        let scoped = saved_position(&store, Some(first), Some("HUR"), Some("Std."));
+        let shared = saved_position(&store, None, Some("HUR"), None);
+        let untouched = saved_position(&store, Some(first), Some("HUR"), Some("Stunde"));
+        let elsewhere = draft_with_unit(&store, other, "HUR", "Std.");
+        let open = draft_with_unit(&store, first, "HUR", "Std.");
+        let issued = create_as(&store, first, Kind::Invoice, "RE-2026-001");
+        let issued_before = stored_draft(&store, issued.id);
+        let elsewhere_before = stored_draft(&store, elsewhere.id);
+        let untouched_before = stored_template(&store, untouched.id.unwrap());
+        let stamp = |id: i64| -> String {
+            store
+                .conn()
+                .query_row("SELECT updated_at FROM invoices WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+        let stamped = stamp(open.id);
+
+        store
+            .save_unit(&Unit {
+                label: "Stunde(n)".into(),
+                ..hours
+            })
+            .unwrap();
+
+        let label_of = |p: &Position| p.unit_label.clone().unwrap();
+        assert_eq!(
+            label_of(&store.invoice(open.id).unwrap().draft.positions[0]),
+            "Stunde(n)"
+        );
+        let templates = store.templates(first).unwrap();
+        let find = |id: Option<i64>| templates.iter().find(|t| t.id == id).unwrap();
+        assert_eq!(label_of(&find(scoped.id).position), "Stunde(n)");
+        // a shared saved position follows, whichever context it is seen from
+        assert_eq!(label_of(&find(shared.id).position), "Stunde(n)");
+        // another label on the same code is another unit
+        assert_eq!(
+            stored_template(&store, untouched.id.unwrap()),
+            untouched_before
+        );
+        // what belongs to another context or is created is not touched, and the lists keep their order
+        assert_eq!(stored_draft(&store, elsewhere.id), elsewhere_before);
+        assert_eq!(stored_draft(&store, issued.id), issued_before);
+        assert_eq!(stamp(open.id), stamped);
+    }
+
+    #[test]
+    fn changing_the_code_of_a_unit_reaches_drafts_too() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let hours = unit_of(&store, first, "Std.");
+        let open = draft_with_unit(&store, first, "HUR", "Std.");
+
+        store
+            .save_unit(&Unit {
+                code: "MIN".into(),
+                ..hours
+            })
+            .unwrap();
+
+        let position = &store.invoice(open.id).unwrap().draft.positions[0];
+        assert_eq!(position.unit.as_deref(), Some("MIN"));
+        assert_eq!(position.unit_label.as_deref(), Some("Std."));
+    }
+
+    #[test]
+    fn what_a_unit_reaches_is_told_before_a_change() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let hours = unit_of(&store, first, "Std.");
+        let piece = unit_of(&store, first, "Stk.");
+        let template = saved_position(&store, None, Some("HUR"), Some("Std."));
+        let open = draft_with_unit(&store, first, "HUR", "Std.");
+        // not reached: created, and another context's draft
+        create_as(&store, first, Kind::Invoice, "RE-2026-001");
+        let other = context(&store, "B").id.unwrap();
+        draft_with_unit(&store, other, "HUR", "Std.");
+
+        let usage = store.unit_usage(hours.id.unwrap()).unwrap();
+
+        assert_eq!(usage.templates.len(), 1);
+        assert_eq!(usage.templates[0].id, template.id.unwrap());
+        assert_eq!(usage.templates[0].context_id, None);
+        assert_eq!(usage.drafts.len(), 1);
+        assert_eq!(usage.drafts[0].invoice_id, open.id);
+        assert_eq!(usage.drafts[0].customer, customer().name);
+        let counts = store.unit_counts(first).unwrap();
+        assert_eq!(counts[&hours.id.unwrap()], 2);
+        assert_eq!(counts[&piece.id.unwrap()], 0);
+    }
+
+    #[test]
+    fn a_unit_nothing_uses_is_deleted_and_the_last_one_stays() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let ids: Vec<i64> = store
+            .units(first)
+            .unwrap()
+            .into_iter()
+            .filter_map(|u| u.id)
+            .collect();
+
+        store.delete_unit(ids[2], None).unwrap();
+        store.delete_unit(ids[1], None).unwrap();
+
+        assert_eq!(labels(&store, first), ["Stk."]);
+        assert!(store.delete_unit(ids[0], None).is_err());
+        assert!(store.delete_unit(9999, None).is_err());
+        assert_eq!(labels(&store, first), ["Stk."]);
+    }
+
+    #[test]
+    fn a_unit_in_use_is_deleted_only_with_a_replacement_that_takes_its_place() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        let hours = unit_of(&store, first, "Std.").id.unwrap();
+        let piece = unit_of(&store, first, "Stk.");
+        let foreign = unit_of(&store, other, "Stk.").id.unwrap();
+        let template = saved_position(&store, Some(first), Some("HUR"), Some("Std."));
+        let open = draft_with_unit(&store, first, "HUR", "Std.");
+        let issued = create_as(&store, first, Kind::Invoice, "RE-2026-001");
+        // archived, too
+        let archived = create_as(&store, first, Kind::Invoice, "RE-2026-002");
+        store.archive_invoice(archived.id).unwrap();
+        let (issued_before, archived_before) = (
+            stored_draft(&store, issued.id),
+            stored_draft(&store, archived.id),
+        );
+
+        // used: a replacement is needed, of the same context and another unit
+        assert!(store.delete_unit(hours, None).is_err());
+        assert!(store.delete_unit(hours, Some(hours)).is_err());
+        assert!(store.delete_unit(hours, Some(foreign)).is_err());
+        assert_eq!(labels(&store, first).len(), 3);
+
+        store.delete_unit(hours, Some(piece.id.unwrap())).unwrap();
+
+        assert_eq!(labels(&store, first), ["Stk.", "pauschal"]);
+        let position = &store.invoice(open.id).unwrap().draft.positions[0];
+        assert_eq!(position.unit.as_deref(), Some("C62"));
+        assert_eq!(position.unit_label.as_deref(), Some("Stk."));
+        let kept = store
+            .templates(first)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == template.id)
+            .unwrap();
+        assert_eq!(kept.position.unit_label.as_deref(), Some("Stk."));
+        assert_eq!(stored_draft(&store, issued.id), issued_before);
+        assert_eq!(stored_draft(&store, archived.id), archived_before);
+    }
+
+    #[test]
+    fn removing_a_context_removes_its_units_with_it() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+
+        store.remove_context(first, Disposition::Share).unwrap();
+
+        assert!(store.units(first).unwrap().is_empty());
+        assert_eq!(store.units(other).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn positions_are_read_with_code_and_label_filled_in() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        // what an older version stored: no label, and piece as an empty code
+        store
+            .conn()
+            .execute(
+                "INSERT INTO templates (json, context_id) VALUES
+                     ('{\"description\":\"Alt\",\"quantity\":null,\"unit\":null,\"price\":\"1\"}', NULL),
+                     ('{\"description\":\"Woche\",\"quantity\":null,\"unit\":\"WEE\",\"price\":\"1\"}', NULL)",
+                [],
+            )
+            .unwrap();
+
+        let templates = store.templates(first).unwrap();
+
+        let read = |description: &str| {
+            let t = templates
+                .iter()
+                .find(|t| t.position.description == description)
+                .unwrap();
+            (
+                t.position.unit.clone().unwrap(),
+                t.position.unit_label.clone().unwrap(),
+            )
+        };
+        assert_eq!(read("Alt"), ("C62".to_owned(), "Stk.".to_owned()));
+        assert_eq!(read("Woche"), ("WEE".to_owned(), "Woche(n)".to_owned()));
+        // reading did not rewrite anything
+        assert!(stored_template(&store, 1).contains("\"unit\":null"));
+    }
+
+    #[test]
+    fn saved_positions_with_other_labels_on_one_code_are_different() {
+        let store = Store::in_memory().unwrap();
+        let first = saved_position(&store, None, Some("HUR"), Some("Std."));
+
+        let other = saved_position(&store, None, Some("HUR"), Some("Stunde"));
+        let same = saved_position(&store, None, Some("HUR"), None);
+
+        assert_ne!(first.id, other.id);
+        // no label is what the code was printed as
+        assert_eq!(first.id, same.id);
     }
 }

@@ -16,3 +16,5 @@ pub mod opened_files_command;
 pub mod preview_invoice_command;
 #[path = "templates.command.rs"]
 pub mod templates_command;
+#[path = "units.command.rs"]
+pub mod units_command;

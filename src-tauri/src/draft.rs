@@ -3,6 +3,7 @@
 
 use std::str::FromStr;
 
+use en16931::codes::guard;
 use en16931::invoice::{
     Contact, Delivery, InvoiceNote, Party, PaymentInstructions, PaymentMeans, Period, PostalAddress,
 };
@@ -183,6 +184,13 @@ fn line(
             "Eine Beschreibung ist erforderlich",
         ));
     }
+    let code = position.unit_code();
+    if guard::unit(code).is_err() {
+        problems.push(problem(
+            field("unit"),
+            format!("Der Einheitencode „{code}“ ist nicht zulässig"),
+        ));
+    }
     let (Some(quantity), Some(price)) = (quantity, price) else {
         return Err(problems);
     };
@@ -194,7 +202,7 @@ fn line(
         &(index + 1).to_string(),
         position.description.trim(),
         Quantity::new(quantity),
-        blank(position.unit.as_deref()).unwrap_or("C62"),
+        position.unit_code(),
         UnitPriceAmount::new(price),
         if vat_free { "E" } else { "S" },
         Some(rate),
@@ -451,12 +459,14 @@ pub(crate) mod fixtures {
                     description: "Beratung".into(),
                     quantity: Some("10".into()),
                     unit: Some("HUR".into()),
+                    unit_label: None,
                     price: "95,00".into(),
                 },
                 Position {
                     description: "Reisekosten".into(),
                     quantity: None,
                     unit: None,
+                    unit_label: None,
                     price: "42.50".into(),
                 },
             ],
@@ -489,6 +499,29 @@ mod tests {
             (t.net.as_str(), t.vat.as_str(), t.gross.as_str()),
             ("992.50", "188.58", "1181.08")
         );
+    }
+
+    #[test]
+    fn a_unit_code_the_rules_do_not_know_is_an_input_problem() {
+        for (code, ok) in [("KWH", true), ("kwh", false), ("NOPE", false), (" ", true)] {
+            let mut named = draft();
+            named.positions[0].unit = Some(code.into());
+
+            let built = build_invoice(&named, &settings(), "RE-1");
+
+            match built {
+                Ok(_) => assert!(ok, "{code:?} was accepted"),
+                Err(problems) => {
+                    assert!(!ok, "{code:?} was refused: {problems:?}");
+                    assert_eq!(problems.len(), 1);
+                    assert_eq!(problems[0].field, "positions[0].unit");
+                    assert_eq!(
+                        problems[0].message,
+                        format!("Der Einheitencode „{code}“ ist nicht zulässig")
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -672,6 +705,7 @@ mod tests {
                 description: "Beratung".into(),
                 quantity: None,
                 unit: None,
+                unit_label: None,
                 price: price.into(),
             }];
             let invoice = build_invoice(&d, &settings(), "RE-1").unwrap();

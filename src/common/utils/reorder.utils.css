@@ -1,0 +1,39 @@
+/* the handle, the lifted row and the gap of a reorderable list, see reorder.utils.ts */
+.handle {
+  all: unset;
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: var(--wa-form-control-height);
+  width: var(--wa-form-control-height);
+
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  aspect-ratio: 1;
+
+  &:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+    cursor: default;
+  }
+}
+
+.dragging {
+  position: relative;
+  z-index: 2;
+  box-shadow: var(--wa-shadow-m);
+}
+
+/* the gap a dragged row lands in, the rows' container sets --reorder-radius to match its rows */
+.drop-slot {
+  position: absolute;
+  inset-inline: 0;
+  left: calc(var(--wa-form-control-height) + var(--wa-space-xs));
+  box-sizing: border-box;
+  border: 2px dashed var(--wa-color-brand-border-loud);
+  border-radius: var(--reorder-radius, var(--wa-border-radius-s));
+  pointer-events: none;
+}

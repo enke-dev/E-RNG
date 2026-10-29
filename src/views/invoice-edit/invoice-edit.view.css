@@ -67,6 +67,7 @@ wa-dialog::part(dialog) {
   gap: 0 var(--wa-space-s);
   grid-template-columns: var(--wa-form-control-height) minmax(10rem, 1fr) 5rem 8rem 7.5rem auto;
   break-inside: auto;
+  --reorder-radius: var(--wa-border-radius-m);
 
   /* side by side, the header row names the columns: the labels of the fields would repeat it;
      the width is what the columns above need at least, with the actions and the gaps */
@@ -139,48 +140,10 @@ wa-dialog::part(dialog) {
   &:not(.head) + &:not(.head) {
     border-top-color: var(--wa-color-surface-border);
   }
-
-  &.dragging {
-    position: relative;
-    z-index: 2;
-    box-shadow: var(--wa-shadow-m);
-  }
 }
 
 .row-actions::part(base) {
   flex-wrap: nowrap;
-}
-
-/* the gap a dragged position lands in, placed by reorder.utils.ts */
-.drop-slot {
-  position: absolute;
-  inset-inline: 0;
-  left: calc(var(--wa-form-control-height) + var(--wa-space-xs));
-  box-sizing: border-box;
-  border: 2px dashed var(--wa-color-brand-border-loud);
-  border-radius: var(--wa-border-radius-m);
-  pointer-events: none;
-}
-
-.handle {
-  all: unset;
-  display: inline-flex;
-  align-self: center;
-  align-items: center;
-  justify-content: center;
-  height: var(--wa-form-control-height);
-  width: var(--wa-form-control-height);
-
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-  aspect-ratio: 1;
-
-  &:disabled {
-    opacity: 0.5;
-    pointer-events: none;
-    cursor: default;
-  }
 }
 
 .add-position {

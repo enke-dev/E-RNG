@@ -3,13 +3,13 @@
 ## Review decisions (2026-10-29) – they override the text below
 
 - **Units are per context**, not global. The `units` table gets `context_id NOT NULL`; each context has its own list, seeded with Stk. (C62), Std. (HUR), pauschal (LS). A new context starts with a copy of the active context's units. The settings show "Einheiten" in each context's group (not in a global "Allgemein" group); the position selects show the units of the invoice's context.
-- **Migration keeps what is in use**: per context, the defaults plus every unit its own drafts and its scoped saved positions use; units of shared saved positions (`context_id` NULL) are added to every context, so no shared position becomes an orphan anywhere.
+- **The migration only seeds the defaults**: every context gets Stk., Std., pauschal and nothing else. A position whose unit is not in the list shows as "nicht in der Liste" and can be switched.
 - **Rename and code change follow silently** in drafts and saved positions of that context (and shared saved positions, which then may show an orphan in other contexts – the select shows it as "nicht in der Liste"), the dialog says how many; created invoices keep their label (as proposed).
 - Several labels per code: allowed. A duplicated invoice whose unit was deleted keeps the old label. The catalog as proposed. (Open questions 1–6 closed.)
 
 Goal: positions get their unit from a list the user maintains (a label plus a UN/ECE rec. 20 code) instead of the hard-coded `UNITS` in `src/common/utils/format.utils.ts` and `unit_name()` in `src-tauri/src/render/view.rs`. The app only ships three defaults: **Stk.** (C62), **Std.** (HUR), **pauschal** (LS). Units can be renamed and deleted without changing any created invoice.
 
-Status: plan, not started. Related: [import-historic.md](import-historic.md) (imported positions bring codes that may not be in the list).
+Status: implemented (schema 10, per context, see the review decisions above and docs/development.md). Related: [import-historic.md](import-historic.md) (imported positions bring codes that may not be in the list).
 
 ## How it works today (for reference)
 
@@ -49,8 +49,7 @@ CREATE TABLE IF NOT EXISTS units (
 ```
 
 - Seed with Stk./C62, Std./HUR, pauschal/LS (sort 0, 1, 2).
-- Then scan `templates.json` and the `invoices.draft` of rows with `status = 'draft'`. Each (code, legacy label) they use that is not seeded yet is added in order of first use. Example: a template with DAY adds "Tag(e)"/DAY, so nothing open becomes an orphan.
-- Exported invoices are not scanned. They resolve through `legacy_label` and are never edited.
+- Created invoices keep their labels. Rows without one resolve through `legacy_label` and are never edited.
 - Label uniqueness is checked in Rust (case and spaces aside), not with a SQL constraint.
 
 `model.rs`:
@@ -139,7 +138,7 @@ pub struct UnitUsage { pub templates: Vec<TemplateRef>, pub drafts: Vec<DraftRef
 ## Tests
 
 - Rust (`store.rs`):
-  - Migration v6 → v7 on a database that has a template with `DAY` and a draft with `MON`: units are Stk., Std., pauschal, Tag(e), Monat(e). An exported invoice with `WEE` adds nothing and still reads as "Woche(n)".
+  - Migration v9 → v10 on a database with two contexts: each gets Stk., Std., pauschal and nothing is added twice when it runs again.
   - Legacy positions are read with `unit_label` filled; an empty code reads as C62 "Stk.".
   - Delete without usage. A used unit without a replacement is refused. With a replacement, templates and drafts are rewritten, while an exported invoice and an archived one keep code and label byte for byte.
   - Renaming applies to drafts and templates but not to exported invoices.
