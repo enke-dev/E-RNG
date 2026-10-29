@@ -561,6 +561,43 @@ export type ProduceError =
   | { kind: 'not-valid'; issues: Issue[] }
   | { kind: 'failed'; message: string };
 
+/** Where the backups stand: when the last one was made (UTC, null: never) and where safety copies go */
+export interface BackupStatus {
+  last_backup_at: string | null;
+  safety_dir: string;
+}
+
+export interface BackupCreated {
+  path: string;
+  files: number;
+  bytes: number;
+  created_at: string;
+}
+
+/** What a backup holds, as the user counts it */
+export interface DataCounts {
+  contexts: number;
+  invoices: number;
+  offers: number;
+  layouts: number;
+}
+
+export interface RestoreOutcome {
+  counts: DataCounts;
+  /** The file the data in use was saved to before it was replaced */
+  safety_copy: string;
+  /** Kept originals that are missing or changed in the restored data */
+  problems: string[];
+  created_at: string;
+  app_version: string;
+  /** The schema the backup was written with: older ones were brought up to date */
+  schema_version: number;
+}
+
+export interface RemoveOutcome {
+  safety_copy: string;
+}
+
 /** Commands reject with a string, creating and handing out an invoice with a `ProduceError` */
 export function errorText(error: unknown): string {
   if (typeof error === 'string') {
@@ -586,6 +623,13 @@ export function errorText(error: unknown): string {
 }
 
 export const api = {
+  backupStatus: () => invoke<BackupStatus>('backup_status'),
+  backupCreate: (path: string) => invoke<BackupCreated>('backup_create', { path }),
+  /** Replaces all data by a backup, after a safety copy of the data in use; the app must reload */
+  backupRestore: (path: string) => invoke<RestoreOutcome>('backup_restore', { path }),
+  /** Back to a first start after a safety copy; `confirmation` is the word the user typed */
+  dataRemove: (confirmation: string) => invoke<RemoveOutcome>('data_remove', { confirmation }),
+
   contextsList: () => invoke<Context[]>('contexts_list'),
   contextBlank: () => invoke<Context>('context_blank'),
   /** A new context (`id` null) starts with `units` and `rates` as its lists, none: the defaults */

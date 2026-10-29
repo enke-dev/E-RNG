@@ -36,6 +36,11 @@ impl Creating {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Whether an invoice is being created somewhere
+    pub fn any(&self) -> bool {
+        !self.waiting().is_empty()
+    }
+
     pub fn start(&self, context: i64) -> Option<CreatingGuard<'_>> {
         // the lock is let go before a guard exists: dropping a guard takes it again
         let inserted = self.waiting().insert(context);

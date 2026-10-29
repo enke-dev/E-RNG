@@ -101,6 +101,15 @@ fn verified(data: &Path, file: &StoredFile) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// What is wrong with the kept originals: each one that is missing or no longer what its hash says
+pub fn problems(data: &Path, files: &[StoredFile]) -> Vec<String> {
+    files
+        .iter()
+        .filter_map(|file| verified(data, file).err())
+        .map(|error| error.to_string())
+        .collect()
+}
+
 /// Copies the originals to where the user wants them. Both are checked first, and a copy that was
 /// made is removed again if another one fails.
 pub fn output(

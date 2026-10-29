@@ -9,6 +9,7 @@ import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '@awesome.me/webawesome/dist/components/tooltip/tooltip.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '../../common/components/address-fields/address-fields.component.js';
+import '../../common/components/backup/backup.component.js';
 import '../../common/components/layout-form/layout-form.component.js';
 import '../../common/components/list/list/list.component.js';
 import '../../common/components/list/list-group/list-group.component.js';
@@ -176,6 +177,9 @@ const snapshot = (context: Context | undefined) =>
   JSON.stringify(context && [context.brand, context.settings]);
 
 const LAYOUT = 'layout-';
+
+/** The page of the backup: it belongs to the app, not to a context */
+const BACKUP = 'backup';
 
 /** The lines of legal information the footer of the built-in layout has room for */
 const LEGAL_LINES = 4;
@@ -1384,6 +1388,14 @@ export class SettingsView extends ErngElement.withStyles(styles) {
             )
           )}
         </erng-list-group>
+        <erng-list-group heading="System">
+          <erng-list-item
+            ?selected="${this.section === BACKUP}"
+            @click="${() => goto(`/settings/${BACKUP}`)}"
+          >
+            Datensicherung
+          </erng-list-item>
+        </erng-list-group>
       </erng-list>
     `;
   }
@@ -2122,6 +2134,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       return this.context
         ? this.contextPage(this.context, route.page)
         : html`<wa-callout slot="detail" variant="neutral">Kontext nicht gefunden.</wa-callout>`;
+    }
+    if (this.section === BACKUP) {
+      return html`<erng-backup slot="detail"></erng-backup>`;
     }
     if (this.section === `${LAYOUT}standard`) {
       return this.standardPage();

@@ -16,7 +16,7 @@ use crate::context::{Context, ContextUsage, Disposition, BRANDS};
 use crate::draft::{build_invoice, totals};
 use crate::model::{
     CustomLayout, Customer, InvoiceDraft, InvoiceFiles, Kind, LayoutUsage, Linked, ListEntry,
-    Position, PositionTemplate, Settings, Status, StoredInvoice,
+    Position, PositionTemplate, Settings, Status, StoredFile, StoredInvoice,
 };
 use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
 use crate::rates::{self, Rate, RateDef, RateUsage};
@@ -37,7 +37,9 @@ pub struct Sequence {
     pub floor: Option<u32>,
 }
 
-const SCHEMA_VERSION: i32 = 11;
+/// What `PRAGMA user_version` says of a database this app has migrated; a backup of an older one is
+/// migrated on restore, so no step of `migrate` may ever be dropped.
+pub const SCHEMA_VERSION: i32 = 11;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -109,6 +111,16 @@ fn migrate(conn: &Connection) -> Result<()> {
     if version < 11 {
         migrate_to_rates(conn)?;
     }
+    ensure_app_state(conn)
+}
+
+/// App-wide values that belong to no context (when the last backup was made). Created on every open
+/// rather than by a step: it came with schema 11 before that was released, so databases that are
+/// at 11 already have to get it as well.
+fn ensure_app_state(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    )?;
     Ok(())
 }
 
@@ -840,8 +852,25 @@ fn new_uid() -> String {
 }
 
 /// UTC, in a form that sorts like time does
-fn now() -> String {
+pub(crate) fn now() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+fn set_last_backup_at(conn: &Connection, at: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO app_state (key, value) VALUES ('last_backup_at', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        [at],
+    )?;
+    Ok(())
+}
+
+/// Notes the time of a backup in a snapshot of the database, so the data that is restored from it
+/// knows it was backed up then
+pub fn stamp_snapshot(path: &Path, at: &str) -> Result<()> {
+    let conn = Connection::open(path)?;
+    ensure_app_state(&conn)?;
+    set_last_backup_at(&conn, at)
 }
 
 /// Inserts or updates a layout row, returns its id
@@ -901,11 +930,36 @@ fn stored(row: &Row) -> rusqlite::Result<StoredRow> {
     ))
 }
 
+/// What a backup holds, as the user counts it
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct DataCounts {
+    pub contexts: usize,
+    pub invoices: usize,
+    pub offers: usize,
+    pub layouts: usize,
+}
+
+/// Opens the database file: write-ahead log, migrations
+fn open_connection(path: &Path) -> Result<Connection> {
+    let conn = Connection::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    migrate(&conn)?;
+    Ok(conn)
+}
+
+/// A connection that holds the place of the real one while its files are being replaced. It has no
+/// tables, so a command that reaches it fails instead of writing into a database nobody keeps.
+fn placeholder() -> Result<Connection> {
+    Connection::open_in_memory_with_flags(
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )
+    .or_else(|_| Connection::open_in_memory())
+    .map_err(Into::into)
+}
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
-        let conn =
-            Connection::open(path).with_context(|| format!("cannot open {}", path.display()))?;
-        Self::init(conn)
+        Ok(Self(Mutex::new(open_connection(path)?)))
     }
 
     #[cfg(test)]
@@ -913,10 +967,113 @@ impl Store {
         Self::init(Connection::open_in_memory()?)
     }
 
+    #[cfg(test)]
     fn init(conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         migrate(&conn)?;
         Ok(Self(Mutex::new(conn)))
+    }
+
+    // backup
+
+    /// A consistent copy of the database in a new file. `VACUUM INTO` reads one transaction, the
+    /// write-ahead log is part of it, which copying the files would not guarantee.
+    pub fn snapshot_to(&self, target: &Path) -> Result<()> {
+        let target = target
+            .to_str()
+            .ok_or_else(|| anyhow!("the path is not valid text"))?;
+        self.conn()
+            .execute("VACUUM INTO ?1", [target])
+            .context("cannot copy the database")?;
+        Ok(())
+    }
+
+    /// When the last backup was made (UTC, like the other times), none if there never was one
+    pub fn last_backup_at(&self) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT value FROM app_state WHERE key = 'last_backup_at'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_last_backup_at(&self, at: &str) -> Result<()> {
+        set_last_backup_at(&self.conn(), at)
+    }
+
+    /// How much there is of what a backup holds
+    pub fn counts(&self) -> Result<DataCounts> {
+        let conn = self.conn();
+        let count = |sql: &str| -> Result<usize> { Ok(conn.query_row(sql, [], |r| r.get(0))?) };
+        Ok(DataCounts {
+            contexts: count("SELECT COUNT(*) FROM contexts")?,
+            invoices: count("SELECT COUNT(*) FROM invoices WHERE kind = 'invoice'")?,
+            offers: count("SELECT COUNT(*) FROM invoices WHERE kind = 'offer'")?,
+            layouts: count("SELECT COUNT(*) FROM layouts")?,
+        })
+    }
+
+    /// Every kept original (PDF and XML) of every created document, with the hash it must have
+    pub fn original_files(&self) -> Result<Vec<StoredFile>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare("SELECT files FROM invoices WHERE files IS NOT NULL")?;
+        let rows = statement
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut all = Vec::new();
+        for json in rows {
+            let files: InvoiceFiles = serde_json::from_str(&json)?;
+            all.push(files.pdf);
+            all.extend(files.xml);
+        }
+        Ok(all)
+    }
+
+    /// Lets `swap` change the database files, then opens the database at `path` again, migrated.
+    /// The connection is closed meanwhile and the lock held, so no command sees half of it; the
+    /// others wait. `swap` leaves nothing behind when it fails. When the new database does not open
+    /// (it would not have been taken in then, but who knows), `undo` puts the old files back and
+    /// the old database is opened again.
+    pub fn replace_files<T>(
+        &self,
+        path: &Path,
+        swap: impl FnOnce() -> Result<T>,
+        undo: impl FnOnce(T),
+    ) -> Result<T> {
+        let mut guard = self.conn();
+        // the log is folded into the file, so the file alone is the whole database
+        guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        let old = std::mem::replace(&mut *guard, placeholder()?);
+        if let Err((old, error)) = old.close() {
+            *guard = old;
+            return Err(error.into());
+        }
+        let reopen = |guard: &mut Connection| {
+            open_connection(path).map(|conn| *guard = conn).context(
+                "Die Datenbank ließ sich nicht wieder öffnen. Bitte e-rng beenden und neu starten.",
+            )
+        };
+        let swapped = match swap() {
+            Ok(swapped) => swapped,
+            Err(error) => {
+                reopen(&mut guard)?;
+                return Err(error);
+            }
+        };
+        match open_connection(path) {
+            Ok(conn) => {
+                *guard = conn;
+                Ok(swapped)
+            }
+            Err(error) => {
+                undo(swapped);
+                reopen(&mut guard)?;
+                Err(error.context("the restored database does not open"))
+            }
+        }
     }
 
     fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
@@ -2578,6 +2735,16 @@ mod tests {
                 id: Some(999),
                 ..template("x")
             })
+            .is_err());
+    }
+
+    #[test]
+    fn the_stand_in_connection_takes_no_writes() {
+        let conn = placeholder().unwrap();
+
+        assert!(conn.execute_batch("CREATE TABLE x (y);").is_err());
+        assert!(conn
+            .query_row("SELECT COUNT(*) FROM contexts", [], |r| r.get::<_, i64>(0))
             .is_err());
     }
 

@@ -3,6 +3,7 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
+import '../common/components/replaced/replaced.component.js';
 import '../common/components/updater/updater.component.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
@@ -167,6 +168,7 @@ export class RootView extends ErngElement.withStyles(styles) {
         `,
         () => html`<main>${keyed(activeContext.get()?.id, this.#router.outlet())}</main>`
       )}
+      <erng-replaced></erng-replaced>
     `;
   }
 }

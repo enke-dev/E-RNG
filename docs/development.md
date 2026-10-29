@@ -82,6 +82,7 @@ src/                       frontend
   views/                   invoices and offers (list + detail), invoice-edit, customers, templates, settings (+ root shell and routes)
   common/                  components (one folder each: `<name>/<name>.component.{ts,css}`, styles always in the css file, `ErngElement.withStyles(styles)`), layouts (split, cards, editor: slots only, split and editor have a `wa-split-panel` the user can move (their slots are the panels, so they style their own slots; the divider position is stored under the `position-key` of the view; the list has a minimum and maximum, the detail a minimum; the editor shows only the form where the minimums of both sides do not fit, a container query), views import no styles), api.utils.ts (typed commands), format and form helpers, `reorder.utils.ts` (the drag and arrow-key reorder of the positions, the units, the VAT rates and the parts of a layout: `Reorder` renders the handle, its styles are `reorder.utils.css`), mock backend
 src-tauri/src/
+  backup.rs                backup, restore and remove all data (`.erng-backup`)
   invoice/                 profile choice, rule checks, German finding texts, CII writer, golden test set
   draft.rs                 form draft → invoice model
   units.rs                 units of measure: catalog (data/unit-names.json), defaults, the old labels, checks
@@ -104,6 +105,50 @@ src-tauri/test-fixtures/   a font file for the layout tests (Open Sans, OFL)
 The database and the layout files live in the app data directory (`~/Library/Application Support/dev.enke.e-rng`). A
 debug build (`tauri dev`) uses `dev.enke.e-rng.dev` next to it, so a development run never migrates the data of an
 installed app: an older version refuses a database a newer one has migrated ("written by a newer version"). To start a debug build empty (a fresh setup, someone else's case) without moving that folder away, point it elsewhere: `ERNG_DATA_DIR=/some/dir bun run dev`.
+
+## Backup
+
+German invoices must stay available for years (Buchungsbelege 8, Bücher 10 years), so everything can be backed up
+and restored: settings page `Datensicherung` (app-wide, not per context; `erng-backup`), code in `backup.rs`,
+commands in `commands/backup.command.rs`.
+
+**Format** (`.erng-backup`): a ZIP (deflate) with
+
+- `e-rng.sqlite3`: a consistent snapshot of the live database made with `VACUUM INTO` (one transaction, the
+  write-ahead log included; the files are never copied under WAL),
+- every file under `invoices/`, `offers/` and `layouts/` with the same relative path as in the data folder,
+- `manifest.json`: `format` (`e-rng-backup`), `version` (the layout of the file, 1), `app_version`, `schema_version`
+  (`PRAGMA user_version` of the snapshot), `created_at` (UTC) and `files`, each with `path`, `size` and `sha256`.
+
+The snapshot is taken before the files are listed, so every file a row knows is in the archive. The archive is
+written to a temp file next to its target and renamed when complete. The time of the last backup is
+`app_state.last_backup_at` (written into the snapshot as well, so restored data knows when it was backed up); the
+table is created on every open (`ensure_app_state`) because it came with schema 11 before that was released.
+
+**Restore** checks everything before it touches anything, in a staging folder inside the data folder
+(`.erng-restore-*`): format and version (a newer `version` is refused), the names (only `e-rng.sqlite3` and files
+below the three folders, no way out of the folder), the manifest against the archive (no file more or less), size
+and SHA-256 of every file, then the database: it opens, `PRAGMA integrity_check` is `ok`, and it migrates (it is
+opened with `Store::open` in the staging folder, so a database that cannot be brought up to date is refused here).
+Only then the data in use is saved as a safety backup and swapped: the database file and the three folders move to
+`.erng-replaced-<time>`, the staged ones move in by rename, all under the lock of the `Store`, whose connection is
+closed and reopened (`Store::replace_files`; commands wait meanwhile, a stand-in connection that has no tables holds
+the place). When a rename fails the ones before are taken back, when the new database does not open the old files
+are put back; the old data stays. After the swap the kept originals are checked against the hashes in the database
+(`originals::problems`) and what is wrong is reported, not undone. The window reloads afterwards.
+
+- **Schema**: a backup with a **newer** schema than the app (`SCHEMA_VERSION`) is refused ("aus einer neueren Version
+  von e-rng"); an **older** one is migrated by the normal migration path. **Migrations of released schemas must
+  therefore never be dropped or squashed:** old backups depend on them. (Steps that were never released may still be
+  edited in place.)
+- **Safety backups** go to `<data>/backups/`: `<time>-vor-wiederherstellung.erng-backup` before a restore,
+  `<time>-vor-entfernen.erng-backup` before "Alle Daten entfernen"; the newest 3 of each kind stay. They do not count
+  as the last backup. The folder is outside of what a restore replaces.
+- **Alle Daten entfernen** makes the safety backup, then swaps in an empty database and no files (a first start). The
+  dialog asks to type `ENTFERNEN`, the command checks the word again.
+- A run that was cut off leaves `.erng-restore-*` and `.erng-backup-*` folders, which are cleared at the next start;
+  `.erng-replaced-*` stays, it may hold the only copy of the old data.
+- A restore or removal while an invoice is being created is refused (`Creating::any`).
 
 ## Messages
 
@@ -171,7 +216,7 @@ Not built yet, nothing here is promised. Bigger features have a plan in `.claude
 - **Invoices**: credit notes from the UI (the model and the template support them; the Steuerberater export must include them once they exist), VAT categories and exemption reasons per rate (reverse charge and other VAT-free cases), discounts and surcharges, other payment means (direct debit, card), tax representative, payee, attachments (BG-24), the EAS scheme list for electronic addresses (the form always uses e-mail), a register number for BT-30, customer-specific payment terms, dunning, proper Abschlags- and Schlussrechnungen (deducting earlier partial invoices, § 14 (5) UStG).
 - **Offers**: status accepted or declined, a chain of revisions ("ersetzt AN-2026-003"), billed versus offered amount, a counter for a future period, other kinds on the same sequences (Auftragsbestätigung, Lieferschein, Gutschrift as its own sequence); once a third kind exists the table and types could be called `documents`.
 - **Contexts**: a kind per context (company, Verein, private person) with its own defaults, moving a draft to another context (it re-applies seller, layout and numbers), an archive view for contexts and invoices, context colours in the invoice list.
-- **Output**: `Per E-Mail…`, `Drucken`, "Im Finder zeigen"; re-verifying the kept files against their hashes in a maintenance view; backup or sync of the invoices folder together with the database.
+- **Output**: `Per E-Mail…`, `Drucken`, "Im Finder zeigen"; re-verifying the kept files against their hashes in a maintenance view; scheduled or automatic backups (a reminder when the last one is old), encrypted backups.
 - **Layouts and documents**: EPC / GiroCode QR code for EUR transfers (needs a vendored QR package, no network at compile time), exact DIN 5008 window geometry and fold marks, English invoices (the labels live in `render/view.rs`), `subject`, `notices` and `place` as data, a total-only column mode and a no-VAT totals mode, a second built-in design.
 - **Units**: plural or quantity-dependent labels, a default quantity or price per unit, export and import of the list.
 - **UI**: sort options of the invoice list, use counts or favourites and several lines for saved positions, a readable maximum width for single-line inputs on very wide windows, zoom and keyboard paging in the preview (it is the template, not the final file, so it cannot show an export failure), frontend tests (flows were checked by hand in the browser mock), rule texts that read oddly (e.g. `BR-CO-26` with only a tax number).

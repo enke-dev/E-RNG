@@ -714,6 +714,9 @@ const invoices: StoredInvoice[] = [
 /** Offer id and invoice id, the first offer was billed with the first invoice */
 let links: [number, number][] = [[3, 1]];
 
+/** When the mock was last backed up, none at first */
+let lastBackup: string | null = null;
+
 /** Ids are not reused after a draft was deleted */
 const nextId = () => Math.max(0, ...invoices.map(i => i.id)) + 1;
 
@@ -1104,6 +1107,9 @@ export function installMocks() {
         case 'plugin:opener|open_url':
           window.open(String(args['url']), '_blank', 'noopener');
           return null;
+        // the browser has no Finder to show a path in
+        case 'plugin:opener|reveal_item_in_dir':
+          return null;
         case 'units_counts':
           return Object.fromEntries(
             unitsOf(args['contextId']).map(u => {
@@ -1474,8 +1480,40 @@ export function installMocks() {
           return find(args['id']);
         case 'opened_files':
           return [];
+        // backup and restore do nothing here, the answers are what the real ones would say
+        case 'backup_status':
+          return { last_backup_at: lastBackup, safety_dir: '/tmp/mock-data/backups' };
+        case 'backup_create':
+          lastBackup = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+          return {
+            path: args['path'],
+            files: 6,
+            bytes: 1_300_000,
+            created_at: lastBackup,
+          };
+        case 'backup_restore':
+          return {
+            counts: {
+              contexts: contexts.length,
+              invoices: invoices.filter(i => i.kind === 'invoice').length,
+              offers: invoices.filter(i => i.kind === 'offer').length,
+              layouts: customLayouts.length,
+            },
+            safety_copy:
+              '/tmp/mock-data/backups/2026-01-01-120000-vor-wiederherstellung.erng-backup',
+            problems: [],
+            created_at: '2026-01-01T12:00:00Z',
+            app_version: '0.0.0',
+            schema_version: 11,
+          };
+        case 'data_remove':
+          return {
+            safety_copy: '/tmp/mock-data/backups/2026-01-01-120000-vor-entfernen.erng-backup',
+          };
         case 'plugin:dialog|save':
           return '/tmp/mock-export';
+        case 'plugin:dialog|open':
+          return '/tmp/mock-backup.erng-backup';
         // `ask` is a message with two custom buttons: the question is answered yes (the label of the
         // first button), except the one that stops leaving a form with edits
         case 'plugin:dialog|message': {

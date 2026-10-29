@@ -1,0 +1,48 @@
+:host {
+  /* the detail of the settings: fills the pane like the page it holds */
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-m);
+}
+
+.action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wa-space-xs) var(--wa-space-m);
+
+  & wa-button {
+    flex: none;
+  }
+}
+
+.hint {
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-smaller);
+}
+
+.last {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--wa-space-2xs) var(--wa-space-s);
+}
+
+/* what cannot be taken back, set apart at the end of the page */
+.danger {
+  margin-block-start: var(--wa-space-l);
+  padding-block-start: var(--wa-space-l);
+  border-block-start: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+}
+
+/* a long path breaks anywhere rather than overflowing the dialog */
+.path {
+  overflow-wrap: anywhere;
+}

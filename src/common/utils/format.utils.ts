@@ -36,6 +36,22 @@ export function formatDate(iso: string, withTime = false): string {
   return `${date} um ${hours}:${minutes}`;
 }
 
+/** A point in time as the user's clock shows it: `2026-10-29T21:15:00Z` → `29.10.2026 um 22:15` (in CET) */
+export function formatMoment(iso: string): string {
+  const moment = new Date(iso);
+  if (Number.isNaN(moment.getTime())) {
+    return iso;
+  }
+  const time = moment.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return `${moment.toLocaleDateString('de-DE')} um ${time}`;
+}
+
+/** `1536000` → `1,5 MB`, for the size of a file */
+export function megabytes(bytes: number): string {
+  const size = bytes / (1024 * 1024);
+  return `${size.toLocaleString('de-DE', { maximumFractionDigits: size < 10 ? 1 : 0 })} MB`;
+}
+
 export const UNITS = [
   { code: 'C62', label: 'Stk.' },
   { code: 'HUR', label: 'Std.' },
