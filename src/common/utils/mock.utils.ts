@@ -11,7 +11,9 @@ import type {
   CustomLayout,
   InvoiceDraft,
   ListEntry,
+  NumberReset,
   PositionTemplate,
+  Sequence,
   Settings,
   StoredInvoice,
 } from './api.utils.js';
@@ -42,6 +44,8 @@ const settings: Settings = {
   vat_note: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
   payment_days: 14,
   number_pattern: '[RE-]YYYY-NNN',
+  number_reset: 'fiscal_year',
+  fiscal_year_start: null,
   layout: 'standard',
   intro: null,
   closing: null,
@@ -60,6 +64,151 @@ const second: Settings = {
   number_pattern: '[KV-]YYYY-NNN',
 };
 
+/** A day as the mock numbers write it */
+interface Day {
+  year: number;
+  month: number;
+  day: number;
+}
+
+/** A day from `2026-10-01` */
+const dayOf = (date: string): Day => {
+  const [year = 0, month = 0, day = 0] = date.split('-').map(Number);
+  return { year, month, day };
+};
+
+/** The day the numbers are looked at when no document says otherwise */
+const todayDay = () => dayOf(today());
+
+/** Mirrors `Calendar::fiscal` in `numbering.rs` */
+const fiscalOf = (start: string | null, { year, month, day }: Day = todayDay()) => {
+  const [sy = 0, sm = 0, sd = 0] = (start ?? '').split('-').map(Number);
+  if (!start || year * 10000 + month * 100 + day < sy * 10000 + sm * 100 + sd) {
+    return { from: year, to: year, quarter: Math.ceil(month / 3), calendar: true };
+  }
+  const from = month * 100 + day >= sm * 100 + sd ? year : year - 1;
+  const months = (year - from) * 12 + month - sm - (day < sd ? 1 : 0);
+  return {
+    from,
+    to: sm === 1 && sd === 1 ? from : from + 1,
+    quarter: Math.min(4, Math.floor(months / 3) + 1),
+    calendar: false,
+  };
+};
+
+/** A pattern split at its counter, the date and fiscal tokens written out for a day */
+function numberParts(pattern: string, fiscalYearStart: string | null, day: Day = todayDay()) {
+  const fiscal = fiscalOf(fiscalYearStart, day);
+  const values: Record<string, string> = {
+    YYYY: String(day.year),
+    YY: String(day.year).slice(-2),
+    MM: String(day.month).padStart(2, '0'),
+    DD: String(day.day).padStart(2, '0'),
+    GGGG: String(fiscal.from),
+    GG: String(fiscal.from).slice(-2),
+    gggg: String(fiscal.to),
+    gg: String(fiscal.to).slice(-2),
+    Q: String(fiscal.quarter),
+  };
+  let width = 0;
+  const text = pattern.replace(
+    /\[([^\]]*)\]|YYYY|YY|MM|DD|GGGG|GG|gggg|gg|Q|N+/g,
+    (m, literal?: string) => {
+      if (literal !== undefined) {
+        return literal;
+      }
+      if (m.startsWith('N')) {
+        width = m.length;
+        return '\0';
+      }
+      return values[m] ?? m;
+    }
+  );
+  if (width === 0) {
+    throw 'Das Muster braucht einen Zähler: N, NNN für drei Stellen mit führenden Nullen.';
+  }
+  const [before = '', after = '', ...more] = text.split('\0');
+  // one run of Ns, not a counter here and another there
+  if (more.length > 0) {
+    throw 'Das Muster darf nur einen Zähler haben, Text mit N gehört in [eckige Klammern].';
+  }
+  return { before, after, width };
+}
+
+/** Mirrors `Calendar::period` in `numbering.rs` */
+function periodKey(reset: NumberReset, fiscalYearStart: string | null, day: Day) {
+  const fiscal = fiscalOf(fiscalYearStart, day);
+  switch (reset) {
+    case 'never':
+      return 'never';
+    case 'fiscal_year':
+      return `year:${fiscal.from}`;
+    case 'quarter':
+      // the calendar quarters before the first start are no fiscal ones
+      return fiscal.calendar
+        ? `quarter:${fiscal.from}-${fiscal.quarter}`
+        : `quarter:fiscal-${fiscal.from}-${fiscal.quarter}`;
+    case 'month':
+      return `month:${day.year}-${String(day.month).padStart(2, '0')}`;
+  }
+}
+
+const RESET_NEEDS: Record<NumberReset, string> = {
+  never: '',
+  fiscal_year:
+    'Mit Neubeginn je Geschäftsjahr muss das Muster das Geschäftsjahr enthalten (z. B. GGGG oder, wenn es dem Kalenderjahr entspricht, YYYY), sonst wiederholen sich Nummern.',
+  quarter:
+    'Mit Neubeginn je Quartal muss das Muster das Quartal samt Jahr enthalten (z. B. YYYY-[Q]Q), sonst wiederholen sich Nummern.',
+  month:
+    'Mit Neubeginn je Monat muss das Muster den Monat samt Jahr enthalten (z. B. YYYYMM), sonst wiederholen sich Nummern.',
+};
+
+/** Mirrors `SHORT_YEAR_QUARTERS` in `numbering.rs` */
+const SHORT_YEAR_QUARTERS =
+  'Vor dem Beginn des ersten Geschäftsjahres zählen die Kalenderquartale, danach die Quartale des Geschäftsjahres: Jahr und Quartal wiederholen sich dabei. Mit dem Monat im Muster (z. B. YYYYMM-NN) oder Neubeginn je Monat bleiben die Nummern eindeutig.';
+
+/** Whether the pattern has one counter, what `Pattern::parse` in `numbering.rs` asks for */
+function parses(pattern: string) {
+  try {
+    numberParts(pattern, null);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mirrors `reset_problem` in `numbering.rs`: two days of different periods making the same number,
+ * none for a pattern that is broken anyway (`number_pattern` reports that)
+ */
+function resetProblem(pattern: string, reset: NumberReset, fiscalYearStart: string | null) {
+  if (reset === 'never' || !parses(pattern)) {
+    return null;
+  }
+  const first = Math.max(todayDay().year, Number(fiscalYearStart?.slice(0, 4) ?? 0));
+  // the period a text was first seen in, and whether that day still counted calendar quarters
+  const seen = new Map<string, { period: string; calendar: boolean }>();
+  const clash = Array.from({ length: 3 * 366 }, (_, n) => new Date(Date.UTC(first, 0, 1 + n)))
+    .map(d => ({ year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() }))
+    .map(day => {
+      const { before, after } = numberParts(pattern, fiscalYearStart, day);
+      const now = {
+        period: periodKey(reset, fiscalYearStart, day),
+        calendar: fiscalOf(fiscalYearStart, day).calendar,
+      };
+      const earlier = seen.get(before + after);
+      seen.set(before + after, earlier ?? now);
+      return earlier && earlier.period !== now.period ? { earlier, now } : undefined;
+    })
+    .find(found => found !== undefined);
+  if (!clash) {
+    return null;
+  }
+  return reset === 'quarter' && clash.earlier.calendar !== clash.now.calendar
+    ? SHORT_YEAR_QUARTERS
+    : RESET_NEEDS[reset];
+}
+
 /** Mirrors `Settings::missing` in `context.rs`, roughly: only to see the guard and the form */
 const missingOf = (s: Settings) =>
   [
@@ -72,6 +221,8 @@ const missingOf = (s: Settings) =>
       (s.seller.vat_id ?? '').trim() === '' && (s.seller.tax_number ?? '').trim() === '',
     ],
     ['seller.iban', s.seller.iban.trim() === ''],
+    ['number_pattern', !parses(s.number_pattern)],
+    ['number_reset', resetProblem(s.number_pattern, s.number_reset, s.fiscal_year_start) !== null],
   ]
     .filter(([, absent]) => absent)
     .map(([field]) => String(field));
@@ -283,6 +434,53 @@ function check(draft: InvoiceDraft) {
   return { problems, findings, totals: problems.length === 0 ? totals(draft) : null };
 }
 
+/** The counters a context has continued from, by period */
+const floors = new Map<string, number>();
+
+/** The pattern and reset of a context, written out for a day */
+function periodOf(contextId: number, day: Day) {
+  const settings = (contexts.find(c => c.id === contextId) as Context).settings;
+  const parts = numberParts(settings.number_pattern, settings.fiscal_year_start, day);
+  const period = periodKey(settings.number_reset, settings.fiscal_year_start, day);
+  return { ...parts, period, key: `${contextId}\u001f${period}` };
+}
+
+/** The numbers given in the period of a day, the highest counter first, like `Calendar::highest` */
+const numbersOf = (contextId: number, day: Day) => {
+  const { period } = periodOf(contextId, day);
+  return invoices
+    .filter(i => i.context_id === contextId && i.number)
+    .flatMap(i => {
+      // a number is read with the pattern of the day it was issued on
+      const issued = dayOf(i.draft.issue_date);
+      const { before, after, period: own } = periodOf(contextId, issued);
+      const digits = (i.number as string).slice(before.length, -after.length || undefined);
+      return own === period &&
+        i.number?.startsWith(before) &&
+        i.number.endsWith(after) &&
+        /^\d+$/.test(digits)
+        ? [{ number: i.number, counter: Number(digits) }]
+        : [];
+    })
+    .sort((a, b) => b.counter - a.counter);
+};
+
+const highestCounter = (contextId: number, day: Day) => numbersOf(contextId, day)[0]?.counter;
+
+/** Mirrors `Store::sequence`, roughly */
+function sequenceOf(contextId: number, day: Day = todayDay()): Sequence {
+  const { before, after, width, key } = periodOf(contextId, day);
+  const highest = numbersOf(contextId, day)[0];
+  const floor = floors.get(key) ?? 0;
+  const counter = Math.max((highest?.counter ?? 0) + 1, floor);
+  return {
+    next_number: `${before}${String(counter).padStart(width, '0')}${after}`,
+    counter,
+    highest: highest?.number ?? null,
+    floor: floor > (highest?.counter ?? 0) ? floor : null,
+  };
+}
+
 const find = (id: number) => invoices.find(i => i.id === id) as StoredInvoice;
 
 export function installMocks() {
@@ -296,23 +494,37 @@ export function installMocks() {
       const args = (payload ?? {}) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
       switch (command) {
         case 'number_example': {
-          // a rough stand-in for the real pattern, enough to see the hint
-          const pattern = String(args['pattern']);
-          if (!/N/.test(pattern.replace(/\[[^\]]*\]/g, ''))) {
-            throw 'Das Muster braucht einen Zähler: N, NNN für drei Stellen mit führenden Nullen.';
-          }
-          return pattern.replace(
-            /\[([^\]]*)\]|YYYY|MM|DD|N+/g,
-            (m, text?: string) =>
-              text ??
-              (m === 'YYYY'
-                ? '2026'
-                : m === 'MM'
-                  ? '03'
-                  : m === 'DD'
-                    ? '07'
-                    : '1'.padStart(m.length, '0'))
+          const { before, after, width } = numberParts(
+            String(args['pattern']),
+            args['fiscalYearStart'] ?? null
           );
+          const problem = resetProblem(
+            String(args['pattern']),
+            args['reset'],
+            args['fiscalYearStart'] ?? null
+          );
+          if (problem) {
+            throw problem;
+          }
+          return `${before}${'1'.padStart(width, '0')}${after}`;
+        }
+        case 'number_sequence':
+          return sequenceOf(args['contextId']);
+        case 'number_sequence_set': {
+          const contextId = args['contextId'] as number;
+          const next = args['next'] as number;
+          const day = todayDay();
+          const counter = highestCounter(contextId, day) ?? 0;
+          if (next <= counter) {
+            throw `${sequenceOf(contextId, day).highest} ist bereits vergeben, der Zähler kann nur auf ${counter + 1} oder höher gesetzt werden.`;
+          }
+          const { key } = periodOf(contextId, day);
+          if (next === counter + 1) {
+            floors.delete(key);
+          } else {
+            floors.set(key, next);
+          }
+          return sequenceOf(contextId, day);
         }
         case 'contexts_list':
           return contexts;
@@ -336,6 +548,13 @@ export function installMocks() {
           });
         case 'context_save': {
           const context = args['context'] as Context;
+          const { number_pattern, number_reset, fiscal_year_start } = context.settings;
+          // a pattern that cannot count is refused with the reason, like `Pattern::parse`
+          numberParts(number_pattern, fiscal_year_start);
+          const problem = resetProblem(number_pattern, number_reset, fiscal_year_start);
+          if (problem) {
+            throw problem;
+          }
           if (context.id === null) {
             const saved = refreshed({
               ...context,
@@ -598,8 +817,10 @@ export function installMocks() {
           return null;
         case 'check_invoice':
           return check(args['draft']);
-        case 'invoice_next_number':
-          return `RE-2026-${String(invoices.filter(i => i.number).length + 1).padStart(3, '0')}`;
+        case 'invoice_next_number': {
+          const stored = find(args['id']);
+          return sequenceOf(stored.context_id, dayOf(stored.draft.issue_date)).next_number;
+        }
         case 'invoice_create': {
           const stored = find(args['id']);
           // what the backend refuses: an XRechnung without buyer reference
@@ -616,7 +837,7 @@ export function installMocks() {
             };
           }
           stored.status = 'exported';
-          stored.number = `RE-2026-${String(invoices.filter(i => i.number).length + 1).padStart(3, '0')}`;
+          stored.number = sequenceOf(stored.context_id, dayOf(stored.draft.issue_date)).next_number;
           stored.exported_at = `${today()} 12:00:00`;
           stored.draft.frozen = settings;
           stored.files = {

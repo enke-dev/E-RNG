@@ -16,7 +16,7 @@ use crate::package::{Issue, Level};
 use crate::pipeline::{self, ProduceError, Produced};
 use crate::render::Branding;
 use crate::sidecar::Sidecars;
-use crate::store::Store;
+use crate::store::{Sequence, Store};
 use crate::utils::issue_day;
 
 /// The contexts that are in the middle of creating an invoice: two creations in one context would
@@ -137,6 +137,20 @@ fn make(
     })
 }
 
+/// Where the numbers of the draft's context stand on the draft's day: the number it would get and
+/// the counter in it
+fn next_sequence(store: &Store, id: i64) -> Result<Sequence, ProduceError> {
+    let stored = store.invoice(id).map_err(failed)?;
+    let settings = store.settings(stored.context_id).map_err(failed)?;
+    store
+        .sequence(
+            stored.context_id,
+            &settings,
+            issue_day(&stored.draft.issue_date),
+        )
+        .map_err(failed)
+}
+
 /// The number the next invoice of the draft's context would get, for asking before creating
 pub fn next_number(store: &Store, id: i64) -> Result<String, ProduceError> {
     let stored = store.invoice(id).map_err(failed)?;
@@ -144,7 +158,7 @@ pub fn next_number(store: &Store, id: i64) -> Result<String, ProduceError> {
     store
         .next_number(
             stored.context_id,
-            &settings.number_pattern,
+            &settings,
             issue_day(&stored.draft.issue_date),
         )
         .map_err(failed)
@@ -168,14 +182,15 @@ pub fn create(
         ));
     };
     let settings = store.settings(stored.context_id).map_err(failed)?;
-    let number = next_number(store, id)?;
+    let sequence = next_sequence(store, id)?;
+    let number = sequence.next_number.clone();
     let made = make(sidecars, store, &stored, &settings, &number)?;
 
     let files = originals::store(data, stored.context_id, &number, &made.produced, false)
         .map_err(failed)?;
     match store.finalize(
         id,
-        &number,
+        &sequence,
         &settings,
         made.layout.as_ref(),
         &made.total,

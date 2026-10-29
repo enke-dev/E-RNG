@@ -17,7 +17,8 @@ erng-list-item.add {
   gap: var(--wa-space-xs);
 }
 
-.file {
+.file,
+.counter {
   display: flex;
   flex-wrap: wrap;
   align-items: center;

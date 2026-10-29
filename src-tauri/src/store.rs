@@ -16,11 +16,24 @@ use crate::model::{
     CustomLayout, Customer, InvoiceDraft, InvoiceFiles, LayoutUsage, ListEntry, PositionTemplate,
     Settings, Status, StoredInvoice,
 };
-use crate::numbering::Pattern;
+use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
 
 pub struct Store(Mutex<Connection>);
 
-const SCHEMA_VERSION: i32 = 6;
+/// Where the numbers of a context stand in the period of a day
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Sequence {
+    /// What the next number is called
+    pub next_number: String,
+    /// Its counter
+    pub counter: u32,
+    /// The highest number given in the period
+    pub highest: Option<String>,
+    /// The counter the sequence continues from, while that is what decides the next number
+    pub floor: Option<u32>,
+}
+
+const SCHEMA_VERSION: i32 = 7;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -77,6 +90,63 @@ fn migrate(conn: &Connection) -> Result<()> {
         }
         conn.execute_batch("PRAGMA user_version = 6;")?;
     }
+    if version < 7 {
+        migrate_to_floors(conn)?;
+    }
+    Ok(())
+}
+
+/// The kind of document a number sequence is for; only invoices are numbered yet, the column is
+/// there so offers can have their own sequence later.
+const INVOICE: &str = "invoice";
+
+/// Number floors (where a sequence continues from, see `Store::set_counter`) get a table, and a
+/// document keeps the counter of its number and the day it was issued on, which the period of the
+/// counter is worked out from. The letters `G`, `g` and `Q` became tokens of the pattern: bracketed
+/// in every stored pattern, they keep writing what they wrote.
+fn migrate_to_floors(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    for (column, kind) in [("counter", "INTEGER"), ("issued_on", "TEXT")] {
+        if !has_column(&tx, "invoices", column)? {
+            tx.execute_batch(&format!("ALTER TABLE invoices ADD COLUMN {column} {kind};"))?;
+        }
+    }
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS number_floors (
+             context_id INTEGER NOT NULL,
+             kind TEXT NOT NULL DEFAULT 'invoice',
+             period TEXT NOT NULL,
+             next INTEGER NOT NULL,
+             set_at TEXT NOT NULL,
+             PRIMARY KEY (context_id, kind, period)
+         );",
+    )?;
+    let rows = {
+        let mut statement = tx.prepare("SELECT id, json FROM contexts")?;
+        let rows =
+            statement.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    for (id, json) in rows {
+        // as a value, so nothing else of the stored settings is touched
+        let mut body: serde_json::Value = serde_json::from_str(&json)?;
+        let Some(pattern) = body["settings"]["number_pattern"]
+            .as_str()
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let protected = protect_new_tokens(&pattern);
+        if protected != pattern {
+            body["settings"]["number_pattern"] = protected.into();
+            tx.execute(
+                "UPDATE contexts SET json = ?1 WHERE id = ?2",
+                params![serde_json::to_string(&body)?, id],
+            )?;
+        }
+    }
+    tx.execute_batch("PRAGMA user_version = 7;")?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -432,7 +502,8 @@ impl Store {
                 bail!("a layout of the context is still used, it cannot be removed");
             }
         }
-        let tx = self.conn();
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
         for table in ["customers", "templates", "layouts"] {
             match what {
                 Disposition::Share => tx.execute(
@@ -448,7 +519,10 @@ impl Store {
                 }
             };
         }
+        // ids are reused, a later context must not inherit the floors
+        tx.execute("DELETE FROM number_floors WHERE context_id = ?1", [id])?;
         tx.execute("DELETE FROM contexts WHERE id = ?1", [id])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -942,24 +1016,142 @@ impl Store {
         self.invoice(id)
     }
 
-    /// The next free number of a context for an invoice of that day, by the pattern (see `numbering`).
-    pub fn next_number(&self, context_id: i64, pattern: &str, date: Date) -> Result<String> {
-        let pattern = Pattern::parse(pattern)?;
-        let conn = self.conn();
-        let mut statement = conn
-            .prepare("SELECT number FROM invoices WHERE number IS NOT NULL AND context_id = ?1")?;
-        let existing = statement
-            .query_map([context_id], |r| r.get::<_, String>(0))?
+    /// Every number given in a context with its counter and the day it was issued on. A number
+    /// that kept no counter (written before they were kept) is read back with the current pattern.
+    fn given(
+        conn: &Connection,
+        context_id: i64,
+        pattern: &Pattern,
+        calendar: Calendar,
+    ) -> Result<Vec<Given>> {
+        let mut statement = conn.prepare(
+            "SELECT number, counter, issued_on, CASE WHEN counter IS NULL THEN draft END
+             FROM invoices WHERE number IS NOT NULL AND context_id = ?1",
+        )?;
+        let rows = statement
+            .query_map([context_id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<u32>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                ))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(pattern.next(date, existing.iter().map(String::as_str)))
+        Ok(rows
+            .into_iter()
+            .filter_map(|(number, counter, issued_on, draft)| {
+                let issued_on = issued_on.or_else(|| {
+                    let draft: serde_json::Value = serde_json::from_str(&draft?).ok()?;
+                    Some(draft["issue_date"].as_str()?.to_owned())
+                });
+                let date = Date::parse(&issued_on?).ok()?;
+                let counter = counter.or_else(|| pattern.counter_of(&number, date, calendar))?;
+                Some(Given {
+                    number,
+                    counter,
+                    date,
+                })
+            })
+            .collect())
     }
 
-    /// Makes a draft final: it gets its number, freezes the settings and can no longer change.
+    fn floor(conn: &Connection, context_id: i64, period: &str) -> Result<Option<u32>> {
+        Ok(conn
+            .query_row(
+                "SELECT next FROM number_floors WHERE context_id = ?1 AND kind = ?2 AND period = ?3",
+                params![context_id, INVOICE, period],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    fn sequence_in(
+        conn: &Connection,
+        context_id: i64,
+        settings: &Settings,
+        date: Date,
+    ) -> Result<Sequence> {
+        let pattern = Pattern::parse(&settings.number_pattern)?;
+        let calendar = settings.calendar();
+        let reset = settings.number_reset;
+        let period = calendar.period(reset, date);
+        let given = Self::given(conn, context_id, &pattern, calendar)?;
+        let highest = calendar.highest(reset, &period, &given);
+        let floor = Self::floor(conn, context_id, period.key())?;
+        let counter = highest.map_or(1, |g| g.counter + 1).max(floor.unwrap_or(0));
+        Ok(Sequence {
+            next_number: pattern.number(date, calendar, counter),
+            counter,
+            highest: highest.map(|g| g.number.clone()),
+            // a floor the numbers have passed decides nothing any more
+            floor: floor.filter(|floor| *floor > highest.map_or(0, |g| g.counter)),
+        })
+    }
+
+    /// The next free number of a context for an invoice of that day: the highest counter given in
+    /// its period plus one, or the floor of the period when that is higher (see `numbering`).
+    pub fn next_number(&self, context_id: i64, settings: &Settings, date: Date) -> Result<String> {
+        Ok(self.sequence(context_id, settings, date)?.next_number)
+    }
+
+    /// Where the numbers stand in the period of a day
+    pub fn sequence(&self, context_id: i64, settings: &Settings, date: Date) -> Result<Sequence> {
+        Self::sequence_in(&self.conn(), context_id, settings, date)
+    }
+
+    /// Makes the sequence of a day's period continue from `next`, for numbers of another program.
+    /// Refused at or below the highest number given in the period, a number is never given twice.
+    /// One floor per period: it replaces the one before, and is dropped when it equals what the
+    /// numbers lead to anyway.
+    pub fn set_counter(
+        &self,
+        context_id: i64,
+        settings: &Settings,
+        date: Date,
+        next: u32,
+    ) -> Result<Sequence> {
+        // one lock for the check and the write
+        let conn = self.conn();
+        let pattern = Pattern::parse(&settings.number_pattern)?;
+        let calendar = settings.calendar();
+        let period = calendar.period(settings.number_reset, date);
+        let given = Self::given(&conn, context_id, &pattern, calendar)?;
+        let highest = calendar.highest(settings.number_reset, &period, &given);
+        let lowest = highest.map_or(1, |g| g.counter + 1);
+        if next < lowest {
+            return Err(match highest {
+                Some(g) => anyhow!(
+                    "{} ist bereits vergeben, der Zähler kann nur auf {lowest} oder höher gesetzt werden.",
+                    g.number
+                ),
+                None => anyhow!("Der Zähler beginnt bei 1."),
+            });
+        }
+        if next == lowest {
+            conn.execute(
+                "DELETE FROM number_floors WHERE context_id = ?1 AND kind = ?2 AND period = ?3",
+                params![context_id, INVOICE, period.key()],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT INTO number_floors (context_id, kind, period, next, set_at)
+                 VALUES (?1, ?2, ?3, ?4, datetime('now'))
+                 ON CONFLICT (context_id, kind, period)
+                 DO UPDATE SET next = excluded.next, set_at = excluded.set_at",
+                params![context_id, INVOICE, period.key(), next],
+            )?;
+        }
+        Self::sequence_in(&conn, context_id, settings, date)
+    }
+
+    /// Makes a draft final: it gets the number of the sequence with its counter, freezes the
+    /// settings and can no longer change.
     /// Exporting an already final invoice again is fine and does not come through here.
     pub fn finalize(
         &self,
         id: i64,
-        number: &str,
+        sequence: &Sequence,
         frozen: &Settings,
         frozen_layout: Option<&CustomLayout>,
         total: &str,
@@ -969,11 +1161,14 @@ impl Store {
         draft.frozen = Some(frozen.clone());
         draft.frozen_layout = frozen_layout.cloned();
         let changed = self.conn().execute(
-            "UPDATE invoices SET number = ?1, status = 'exported', draft = ?2, total = ?3,
-                 files = ?4, exported_at = datetime('now'), updated_at = datetime('now')
-             WHERE id = ?5 AND status = 'draft'",
+            "UPDATE invoices SET number = ?1, counter = ?2, issued_on = ?3, status = 'exported',
+                 draft = ?4, total = ?5, files = ?6, exported_at = datetime('now'),
+                 updated_at = datetime('now')
+             WHERE id = ?7 AND status = 'draft'",
             params![
-                number,
+                sequence.next_number,
+                sequence.counter,
+                draft.issue_date,
                 serde_json::to_string(&draft)?,
                 total,
                 serde_json::to_string(files)?,
@@ -986,7 +1181,7 @@ impl Store {
             Err(rusqlite::Error::SqliteFailure(e, _))
                 if e.code == rusqlite::ErrorCode::ConstraintViolation =>
             {
-                bail!("the number {number} is already taken")
+                bail!("the number {} is already taken", sequence.next_number)
             }
             Err(e) => Err(e.into()),
         }
@@ -998,6 +1193,7 @@ mod tests {
     use super::*;
     use crate::draft::fixtures::{customer, draft, settings};
     use crate::model::{Position, StoredFile};
+    use crate::numbering::Reset;
 
     /// Files as a created invoice has them, the store only keeps what it is told
     fn files() -> InvoiceFiles {
@@ -1009,6 +1205,24 @@ mod tests {
             pdf: file("invoices/1/x.pdf"),
             xml: file("invoices/1/x.xml"),
             regenerated: false,
+        }
+    }
+
+    /// The place in a sequence a document is given its number at
+    fn at(number: &str, counter: u32) -> Sequence {
+        Sequence {
+            next_number: number.into(),
+            counter,
+            highest: None,
+            floor: None,
+        }
+    }
+
+    /// Settings that number by a pattern
+    fn numbered(pattern: &str) -> Settings {
+        Settings {
+            number_pattern: pattern.into(),
+            ..settings()
         }
     }
 
@@ -1311,7 +1525,7 @@ mod tests {
         store
             .finalize(
                 exported,
-                "RE-2026-001",
+                &at("RE-2026-001", 1),
                 &settings(),
                 Some(&layout),
                 "1.00",
@@ -1331,7 +1545,14 @@ mod tests {
         );
 
         store
-            .finalize(id, "RE-2026-001", &settings(), None, "1.00", &files())
+            .finalize(
+                id,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap();
         assert!(
             store.set_paid(id, Some("20.10.2026")).is_err(),
@@ -1390,7 +1611,7 @@ mod tests {
     fn numbers_count_up_by_the_pattern() {
         let day = |y, m, d| Date::new(y, m, d).unwrap();
         let store = Store::in_memory().unwrap();
-        let pattern = crate::numbering::DEFAULT_PATTERN;
+        let pattern = &settings();
         assert_eq!(
             store.next_number(1, pattern, day(2026, 3, 7)).unwrap(),
             "RE-2026-001"
@@ -1398,11 +1619,25 @@ mod tests {
 
         let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
-            .finalize(id, "RE-2026-001", &settings(), None, "1.00", &files())
+            .finalize(
+                id,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap();
         let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
-            .finalize(id, "RE-2026-007", &settings(), None, "1.00", &files())
+            .finalize(
+                id,
+                &at("RE-2026-007", 7),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap();
 
         assert_eq!(
@@ -1413,19 +1648,16 @@ mod tests {
             store.next_number(1, pattern, day(2027, 1, 1)).unwrap(),
             "RE-2027-001"
         );
+        // the pattern only formats, the counter goes on
         assert_eq!(
             store
-                .next_number(1, "[R-]YYYY-NNN", day(2026, 1, 1))
+                .next_number(1, &numbered("[R-]YYYY-NNN"), day(2026, 1, 1))
                 .unwrap(),
-            "R-2026-001"
+            "R-2026-008"
         );
-        assert_eq!(
-            store
-                .next_number(1, "[X-]YYYY-NNN", day(2026, 1, 1))
-                .unwrap(),
-            "X-2026-001"
-        );
-        assert!(store.next_number(1, "YYYY", day(2026, 1, 1)).is_err());
+        assert!(store
+            .next_number(1, &numbered("YYYY"), day(2026, 1, 1))
+            .is_err());
     }
 
     #[test]
@@ -1434,7 +1666,14 @@ mod tests {
         let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
 
         let done = store
-            .finalize(id, "RE-2026-001", &settings(), None, "1181.08", &files())
+            .finalize(
+                id,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1181.08",
+                &files(),
+            )
             .unwrap();
 
         assert_eq!(done.status, Status::Exported);
@@ -1444,7 +1683,14 @@ mod tests {
         assert!(store.save_draft(Some(id), 1, &draft(), None).is_err());
         assert!(store.delete_draft(id).is_err());
         assert!(store
-            .finalize(id, "RE-2026-002", &settings(), None, "1.00", &files())
+            .finalize(
+                id,
+                &at("RE-2026-002", 2),
+                &settings(),
+                None,
+                "1.00",
+                &files()
+            )
             .is_err());
     }
 
@@ -1454,11 +1700,25 @@ mod tests {
         let a = store.save_draft(None, 1, &draft(), None).unwrap().id;
         let b = store.save_draft(None, 1, &draft(), None).unwrap().id;
         store
-            .finalize(a, "RE-2026-001", &settings(), None, "1.00", &files())
+            .finalize(
+                a,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap();
 
         let error = store
-            .finalize(b, "RE-2026-001", &settings(), None, "1.00", &files())
+            .finalize(
+                b,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap_err();
 
         assert!(error.to_string().contains("already taken"));
@@ -1470,7 +1730,14 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let id = store.save_draft(None, 1, &draft(), None).unwrap().id;
         let done = store
-            .finalize(id, "RE-2026-001", &settings(), None, "1181.08", &files())
+            .finalize(
+                id,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1181.08",
+                &files(),
+            )
             .unwrap();
 
         let copy = store.duplicate(done.id, "2026-11-02").unwrap();
@@ -1556,11 +1823,7 @@ mod tests {
         // numbers are unique per context now: the old counter goes on
         assert_eq!(
             store
-                .next_number(
-                    1,
-                    crate::numbering::DEFAULT_PATTERN,
-                    Date::new(2026, 10, 9).unwrap()
-                )
+                .next_number(1, &settings(), Date::new(2026, 10, 9).unwrap())
                 .unwrap(),
             "RE-2026-002"
         );
@@ -1582,12 +1845,19 @@ mod tests {
         let store = Store::in_memory().unwrap();
         let a = context(&store, "A").id.unwrap();
         let b = context(&store, "B").id.unwrap();
-        let pattern = crate::numbering::DEFAULT_PATTERN;
+        let pattern = &settings();
         let day = Date::new(2026, 3, 7).unwrap();
 
         let first = store.save_draft(None, a, &draft(), None).unwrap();
         store
-            .finalize(first.id, "RE-2026-001", &settings(), None, "1.00", &files())
+            .finalize(
+                first.id,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap();
         assert_eq!(store.next_number(a, pattern, day).unwrap(), "RE-2026-002");
         assert_eq!(store.next_number(b, pattern, day).unwrap(), "RE-2026-001");
@@ -1595,11 +1865,25 @@ mod tests {
         // the same number in another context is fine, inside one it is not
         let other = store.save_draft(None, b, &draft(), None).unwrap();
         store
-            .finalize(other.id, "RE-2026-001", &settings(), None, "1.00", &files())
+            .finalize(
+                other.id,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap();
         let again = store.save_draft(None, a, &draft(), None).unwrap();
         assert!(store
-            .finalize(again.id, "RE-2026-001", &settings(), None, "1.00", &files())
+            .finalize(
+                again.id,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files()
+            )
             .is_err());
     }
 
@@ -1621,7 +1905,14 @@ mod tests {
             "drafts are deleted, not archived"
         );
         store
-            .finalize(in_a.id, "RE-2026-001", &settings(), None, "1.00", &files())
+            .finalize(
+                in_a.id,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap();
         store.archive_invoice(in_a.id).unwrap();
         assert_eq!(store.invoices(Some(a), false).unwrap(), Vec::new());
@@ -1631,11 +1922,7 @@ mod tests {
         // it still counts for the numbers
         assert_eq!(
             store
-                .next_number(
-                    a,
-                    crate::numbering::DEFAULT_PATTERN,
-                    Date::new(2026, 5, 1).unwrap()
-                )
+                .next_number(a, &settings(), Date::new(2026, 5, 1).unwrap())
                 .unwrap(),
             "RE-2026-002"
         );
@@ -1664,7 +1951,7 @@ mod tests {
         let done = store
             .finalize(
                 draft_in_b.id,
-                "RE-2026-001",
+                &at("RE-2026-001", 1),
                 &settings(),
                 None,
                 "1.00",
@@ -1838,7 +2125,14 @@ mod tests {
         assert_eq!(store.invoice(id).unwrap().files, None);
 
         let done = store
-            .finalize(id, "RE-2026-001", &settings(), None, "1.00", &files())
+            .finalize(
+                id,
+                &at("RE-2026-001", 1),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
             .unwrap();
 
         assert_eq!(done.files, Some(files()));
@@ -1905,5 +2199,403 @@ mod tests {
             store.custom_layouts(1).unwrap()[0].fonts[0].style,
             "Regular"
         );
+    }
+
+    /// Gives a number with its counter to a new invoice of a context, issued on a day
+    fn issue(store: &Store, context: i64, number: &str, counter: u32, issued_on: &str) {
+        let draft = InvoiceDraft {
+            issue_date: issued_on.into(),
+            ..draft()
+        };
+        let id = store.save_draft(None, context, &draft, None).unwrap().id;
+        store
+            .finalize(
+                id,
+                &at(number, counter),
+                &settings(),
+                None,
+                "1.00",
+                &files(),
+            )
+            .unwrap();
+    }
+
+    fn day(y: i32, m: u8, d: u8) -> Date {
+        Date::new(y, m, d).unwrap()
+    }
+
+    fn floors(store: &Store) -> i64 {
+        store
+            .conn()
+            .query_row("SELECT COUNT(*) FROM number_floors", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_removed_context_leaves_no_floor_for_the_one_that_reuses_its_id() {
+        let store = Store::in_memory().unwrap();
+        let settings = settings();
+        let day = Date::new(2026, 3, 7).unwrap();
+        let gone = context(&store, "A").id.unwrap();
+        store.set_counter(gone, &settings, day, 88).unwrap();
+        assert_eq!(floors(&store), 1);
+
+        store
+            .remove_context(gone, crate::context::Disposition::Share)
+            .unwrap();
+        let reused = context(&store, "B").id.unwrap();
+
+        assert_eq!(reused, gone);
+        assert_eq!(floors(&store), 0);
+        assert_eq!(
+            store.next_number(reused, &settings, day).unwrap(),
+            "RE-2026-001"
+        );
+    }
+
+    #[test]
+    fn a_counter_can_continue_from_a_number_of_another_program() {
+        let store = Store::in_memory().unwrap();
+        let settings = settings();
+        let day = Date::new(2026, 3, 7).unwrap();
+
+        let set = store.set_counter(1, &settings, day, 88).unwrap();
+
+        assert_eq!(set.next_number, "RE-2026-088");
+        assert_eq!((set.counter, set.floor, set.highest), (88, Some(88), None));
+        assert_eq!(store.next_number(1, &settings, day).unwrap(), "RE-2026-088");
+        // the floor is for this year, the next one starts at 1
+        assert_eq!(
+            store
+                .next_number(1, &settings, Date::new(2027, 1, 1).unwrap())
+                .unwrap(),
+            "RE-2027-001"
+        );
+        // other contexts do not see it
+        assert_eq!(store.next_number(2, &settings, day).unwrap(), "RE-2026-001");
+
+        issue(&store, 1, "RE-2026-088", 88, "2026-03-07");
+        let after = store.sequence(1, &settings, day).unwrap();
+        assert_eq!(after.next_number, "RE-2026-089");
+        // the numbers have passed the floor, it decides nothing any more
+        assert_eq!(after.floor, None);
+        assert_eq!(after.highest.as_deref(), Some("RE-2026-088"));
+    }
+
+    #[test]
+    fn a_counter_at_or_below_the_highest_number_is_refused_naming_it() {
+        let store = Store::in_memory().unwrap();
+        let settings = settings();
+        let day = Date::new(2026, 3, 7).unwrap();
+        issue(&store, 1, "RE-2026-003", 3, "2026-02-01");
+        issue(&store, 1, "RE-2026-087", 87, "2026-03-01");
+        // another year does not count
+        issue(&store, 1, "RE-2025-120", 120, "2025-03-01");
+
+        for next in [87, 50, 1, 0] {
+            let refused = store
+                .set_counter(1, &settings, day, next)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                refused,
+                "RE-2026-087 ist bereits vergeben, der Zähler kann nur auf 88 oder höher gesetzt werden.",
+                "{next}"
+            );
+        }
+        assert_eq!(floors(&store), 0);
+        assert_eq!(store.next_number(1, &settings, day).unwrap(), "RE-2026-088");
+
+        let empty = Store::in_memory().unwrap();
+        assert_eq!(
+            empty
+                .set_counter(1, &settings, day, 0)
+                .unwrap_err()
+                .to_string(),
+            "Der Zähler beginnt bei 1."
+        );
+    }
+
+    #[test]
+    fn a_floor_is_replaced_lowered_and_removed_at_the_number_that_follows_anyway() {
+        let store = Store::in_memory().unwrap();
+        let settings = settings();
+        let day = Date::new(2026, 3, 7).unwrap();
+        issue(&store, 1, "RE-2026-010", 10, "2026-03-01");
+
+        store.set_counter(1, &settings, day, 100).unwrap();
+        // lowering is fine while nothing at or above was given
+        let lowered = store.set_counter(1, &settings, day, 40).unwrap();
+        assert_eq!(lowered.next_number, "RE-2026-040");
+        assert_eq!(floors(&store), 1, "one floor per period, replaced");
+
+        // 11 is what the numbers lead to anyway
+        let removed = store.set_counter(1, &settings, day, 11).unwrap();
+        assert_eq!(
+            (removed.next_number.as_str(), removed.floor),
+            ("RE-2026-011", None)
+        );
+        assert_eq!(floors(&store), 0);
+    }
+
+    #[test]
+    fn a_floor_belongs_to_the_period_whatever_the_pattern_writes() {
+        let store = Store::in_memory().unwrap();
+        let day = Date::new(2026, 3, 7).unwrap();
+        store
+            .set_counter(1, &numbered("[RE-]YYYY-NNN"), day, 88)
+            .unwrap();
+
+        assert_eq!(
+            store
+                .next_number(1, &numbered("[RE-]YYYY-NNNN"), day)
+                .unwrap(),
+            "RE-2026-0088"
+        );
+        assert_eq!(
+            store
+                .next_number(1, &numbered("[RG-]YYYY-NNN"), day)
+                .unwrap(),
+            "RG-2026-088"
+        );
+    }
+
+    #[test]
+    fn the_counter_goes_on_after_the_pattern_changed() {
+        let store = Store::in_memory().unwrap();
+        issue(&store, 1, "RE-2026-005", 5, "2026-03-01");
+
+        // other text, another width: the counter is the one that was given
+        assert_eq!(
+            store
+                .next_number(1, &numbered("[RG-]YYYY-NNNN"), day(2026, 6, 1))
+                .unwrap(),
+            "RG-2026-0006"
+        );
+        // a pattern that writes the month does not restart a counter that runs by year
+        assert_eq!(
+            store
+                .next_number(1, &numbered("YYYY-MM-NNN"), day(2026, 6, 1))
+                .unwrap(),
+            "2026-06-006"
+        );
+        // another year starts at 1
+        assert_eq!(
+            store
+                .next_number(1, &numbered("[RG-]YYYY-NNNN"), day(2027, 1, 1))
+                .unwrap(),
+            "RG-2027-0001"
+        );
+    }
+
+    #[test]
+    fn the_counter_restarts_by_the_reset_and_not_by_what_the_pattern_writes() {
+        let store = Store::in_memory().unwrap();
+        issue(&store, 1, "202603-007", 7, "2026-03-20");
+        let by = |reset, pattern: &str| Settings {
+            number_reset: reset,
+            ..numbered(pattern)
+        };
+        let next = |settings: &Settings, date| store.next_number(1, settings, date).unwrap();
+
+        // by month
+        let month = by(Reset::Month, "YYYYMM-NNN");
+        assert_eq!(next(&month, day(2026, 3, 31)), "202603-008");
+        assert_eq!(next(&month, day(2026, 4, 1)), "202604-001");
+        // by year the month in the number does not matter
+        let year = by(Reset::FiscalYear, "YYYYMM-NNN");
+        assert_eq!(next(&year, day(2026, 4, 1)), "202604-008");
+        assert_eq!(next(&year, day(2027, 1, 1)), "202701-001");
+        // by quarter
+        let quarter = by(Reset::Quarter, "YYYY-[Q]Q-NNN");
+        assert_eq!(next(&quarter, day(2026, 3, 31)), "2026-Q1-008");
+        assert_eq!(next(&quarter, day(2026, 4, 1)), "2026-Q2-001");
+        // never
+        let never = by(Reset::Never, "YYYYMM-NNN");
+        assert_eq!(next(&never, day(2030, 1, 1)), "203001-008");
+    }
+
+    #[test]
+    fn a_fiscal_quarter_runs_over_new_year() {
+        let store = Store::in_memory().unwrap();
+        let settings = Settings {
+            number_reset: Reset::Quarter,
+            fiscal_year_start: Some(day(2026, 4, 1)),
+            ..numbered("[RE-]GGGG-[Q]Q-NN")
+        };
+        issue(&store, 1, "RE-2026-Q3-04", 4, "2026-11-02");
+
+        let next = |date| store.next_number(1, &settings, date).unwrap();
+
+        assert_eq!(next(day(2026, 12, 31)), "RE-2026-Q3-05");
+        assert_eq!(next(day(2027, 1, 1)), "RE-2026-Q4-01");
+    }
+
+    #[test]
+    fn a_floor_follows_the_reset_of_the_settings() {
+        let store = Store::in_memory().unwrap();
+        let monthly = Settings {
+            number_reset: Reset::Month,
+            ..numbered("YYYYMM-NNN")
+        };
+        let never = Settings {
+            number_reset: Reset::Never,
+            ..numbered("[R]NNNN")
+        };
+
+        store.set_counter(1, &monthly, day(2026, 3, 7), 50).unwrap();
+        store.set_counter(2, &never, day(2026, 3, 7), 50).unwrap();
+
+        let next = |context, settings: &Settings, date| {
+            store.next_number(context, settings, date).unwrap()
+        };
+        assert_eq!(next(1, &monthly, day(2026, 3, 31)), "202603-050");
+        assert_eq!(next(1, &monthly, day(2026, 4, 1)), "202604-001");
+        // without a reset it holds for good
+        assert_eq!(next(2, &never, day(2031, 8, 1)), "R0050");
+        // a floor of one reset says nothing to another one
+        let yearly = Settings {
+            number_reset: Reset::FiscalYear,
+            ..numbered("YYYYMM-NNN")
+        };
+        assert_eq!(next(1, &yearly, day(2026, 3, 31)), "202603-001");
+    }
+
+    #[test]
+    fn numbers_without_a_counter_are_read_back_by_the_pattern_of_the_settings() {
+        let store = Store::in_memory().unwrap();
+        let json = serde_json::to_string(&draft()).unwrap();
+        // as an older version wrote it: no counter, no day of its own
+        for number in ["RE-2026-004", "RE-2026-009", "RE-2025-077", "elsewhere"] {
+            store
+                .conn()
+                .execute(
+                    "INSERT INTO invoices (context_id, number, status, draft, total, exported_at,
+                         updated_at)
+                     VALUES (1, ?1, 'exported', ?2, '1.00', '2026-10-17', '2026-10-17')",
+                    params![number, json],
+                )
+                .unwrap();
+        }
+
+        let sequence = store.sequence(1, &settings(), day(2026, 11, 1)).unwrap();
+
+        assert_eq!(sequence.next_number, "RE-2026-010");
+        assert_eq!(sequence.highest.as_deref(), Some("RE-2026-009"));
+        // the day of such a number is the issue date of its draft: 2026-10-17
+        assert_eq!(
+            store.next_number(1, &settings(), day(2025, 11, 1)).unwrap(),
+            "RE-2025-001"
+        );
+    }
+
+    #[test]
+    fn the_period_of_a_floor_follows_the_fiscal_year() {
+        let store = Store::in_memory().unwrap();
+        let fiscal = Settings {
+            fiscal_year_start: Some(Date::new(2026, 4, 1).unwrap()),
+            ..numbered("[RE-]GGGG-NNN")
+        };
+        let day = |y, m, d| Date::new(y, m, d).unwrap();
+
+        store
+            .set_counter(1, &fiscal, day(2026, 10, 29), 88)
+            .unwrap();
+
+        // the same fiscal year over new year
+        assert_eq!(
+            store.next_number(1, &fiscal, day(2027, 2, 1)).unwrap(),
+            "RE-2026-088"
+        );
+        assert_eq!(
+            store.next_number(1, &fiscal, day(2027, 4, 1)).unwrap(),
+            "RE-2027-001"
+        );
+        // without the fiscal year the number is not in the period any more
+        assert_eq!(
+            store
+                .next_number(1, &numbered("[RE-]GGGG-NNN"), day(2027, 2, 1))
+                .unwrap(),
+            "RE-2027-001"
+        );
+    }
+
+    #[test]
+    fn a_version_six_database_gets_floors_counters_and_keeps_what_its_patterns_wrote() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch("DROP TABLE number_floors; PRAGMA user_version = 6;")
+            .unwrap();
+        let body = |pattern: &str| {
+            serde_json::json!({
+                "brand": "blue",
+                "settings": {
+                    "seller": serde_json::to_value(settings().seller).unwrap(),
+                    "number_pattern": pattern,
+                    "payment_days": 21,
+                },
+            })
+            .to_string()
+        };
+        for (id, pattern) in [(1, "RG-YYYY-NNN"), (2, "Q-NNN"), (3, "[RE-]YYYY-NNN")] {
+            conn.execute(
+                "INSERT INTO contexts (id, json) VALUES (?1, ?2)",
+                params![id, body(pattern)],
+            )
+            .unwrap();
+        }
+        let json = serde_json::to_string(&draft()).unwrap();
+        conn.execute(
+            "INSERT INTO invoices (context_id, number, status, draft, total, exported_at, paid_at,
+                 updated_at, archived_at)
+             VALUES (1, 'RG-2026-001', 'exported', ?1, '1.00', '2026-10-01', '2026-10-05',
+                 '2026-10-01', '2026-10-09')",
+            [&json],
+        )
+        .unwrap();
+
+        let store = Store::init(conn).unwrap();
+
+        let patterns: Vec<_> = store
+            .contexts()
+            .unwrap()
+            .into_iter()
+            .map(|c| c.settings.number_pattern)
+            .collect();
+        assert_eq!(patterns, ["R[G]-YYYY-NNN", "[Q]-NNN", "[RE-]YYYY-NNN"]);
+        // nothing else of the stored settings moved
+        assert_eq!(store.settings(1).unwrap().payment_days, Some(21));
+        // the number goes on as before, also with a fiscal year in the settings
+        let day = Date::new(2026, 5, 7).unwrap();
+        let old = store.settings(1).unwrap();
+        assert_eq!(store.next_number(1, &old, day).unwrap(), "RG-2026-002");
+        let fiscal = Settings {
+            fiscal_year_start: Some(Date::new(2026, 4, 1).unwrap()),
+            ..old
+        };
+        assert_eq!(store.next_number(1, &fiscal, day).unwrap(), "RG-2026-002");
+        // the invoice is as it was
+        let list = store.invoices(Some(1), true).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].number.as_deref(), Some("RG-2026-001"));
+        assert_eq!(list[0].paid_at.as_deref(), Some("2026-10-05"));
+        assert!(list[0].archived_at.is_some());
+        assert_eq!(floors(&store), 0);
+        for column in ["counter", "issued_on"] {
+            assert!(has_column(&store.conn(), "invoices", column).unwrap());
+        }
+        let version: i32 = store
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        // stamped back, it migrates again and leaves the patterns as they are
+        store
+            .conn()
+            .execute_batch("PRAGMA user_version = 6;")
+            .unwrap();
+        migrate(&store.conn()).unwrap();
+        assert_eq!(store.settings(1).unwrap().number_pattern, "R[G]-YYYY-NNN");
     }
 }

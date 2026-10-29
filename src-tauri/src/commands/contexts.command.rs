@@ -2,9 +2,9 @@ use tauri::State;
 
 use crate::context::{Context, ContextUsage, Disposition, Missing, BRANDS};
 use crate::model::Settings;
-use crate::numbering::Pattern;
-use crate::store::Store;
-use crate::utils::{CommandError, CommandResult};
+use crate::numbering::{reset_problem, Calendar, Pattern, Reset};
+use crate::store::{Sequence, Store};
+use crate::utils::{issue_day, today, CommandError, CommandResult};
 
 /// Every context with what is missing in it, archived ones included (the UI hides them)
 #[tauri::command]
@@ -28,6 +28,9 @@ pub fn context_save(store: State<'_, Store>, context: Context) -> CommandResult<
     }
     // a pattern that cannot count would stop every export
     Pattern::parse(&context.settings.number_pattern)?;
+    if let Some(problem) = context.settings.reset_problem() {
+        return Err(problem.into());
+    }
     store.save_context(&context).map_err(CommandError::from)
 }
 
@@ -64,12 +67,43 @@ pub fn settings_check(settings: Settings) -> Missing {
 }
 
 /// What the next invoice would be called by a pattern that is being typed, an invoice of today and
-/// the first of its kind; the problem if the pattern is none.
+/// the first of its period; the problem if the pattern is none or does not tell the periods of
+/// the reset apart.
 #[tauri::command]
-pub fn number_example(pattern: String) -> CommandResult<String> {
-    let today = crate::utils::issue_day(&crate::utils::today());
-    Pattern::parse(&pattern)
-        .map(|p| p.next(today, []))
+pub fn number_example(
+    pattern: String,
+    reset: Reset,
+    fiscal_year_start: Option<en16931::Date>,
+) -> CommandResult<String> {
+    let calendar = Calendar { fiscal_year_start };
+    let today = issue_day(&today());
+    let pattern = Pattern::parse(&pattern)?;
+    match reset_problem(&pattern, reset, calendar, today.year()) {
+        Some(problem) => Err(problem.into()),
+        None => Ok(pattern.number(today, calendar, 1)),
+    }
+}
+
+/// Where the invoice numbers of a context stand today, by its saved settings
+#[tauri::command]
+pub fn number_sequence(store: State<'_, Store>, context_id: i64) -> CommandResult<Sequence> {
+    let settings = store.settings(context_id)?;
+    store
+        .sequence(context_id, &settings, issue_day(&today()))
+        .map_err(CommandError::from)
+}
+
+/// Continues the numbers of today's period from `next`, saved at once; refused with the reason
+/// when that number or a higher one is taken already.
+#[tauri::command]
+pub fn number_sequence_set(
+    store: State<'_, Store>,
+    context_id: i64,
+    next: u32,
+) -> CommandResult<Sequence> {
+    let settings = store.settings(context_id)?;
+    store
+        .set_counter(context_id, &settings, issue_day(&today()), next)
         .map_err(CommandError::from)
 }
 

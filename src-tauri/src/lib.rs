@@ -122,6 +122,8 @@ pub fn run() {
             commands::contexts_command::context_usage,
             commands::contexts_command::contexts_list,
             commands::contexts_command::number_example,
+            commands::contexts_command::number_sequence,
+            commands::contexts_command::number_sequence_set,
             commands::contexts_command::settings_check,
             commands::customers_command::customer_delete,
             commands::customers_command::customer_save,

@@ -110,6 +110,7 @@ impl Settings {
             "number_pattern",
             Pattern::parse(&self.number_pattern).is_err(),
         );
+        need("number_reset", self.reset_problem().is_some());
         if self.vat_free() {
             need("vat_note", blank(&self.vat_note));
         } else {
@@ -175,7 +176,7 @@ mod tests {
     #[test]
     fn each_blocking_field_is_reported_alone() {
         type Tweak = fn(&mut Settings);
-        let cases: [(&str, Tweak); 9] = [
+        let cases: [(&str, Tweak); 10] = [
             ("seller.name", |s| s.seller.name = " ".into()),
             ("seller.address.street", |s| s.seller.address.street.clear()),
             ("seller.address.post_code", |s| {
@@ -187,6 +188,9 @@ mod tests {
             }),
             ("seller.iban", |s| s.seller.iban.clear()),
             ("number_pattern", |s| s.number_pattern = "RE".into()),
+            ("number_reset", |s| {
+                s.number_reset = crate::numbering::Reset::Month;
+            }),
             ("tax_rate", |s| s.tax_rate = "abc".into()),
             ("vat_note", |s| {
                 s.tax_rate.clear();

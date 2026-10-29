@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
+import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '@awesome.me/webawesome/dist/components/tooltip/tooltip.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
@@ -19,6 +20,7 @@ import '../../common/layouts/split/split.layout.js';
 
 import WaInput from '@awesome.me/webawesome/dist/components/input/input.js';
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
+import type WaSwitch from '@awesome.me/webawesome/dist/components/switch/switch.js';
 import { ask, open, save } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
@@ -36,7 +38,9 @@ import type {
   LayoutInfo,
   LayoutUsage,
   Missing,
+  NumberReset,
   Preview,
+  Sequence,
   Settings,
 } from '../../common/utils/api.utils.js';
 import { api, errorText } from '../../common/utils/api.utils.js';
@@ -53,7 +57,7 @@ import {
   loadContexts,
   switchContext,
 } from '../../common/utils/context.utils.js';
-import { nullable, text } from '../../common/utils/form.utils.js';
+import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
 import { recall, remember } from '../../common/utils/memory.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
@@ -83,6 +87,7 @@ const FIELD_LABELS: Record<string, string> = {
   'seller.vat_id': 'USt-IdNr. oder Steuernummer',
   'seller.iban': 'IBAN',
   number_pattern: 'Muster der Rechnungsnummer',
+  number_reset: 'Zähler periodisch zurücksetzen',
   tax_rate: 'Umsatzsteuersatz',
   vat_note: 'Hinweis zur Steuerbefreiung',
   'seller.contact_name': 'Ansprechpartner',
@@ -91,6 +96,38 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 const fieldNames = (fields: string[]) => fields.map(f => FIELD_LABELS[f] ?? f).join(', ');
+
+const MONTHS = [
+  'Januar',
+  'Februar',
+  'März',
+  'April',
+  'Mai',
+  'Juni',
+  'Juli',
+  'August',
+  'September',
+  'Oktober',
+  'November',
+  'Dezember',
+];
+
+/** The ways the counter can start again, the business year is named by what the settings say */
+const resetOptions = (fiscalYearStart: string | null): [NumberReset, string][] => {
+  const [, month = 1, day = 1] = (fiscalYearStart ?? '').split('-').map(Number);
+  const calendar = fiscalYearStart === null || (month === 1 && day === 1);
+  return [
+    ['never', 'Nie'],
+    [
+      'fiscal_year',
+      calendar
+        ? 'Je Geschäftsjahr (Kalenderjahr)'
+        : `Je Geschäftsjahr (ab ${day}. ${MONTHS[month - 1]})`,
+    ],
+    ['quarter', 'Je Quartal'],
+    ['month', 'Je Monat'],
+  ];
+};
 
 /** What identifies a context's form values, brand and settings (the rest is computed) */
 const snapshot = (context: Context | undefined) =>
@@ -131,6 +168,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   /** What the next number would look like by the pattern in the form, or what is wrong with it */
   @state() private numberHint = '';
+  /** Where the numbers of the selected stored context stand, by its saved settings */
+  @state() private sequence: Sequence | undefined;
+  /** The dialog that continues the counter: what is typed and why it was refused */
+  @state() private counterEdit: { value: string; error: string } | undefined;
   @state() private layouts: LayoutInfo[] = [];
   @state() private customs: CustomLayout[] = [];
   /** A copy of the selected own layout, what its form edits */
@@ -324,6 +365,23 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       missing_for_xrechnung: this.context?.missing_for_xrechnung ?? [],
     };
     void this.showNumberExample();
+    void this.loadSequence();
+  }
+
+  private async loadSequence() {
+    const id = this.context?.id ?? null;
+    this.sequence = undefined;
+    if (id === null) {
+      return;
+    }
+    try {
+      const sequence = await api.numberSequence(id);
+      if (this.context?.id === id) {
+        this.sequence = sequence;
+      }
+    } catch (error) {
+      notifyError(error);
+    }
   }
 
   private async loadUsage(id: number) {
@@ -481,9 +539,13 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   private async showNumberExample() {
-    const pattern = this.context?.settings.number_pattern ?? '';
+    const {
+      number_pattern: pattern = '',
+      number_reset: reset = 'fiscal_year',
+      fiscal_year_start: fiscal = null,
+    } = this.context?.settings ?? {};
     try {
-      this.numberHint = `Die nächste Nummer sähe so aus: ${await api.numberExample(pattern)}`;
+      this.numberHint = `Die nächste Nummer sähe so aus: ${await api.numberExample(pattern, reset, fiscal)}`;
     } catch (error) {
       this.numberHint = errorText(error);
     }
@@ -518,6 +580,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         missing: saved.missing,
         missing_for_xrechnung: saved.missing_for_xrechnung,
       };
+      void this.loadSequence();
       notify('Gespeichert. Bereits exportierte Rechnungen behalten ihre alten Angaben.');
       const back = blockedAt.get();
       if (saved.missing.length === 0 && back !== undefined) {
@@ -662,6 +725,120 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           Abbrechen
         </wa-button>
         <wa-button variant="danger" @click="${this.confirmRemove}">Entfernen</wa-button>
+      </div>
+    </wa-dialog>`;
+  }
+
+  /** The period of the counter depends on the saved reset and business year, the number on the pattern */
+  private get numberingEdited() {
+    const id = this.context?.id;
+    const saved = id == null ? undefined : contextById(id)?.settings;
+    const edited = this.context?.settings;
+    return (
+      !saved ||
+      !edited ||
+      saved.number_pattern !== edited.number_pattern ||
+      saved.number_reset !== edited.number_reset ||
+      saved.fiscal_year_start !== edited.fiscal_year_start
+    );
+  }
+
+  private async changeCounter() {
+    const id = this.context?.id;
+    const dialog = this.counterEdit;
+    if (id == null || !dialog) {
+      return;
+    }
+    const next = Number(dialog.value);
+    if (dialog.value.trim() === '' || !Number.isInteger(next) || next < 1) {
+      this.counterEdit = { ...dialog, error: 'Bitte eine ganze Zahl ab 1 eingeben.' };
+      return;
+    }
+    try {
+      const sequence = await api.numberSequenceSet(id, next);
+      if (this.context?.id === id) {
+        this.sequence = sequence;
+      }
+      this.counterEdit = undefined;
+      notify(`Die nächste Nummer ist ${sequence.next_number}.`);
+    } catch (error) {
+      this.counterEdit = { ...dialog, error: errorText(error) };
+    }
+  }
+
+  /** The next number and the way to continue the numbers of another program */
+  private counterRow() {
+    const sequence = this.sequence;
+    if (!sequence) {
+      return nothing;
+    }
+    const edited = this.numberingEdited;
+    return html`
+      <div class="counter">
+        <span>
+          Nächste Nummer: <strong>${sequence.next_number}</strong>
+          ${sequence.floor === null ? nothing : `(fortgesetzt ab ${sequence.floor})`}
+        </span>
+        <span id="change-counter">
+          <wa-button
+            appearance="outlined"
+            ?disabled="${edited}"
+            @click="${() => (this.counterEdit = { value: String(sequence.counter), error: '' })}"
+          >
+            Zähler ändern…
+          </wa-button>
+        </span>
+        ${
+          edited
+            ? html`<wa-tooltip for="change-counter">
+                Erst speichern: der Zähler gilt für die gespeicherten Einstellungen von Muster,
+                Zähler und Geschäftsjahr.
+              </wa-tooltip>`
+            : nothing
+        }
+      </div>
+    `;
+  }
+
+  private counterDialog() {
+    const dialog = this.counterEdit;
+    const highest = this.sequence?.highest;
+    return html`<wa-dialog
+      ?open="${dialog !== undefined}"
+      label="Zähler ändern"
+      @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.counterEdit = undefined)}"
+    >
+      ${
+        dialog
+          ? html`<div class="stack">
+              <wa-callout variant="warning">
+                Nur ändern, um die Nummern eines anderen Programms fortzusetzen. Eine Nummer darf
+                nie doppelt vergeben werden: Werte bis zur höchsten vergebenen
+                Nummer${highest ? html` (${highest})` : nothing} werden abgelehnt.
+              </wa-callout>
+              <wa-input
+                type="number"
+                min="1"
+                step="1"
+                label="Zähler der nächsten Nummer"
+                hint="${this.sequence ? `Jetzt: ${this.sequence.next_number}` : ''}"
+                .value="${dialog.value}"
+                @input="${(e: Event) => (this.counterEdit = { value: text(e), error: '' })}"
+                @keydown="${(e: KeyboardEvent) => e.key === 'Enter' && void this.changeCounter()}"
+              ></wa-input>
+              ${
+                dialog.error
+                  ? html`<wa-callout variant="danger">${dialog.error}</wa-callout>`
+                  : nothing
+              }
+            </div>`
+          : nothing
+      }
+      <div slot="footer" class="dialog-footer">
+        <wa-button appearance="outlined" @click="${() => (this.counterEdit = undefined)}">
+          Abbrechen
+        </wa-button>
+        <wa-button variant="brand" @click="${this.changeCounter}">Ändern</wa-button>
       </div>
     </wa-dialog>`;
   }
@@ -1086,6 +1263,35 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           this.edit(s => (s.seller.legal_info = nullable(field.value)));
         }}"
       ></wa-textarea>
+      <wa-switch
+        ?checked="${settings.fiscal_year_start === null}"
+        hint="Nimmt Einfluss auf die fortlaufende Nummerierung."
+        @change="${(e: Event) => {
+          const calendar = (e.target as WaSwitch).checked;
+          this.edit(s => (s.fiscal_year_start = calendar ? null : `${today().slice(0, 4)}-01-01`));
+          void this.showNumberExample();
+        }}"
+      >
+        Geschäftsjahr entspricht Kalenderjahr
+      </wa-switch>
+      ${
+        settings.fiscal_year_start === null
+          ? nothing
+          : html`<wa-input
+              type="date"
+              label="Beginn des ersten Geschäftsjahres"
+              hint="Tag und Monat wiederholen sich jedes Jahr. Davor gilt das Kalenderjahr, das erste Geschäftsjahr kann also kürzer sein."
+              .value="${settings.fiscal_year_start}"
+              @input="${(e: Event) => {
+                // a half typed date is empty: keep the last good one
+                const date = text(e);
+                if (date !== '') {
+                  this.edit(s => (s.fiscal_year_start = date));
+                  void this.showNumberExample();
+                }
+              }}"
+            ></wa-input>`
+      }
     `;
   }
 
@@ -1140,12 +1346,26 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           void this.showNumberExample();
         }}"
       ></wa-input>
+      <wa-select
+        label="Zähler periodisch zurücksetzen"
+        hint="Das Muster formatiert nur. Es muss den Zeitraum enthalten, sonst wiederholen sich Nummern."
+        .value="${settings.number_reset}"
+        @change="${(e: Event) => {
+          this.edit(s => (s.number_reset = (e.target as WaSelect).value as NumberReset));
+          void this.showNumberExample();
+        }}"
+      >
+        ${resetOptions(settings.fiscal_year_start).map(
+          ([value, label]) => html`<wa-option value="${value}">${label}</wa-option>`
+        )}
+      </wa-select>
       <span class="muted">
         Jahr YYYY (2026) oder YY, Monat MM (03) oder M, Tag DD (07) oder D, Zähler N: NNN füllt mit
-        Nullen auf drei Stellen auf (007), N gar nicht. Text in [eckigen Klammern] bleibt, wie er
-        ist. Der Zähler beginnt neu, sobald sich ein Teil des Musters ändert, bei
-        <code>[RE-]YYYY-NNN</code> mit jedem Jahr.
+        Nullen auf drei Stellen auf (007), N gar nicht. Geschäftsjahr: GGGG oder GG für das Jahr, in
+        dem es beginnt, gggg oder gg für das Jahr, in dem es endet (<code>GGGG/gg</code> gibt
+        2026/27), Q für sein Quartal. Buchstaben als Text in [eckige Klammern].
       </span>
+      ${this.counterRow()}
       <wa-textarea
         label="Einleitung"
         hint="Vor der Positionstabelle, z. B. Anrede und Anlass. Jede Rechnung kann einen eigenen Text haben."
@@ -1532,7 +1752,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     return html`<erng-split position-key="split:settings"
         >${this.renderList()} ${this.renderDetail()}</erng-split
       >
-      ${this.importDialog()} ${this.removeDialog()}`;
+      ${this.importDialog()} ${this.removeDialog()} ${this.counterDialog()}`;
   }
 }
 

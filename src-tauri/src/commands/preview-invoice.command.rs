@@ -41,7 +41,8 @@ fn shown(
     let is_draft = stored_number.is_none();
     let number = match stored_number {
         Some(number) => number,
-        None => Pattern::parse(&current.number_pattern)?.masked(issue_day(&draft.issue_date)),
+        None => Pattern::parse(&current.number_pattern)?
+            .masked(issue_day(&draft.issue_date), current.calendar()),
     };
 
     let customs = store.all_custom_layouts()?;

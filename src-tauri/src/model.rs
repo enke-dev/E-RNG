@@ -61,6 +61,12 @@ pub struct Settings {
     pub payment_days: Option<u32>,
     /// How invoice numbers are made, see `numbering`
     pub number_pattern: String,
+    /// When the counter of the invoice numbers starts again; the pattern only formats it
+    pub number_reset: crate::numbering::Reset,
+    /// The start of the first business year, for `GGGG`, `GG`, `gggg`, `gg` and `Q` in the pattern:
+    /// its day and month repeat every year, the calendar year applies before it. None: the
+    /// business year is the calendar year.
+    pub fiscal_year_start: Option<en16931::Date>,
     /// From before there was a pattern, only read: `normalized` turns it into one
     #[serde(skip_serializing)]
     pub number_prefix: Option<String>,
@@ -83,6 +89,8 @@ impl Default for Settings {
             vat_note: "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.".into(),
             payment_days: Some(14),
             number_pattern: crate::numbering::DEFAULT_PATTERN.into(),
+            number_reset: crate::numbering::Reset::default(),
+            fiscal_year_start: None,
             number_prefix: None,
             footer: None,
             layout: "standard".into(),
@@ -96,6 +104,25 @@ impl Settings {
     /// No VAT is charged: there is no rate
     pub fn vat_free(&self) -> bool {
         self.tax_rate.trim().is_empty()
+    }
+
+    /// The business year the numbers are made by
+    pub fn calendar(&self) -> crate::numbering::Calendar {
+        crate::numbering::Calendar {
+            fiscal_year_start: self.fiscal_year_start,
+        }
+    }
+
+    /// What keeps the reset of the invoice counter from working with the pattern (see
+    /// `numbering::reset_problem`), none when it does or when the pattern is broken anyway
+    pub fn reset_problem(&self) -> Option<&'static str> {
+        let pattern = crate::numbering::Pattern::parse(&self.number_pattern).ok()?;
+        crate::numbering::reset_problem(
+            &pattern,
+            self.number_reset,
+            self.calendar(),
+            crate::utils::issue_day(&crate::utils::today()).year(),
+        )
     }
 
     /// Settings of an older version have a prefix and no pattern: the numbers stay what they were.
@@ -317,6 +344,30 @@ mod tests {
         assert_eq!(settings.seller.name, "A");
         assert_eq!(settings.layout, "standard");
         assert_eq!(settings.intro, None);
+        assert_eq!(settings.number_reset, crate::numbering::Reset::FiscalYear);
+    }
+
+    #[test]
+    fn the_reset_of_the_counter_is_stored_by_name() {
+        use crate::numbering::Reset;
+
+        let json = |reset| {
+            serde_json::to_value(Settings {
+                number_reset: reset,
+                ..Settings::default()
+            })
+            .unwrap()["number_reset"]
+                .clone()
+        };
+
+        assert_eq!(json(Reset::Never), "never");
+        assert_eq!(json(Reset::FiscalYear), "fiscal_year");
+        assert_eq!(json(Reset::Quarter), "quarter");
+        assert_eq!(json(Reset::Month), "month");
+        assert_eq!(
+            serde_json::to_value(Settings::default()).unwrap()["number_reset"],
+            "fiscal_year"
+        );
     }
 
     #[test]

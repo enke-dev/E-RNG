@@ -23,6 +23,9 @@ export interface Seller {
   legal_info: string | null;
 }
 
+/** When the counter of the numbers starts again: never, or with every business year, quarter, month */
+export type NumberReset = 'never' | 'fiscal_year' | 'quarter' | 'month';
+
 export interface Settings {
   seller: Seller;
   /** Blank: no VAT is charged, the invoices show none and `vat_note` says why */
@@ -32,6 +35,14 @@ export interface Settings {
   payment_days: number | null;
   /** How invoice numbers are made: date tokens like in layouts, N for the counter (NNN: three digits) */
   number_pattern: string;
+  /** When the counter starts again with 1: the pattern only formats the number */
+  number_reset: NumberReset;
+  /**
+   * ISO date the first business year starts on, for GGGG, GG, gggg, gg and Q in the pattern: day and
+   * month repeat every year, the calendar year applies before it. Null: the business year is the
+   * calendar year.
+   */
+  fiscal_year_start: string | null;
   /** The layout of the invoice document, invoices may choose another */
   layout: string;
   /** Texts of the letter, used unless an invoice has its own */
@@ -59,6 +70,17 @@ export interface Context {
 export interface Missing {
   missing: string[];
   missing_for_xrechnung: string[];
+}
+
+/** Where the invoice numbers of a context stand today */
+export interface Sequence {
+  next_number: string;
+  /** The counter of the next number */
+  counter: number;
+  /** The highest number given in the period */
+  highest: string | null;
+  /** The counter the numbers continue from, while that is what decides the next number */
+  floor: number | null;
 }
 
 /** What belongs to a context */
@@ -433,7 +455,11 @@ export const api = {
   contextUsage: (id: number) => invoke<ContextUsage>('context_usage', { id }),
   contextRemove: (id: number, what: Disposition) => invoke<null>('context_remove', { id, what }),
   settingsCheck: (settings: Settings) => invoke<Missing>('settings_check', { settings }),
-  numberExample: (pattern: string) => invoke<string>('number_example', { pattern }),
+  numberExample: (pattern: string, reset: NumberReset, fiscalYearStart: string | null) =>
+    invoke<string>('number_example', { pattern, reset, fiscalYearStart }),
+  numberSequence: (contextId: number) => invoke<Sequence>('number_sequence', { contextId }),
+  numberSequenceSet: (contextId: number, next: number) =>
+    invoke<Sequence>('number_sequence_set', { contextId, next }),
 
   customersList: (contextId: number) => invoke<Customer[]>('customers_list', { contextId }),
   customerSave: (customer: Customer) => invoke<Customer>('customer_save', { customer }),

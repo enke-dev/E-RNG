@@ -2,6 +2,7 @@
 
 ## Review decisions (2026-10-29) – they override the text below
 
+- **The pattern only formats, the reset is a setting (second review, 2026-10-29).** Counters no longer restart because some text around them changes (that implicit rule is gone, and with it everything below that says so). Per kind a setting says when the counter starts again: `Settings.number_reset` for invoices, `Settings.offer.number_reset` for offers, `never | fiscal_year | quarter | month` (default `fiscal_year`; the select is called `Zähler periodisch zurücksetzen` with the options `Nie`, `Je Geschäftsjahr (Kalenderjahr)` (or `Je Geschäftsjahr (ab 1. April)`, naming the start of the fiscal year), `Je Quartal` and `Je Monat`; a quarter is one of the fiscal year, a month a calendar month). The counters run in periods (`Calendar::period(reset, date)`: from the issue date of a document, the reset and the fiscal year start). A document keeps its counter and its issue date (`invoices.counter`, `issued_on`) when it gets its number, so a changed pattern never confuses the counters; the next number is the highest counter of the period plus one, or the floor of the period when that is higher. A floor belongs to the period of the reset it was set under (`Period::key()` names the reset). Numbers without a stored counter (older data) are read back with the current pattern. A reset needs the period in the number, or numbers would repeat: settings that do not (yearly reset with `NNN`, a fiscal year from April with `YYYY-NNN`) are refused with a German message (`numbering::reset_problem`, found by formatting three years of days: two days of different periods that make the same text), and `never` accepts every pattern. A short first fiscal year counts with the one after it (its period key is the `GGGG` the text shows).
 - **Fiscal year is a setting of the context**: a switch "Geschäftsjahr entspricht Kalenderjahr" (on by default). Off, the user sets the start of the first business year as a date (`fiscal_year_start: Option<Date>`): its day and month repeat every year, before it the calendar year applies (a short first year, Rumpfgeschäftsjahr, for a business that switched). Tokens: `GGGG`/`GG` the year the fiscal year starts in, `gggg`/`gg` the year it ends in (§ 4a Abs. 2 Nr. 2 EStG counts a fiscal year in the year it ends; reports write `2026/27`, i.e. `GGGG/gg`). `Q` stays the quarter of the fiscal year. Upper and lower `g` are free in `date_pattern` (it knows `D`, `M`, `Y` only); the v7 pattern migration brackets unbracketed `G`, `g` and `Q`.
 - **Offer reference on the invoice: later.** Then a per-invoice choice with a default in the context settings, frozen when the invoice is created. For now the link stays internal (list badge, "Verknüpft" section). Open question 5 is closed.
 - **"Rechnung erstellen" only from created offers** (open question 6 closed as proposed).
@@ -26,9 +27,9 @@ Status: planned 2026-10-28, not started. Assumes the parallel work has landed: `
 ### Number sequences
 
 - **One sequence per context and kind** (`Kind::Invoice`, `Kind::Offer`). Each kind has its own pattern. Numbers are unique per (context, kind). An offer and an invoice may in theory carry the same text, but the defaults never do (`[RE-]…` and `[AN-]…`).
-- **Start number = a floor per period.** "Period" means what the pattern writes around the counter on a given day (the rendered before and after text). That is the key the counter already restarts on, so a floor fits the existing design without new rules:
+- **Start number = a floor per period.** "Period" is the stretch of days one counter runs through, set by the reset (see the second review decision), so a floor fits without new rules:
   - `next = max(floor of this period, highest issued in this period + 1)`.
-  - A floor only applies in the period it was set for. With `[RE-]YYYY-NNN`, setting 88 in 2026 still lets 2027 start at 001. With `[RE-]NNNN` the period never changes, so the floor holds for good. Changing the pattern's text is a new period, the same as for real numbers. Changing only the width (`NNN` → `NNNN`) keeps the period and the floor.
+  - A floor only applies in the period it was set for. With `[RE-]YYYY-NNN`, setting 88 in 2026 still lets 2027 start at 001. Without a reset the period never changes, so the floor holds for good. Changing the pattern does not change the period, so the floor stays.
   - Setting a counter at or below the highest number already issued in that period is refused, with the number named: "RE-2026-087 ist bereits vergeben, der Zähler kann nur auf 88 oder höher gesetzt werden." This refusal is about intent: `max` would make a lower floor harmless anyway, but it would silently do nothing.
   - A floor can be lowered again as long as nothing at or above the new value was issued. One floor per period, replaced, not accumulated. Setting it to exactly highest + 1 removes it.
   - Considered and rejected: storing the floor as a virtual "last issued number" (`RE-2026-087`) and mixing it into the existing numbers. It works the same way, but it cannot be lowered and reads like a real invoice.
@@ -43,8 +44,8 @@ Status: planned 2026-10-28, not started. Assumes the parallel work has landed: `
   - `GGGG` / `GG`: the fiscal year, named by the calendar year it starts in. With April as the start, April 2026 to March 2027 is `2026`.
   - `Q`: the quarter of the fiscal year (the calendar quarter when the fiscal year starts in January).
 
-  `[RE-]GGGG-NNN` with start month 4 gives `RE-2026-…` on 2027-03-31 and `RE-2027-001` on 2027-04-01. No new reset logic is needed: the period text changes, so the counter restarts.
-- **Uniqueness (§ 14 UStG) stays enforced by the design.** A counter only restarts when the period text is part of the number, and a recurring period text continues instead of restarting. Quarters without a year (`Q-NNN`) and months without a year therefore continue in the next year, which is unique but maybe surprising. The settings help text says so. No new pattern can make two equal numbers in one kind.
+  `[RE-]GGGG-NNN` with start month 4 gives `RE-2026-…` on 2027-03-31 and `RE-2027-001` on 2027-04-01. With a yearly reset the period changes with the fiscal year, so the counter restarts then.
+- **Uniqueness (§ 14 UStG) stays enforced by the design.** A counter only restarts by the reset, and settings whose pattern does not tell the periods apart are refused, so no setting can make two equal numbers in one kind.
 - **Existing patterns keep their output.** `Q`, and `G` in runs of two or more, become tokens. Migration v7 wraps every unbracketed `G` and `Q` of a stored pattern in brackets (`RG-YYYY-NNN` → `R[G]-YYYY-NNN`), so nothing that is already written changes. The help text says that letters meant as text belong in brackets, as it already does for `N`.
 
 ### Offers
@@ -114,11 +115,11 @@ Migration **v7** (`SCHEMA_VERSION` is 6 today; if the parallel work lands a migr
        PRIMARY KEY (context_id, kind, period)
    );
    ```
-   `period` is `Period::key()`: the rendered before and after text joined by `\u{1F}`.
+   `period` is `Period::key()`: the reset and the period, like `year:2026`, `quarter:2026-3`, `month:2026-07`, `never`.
 4. **Patterns:** read every `contexts.json`, bracket the unbracketed `G` and `Q` in `settings.number_pattern` (a helper in `numbering.rs`, `protect_new_tokens`), write it back.
 
 Without a migration (serde defaults):
-- `Settings.fiscal_year_start = 1`, `invoice_wording`, `offer` (pattern `[AN-]YYYY-NNN`, 30 days, wording defaults).
+- `Settings.number_reset = fiscal_year` (existing contexts get the default, even where the stored pattern cannot tell the periods apart: the settings then ask for a pattern or reset that does), `Settings.fiscal_year_start = 1`, `invoice_wording`, `offer` (pattern `[AN-]YYYY-NNN`, 30 days, wording defaults).
 - `InvoiceDraft.validity_days = None`.
 - `InvoiceFiles.xml` becomes `Option<StoredFile>` (`#[serde(default)]`; every stored invoice has `Some`).
 - Offer originals go to `<data>/offers/<context_id>/<safe number>.pdf`, kept apart from `invoices/`, so equal names of the two kinds cannot overwrite each other.
@@ -137,8 +138,8 @@ Without a migration (serde defaults):
 **`numbering.rs`**
 - `pub struct Calendar { pub fiscal_year_start: u8 }` with `fn fiscal(date) -> (year, quarter)`.
 - A token pass for `GGGG`, `GG` and `Q` outside brackets turns them into bracketed literals, then `date_pattern` runs as before. `counters()` is unchanged.
-- `Pattern::period(&self, date, &Calendar) -> Period { before, after }` with `Period::key()`.
-- `Pattern::counter_in(&self, &Period, number) -> Option<u32>`: the existing strip and parse, factored out of `next`.
+- `Calendar::period(reset, date) -> Period` with `Period::key()`.
+- `Pattern::counter_of(number, date, &Calendar) -> Option<u32>`: the strip and parse, only for numbers without a stored counter.
 - `Pattern::next(&self, date, &Calendar, existing, floor: Option<u32>) -> String` computes `max(floor, highest + 1)`.
 - `Pattern::masked(date, &Calendar)`: the masked draft number. Generalize the parallel work's version if it has one.
 - `protect_new_tokens(pattern) -> String` for the migration.
@@ -267,7 +268,7 @@ Without a migration (serde defaults):
 - Counter row:
   - It shows "Nächste Nummer: RE-2026-088", with "(fortgesetzt ab 88)" when a floor applies.
   - A `Zähler ändern…` button opens a dialog with a number input and a warning callout: "Nur ändern, um die Nummern eines anderen Programms fortzusetzen. Eine Nummer darf nie doppelt vergeben werden: Werte bis zur höchsten vergebenen Nummer (RE-2026-087) werden abgelehnt." Buttons are `Abbrechen` and `Ändern`. It saves at once with `numberSequenceSet`, and a refusal shows in the dialog.
-  - The button is disabled while the pattern or the fiscal month has unsaved edits ("Erst speichern"), because the period depends on the saved pattern.
+  - The button is disabled while the pattern or the fiscal month has unsaved edits ("Erst speichern"), because the period depends on the saved reset and fiscal year, the next number on the saved pattern.
 - Help text for patterns: add `GGGG`/`GG` (Geschäftsjahr), `Q` (Quartal), "Buchstaben als Text in [eckige Klammern]", and "ohne Jahr zählt ein Monats- oder Quartalszähler im nächsten Jahr weiter".
 - `FIELD_LABELS` gets `offer.number_pattern`.
 - The remove-context dialog wording mentions offers (from `ContextUsage.offers`).
@@ -283,7 +284,7 @@ Without a migration (serde defaults):
 **Rust, `numbering.rs`**
 - Fiscal year with start 4: `GGGG` on 2027-03-31 is 2026 and on 2027-04-01 is 2027. `GG` works. `Q` is fiscal (2026-04 → 1, 2026-03 → 4). With start 1, `Q` is the calendar quarter.
 - `[RE-]GGGG-NNN` continues over 1 January and restarts on 1 April.
-- The floor: next = max(floor, highest + 1); it is ignored in another period; it is kept when only the width changes.
+- The floor: next = max(floor, highest + 1); it is ignored in another period; it is kept when the pattern changes.
 - `masked`.
 - `protect_new_tokens` keeps the output of old patterns identical (`RG-YYYY-NNN`, `Q-NNN` rendered before and after).
 
