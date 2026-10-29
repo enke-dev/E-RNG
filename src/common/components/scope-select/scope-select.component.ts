@@ -33,23 +33,25 @@ export class ScopeSelectComponent extends ErngElement {
     if (options.length < 2 && this.value === null) {
       return nothing;
     }
-    return html`<wa-select
-      label="${this.heading}"
-      .value="${this.value === null ? SHARED : String(this.value)}"
-      @change="${(e: Event) => {
-        const value = String((e.target as WaSelect).value);
-        this.dispatchEvent(
-          new CustomEvent<number | null>('scope-change', {
-            detail: value === SHARED ? null : Number(value),
-            bubbles: true,
-            composed: true,
-          })
-        );
-      }}"
-    >
-      <wa-option value="${SHARED}">Alle</wa-option>
-      ${options.map(c => html`<wa-option value="${String(c.id)}">${label(c)}</wa-option>`)}
-    </wa-select>`;
+    return html`
+      <wa-select
+        label="${this.heading}"
+        .value="${this.value === null ? SHARED : String(this.value)}"
+        @change="${(e: Event) => {
+          const value = String((e.target as WaSelect).value);
+          this.dispatchEvent(
+            new CustomEvent<number | null>('scope-change', {
+              detail: value === SHARED ? null : Number(value),
+              bubbles: true,
+              composed: true,
+            })
+          );
+        }}"
+      >
+        <wa-option value="${SHARED}">Alle</wa-option>
+        ${options.map(c => html`<wa-option value="${String(c.id)}">${label(c)}</wa-option>`)}
+      </wa-select>
+    `;
   }
 }
 

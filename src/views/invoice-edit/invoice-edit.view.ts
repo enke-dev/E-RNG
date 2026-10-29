@@ -781,12 +781,14 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
           ${
             paidAt === null
               ? nothing
-              : html`<wa-input
-                  type="date"
-                  label="Bezahlt am"
-                  .value="${paidAt}"
-                  @change="${(e: Event) => text(e) && void this.setPaid(text(e))}"
-                ></wa-input>`
+              : html`
+                  <wa-input
+                    type="date"
+                    label="Bezahlt am"
+                    .value="${paidAt}"
+                    @change="${(e: Event) => text(e) && void this.setPaid(text(e))}"
+                  ></wa-input>
+                `
           }
         </div>
       </wa-card>
@@ -889,11 +891,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       : problems.length > 0
         ? problems.map(p => p.message).join(', ')
         : 'Die Vorschau wird erzeugt…';
-    return html`<erng-sheet
-      slot="preview"
-      .pages="${this.preview?.pages ?? []}"
-      hint="${hint}"
-    ></erng-sheet>`;
+    return html`
+      <erng-sheet slot="preview" .pages="${this.preview?.pages ?? []}" hint="${hint}"></erng-sheet>
+    `;
   }
 
   /** Called with the positions grid whenever it is (re)rendered or removed */
@@ -1044,22 +1044,25 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
           ${
             shown.length === 0
               ? html`<wa-callout variant="neutral">${empty}</wa-callout>`
-              : html`<div class="templates">
-                  ${shown.map(
-                    t =>
-                      html`<button
-                        class="template"
-                        type="button"
-                        @click="${() => this.addTemplate(t)}"
-                      >
-                        <strong>${t.description}</strong>
-                        <span class="muted"
-                          >${t.quantity ?? '1'}
-                          ${unitLabel(t)}${t.price.trim() ? ` × ${t.price} €` : ''}</span
+              : html`
+                  <div class="templates">
+                    ${shown.map(
+                      t => html`
+                        <button
+                          class="template"
+                          type="button"
+                          @click="${() => this.addTemplate(t)}"
                         >
-                      </button>`
-                  )}
-                </div>`
+                          <strong>${t.description}</strong>
+                          <span class="muted"
+                            >${t.quantity ?? '1'}
+                            ${unitLabel(t)}${t.price.trim() ? ` × ${t.price} €` : ''}</span
+                          >
+                        </button>
+                      `
+                    )}
+                  </div>
+                `
           }
         </div>
         <div slot="footer" class="dialog-footer">
@@ -1139,9 +1142,11 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
           ></erng-filter-bar>
           ${
             shown.length === 0
-              ? html`<wa-callout variant="neutral">
-                  ${this.linkable?.length === 0 ? other.linkNone : 'Keine Treffer.'}
-                </wa-callout>`
+              ? html`
+                  <wa-callout variant="neutral">
+                    ${this.linkable?.length === 0 ? other.linkNone : 'Keine Treffer.'}
+                  </wa-callout>
+                `
               : html`
                   <erng-list>
                     ${shown.map(
@@ -1157,9 +1162,11 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                           <span slot="sub-end">${formatDate(e.issue_date)}</span>
                           ${
                             e.archived_at
-                              ? html`<span slot="tags"
-                                  ><wa-tag variant="neutral" size="s">Archiviert</wa-tag></span
-                                >`
+                              ? html`
+                                  <span slot="tags"
+                                    ><wa-tag variant="neutral" size="s">Archiviert</wa-tag></span
+                                  >
+                                `
                               : nothing
                           }
                           <span slot="tags-end">${money(e.total)}</span>
@@ -1284,9 +1291,11 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         }
         ${
           this.kind === 'offer' && until
-            ? html`<wa-tag variant="${until < today() ? 'warning' : 'neutral'}">
-                Gültig bis ${formatDate(until)}
-              </wa-tag>`
+            ? html`
+                <wa-tag variant="${until < today() ? 'warning' : 'neutral'}">
+                  Gültig bis ${formatDate(until)}
+                </wa-tag>
+              `
             : nothing
         }
       </div>

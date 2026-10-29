@@ -38,20 +38,22 @@ export class AnchorPickerComponent extends ErngElement.withStyles(styles) {
   }
 
   override render() {
-    return html`<div class="grid">
-      ${ANCHORS.map(
-        ([anchor, label]) => html`
-          <button
-            type="button"
-            role="radio"
-            title="${label}"
-            aria-label="${label}"
-            aria-checked="${String(anchor === this.value)}"
-            @click="${() => this.pick(anchor)}"
-          ></button>
-        `
-      )}
-    </div>`;
+    return html`
+      <div class="grid">
+        ${ANCHORS.map(
+          ([anchor, label]) => html`
+            <button
+              type="button"
+              role="radio"
+              title="${label}"
+              aria-label="${label}"
+              aria-checked="${String(anchor === this.value)}"
+              @click="${() => this.pick(anchor)}"
+            ></button>
+          `
+        )}
+      </div>
+    `;
   }
 }
 

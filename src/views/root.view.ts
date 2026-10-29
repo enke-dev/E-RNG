@@ -96,19 +96,21 @@ export class RootView extends ErngElement.withStyles(styles) {
     if (!active || list.length < 2) {
       return nothing;
     }
-    return html`<wa-select
-      size="small"
-      aria-label="Kontext"
-      .value="${String(active.id)}"
-      @change="${async (e: Event) => {
-        const select = e.target as WaSelect;
-        if (!(await switchContext(Number(select.value)))) {
-          select.value = String(activeContext.get()?.id);
-        }
-      }}"
-    >
-      ${list.map(c => html`<wa-option value="${String(c.id)}">${label(c)}</wa-option>`)}
-    </wa-select>`;
+    return html`
+      <wa-select
+        size="small"
+        aria-label="Kontext"
+        .value="${String(active.id)}"
+        @change="${async (e: Event) => {
+          const select = e.target as WaSelect;
+          if (!(await switchContext(Number(select.value)))) {
+            select.value = String(activeContext.get()?.id);
+          }
+        }}"
+      >
+        ${list.map(c => html`<wa-option value="${String(c.id)}">${label(c)}</wa-option>`)}
+      </wa-select>
+    `;
   }
 
   /** The router renders again after every navigation (links, back and forth): that is the view open now */
@@ -135,13 +137,15 @@ export class RootView extends ErngElement.withStyles(styles) {
         <nav>
           ${NAV.map(([href, text]) =>
             NEEDS_CONTEXT.get(href)?.get() === false
-              ? html`<a
-                  class="disabled"
-                  aria-disabled="true"
-                  title="Angaben zum Kontext fehlen"
-                  href="${href}"
-                  >${text}</a
-                >`
+              ? html`
+                  <a
+                    class="disabled"
+                    aria-disabled="true"
+                    title="Angaben zum Kontext fehlen"
+                    href="${href}"
+                    >${text}</a
+                  >
+                `
               : html`<a href="${href}" ?aria-current="${isActive(href)}">${text}</a>`
           )}
         </nav>

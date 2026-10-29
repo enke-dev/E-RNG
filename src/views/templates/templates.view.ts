@@ -267,13 +267,15 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
             <div class="end">
               ${
                 editing?.id != null
-                  ? html`<wa-button
-                      variant="danger"
-                      appearance="outlined"
-                      @click="${this.deleteTemplate}"
-                    >
-                      Löschen
-                    </wa-button>`
+                  ? html`
+                      <wa-button
+                        variant="danger"
+                        appearance="outlined"
+                        @click="${this.deleteTemplate}"
+                      >
+                        Löschen
+                      </wa-button>
+                    `
                   : nothing
               }
               <wa-button variant="brand" @click="${this.save}">Speichern</wa-button>

@@ -65,27 +65,31 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
     options: [string, string][],
     apply: (value: string) => void
   ) {
-    return html`<wa-select
-      label="${label}"
-      .value="${value}"
-      @change="${(e: Event) => {
-        apply(String((e.target as WaSelect).value));
-        this.changed();
-      }}"
-    >
-      ${options.map(([id, name]) => html`<wa-option value="${id}">${name}</wa-option>`)}
-    </wa-select>`;
+    return html`
+      <wa-select
+        label="${label}"
+        .value="${value}"
+        @change="${(e: Event) => {
+          apply(String((e.target as WaSelect).value));
+          this.changed();
+        }}"
+      >
+        ${options.map(([id, name]) => html`<wa-option value="${id}">${name}</wa-option>`)}
+      </wa-select>
+    `;
   }
 
   private check(label: string, value: boolean, apply: (value: boolean) => void) {
-    return html`<wa-checkbox
-      ?checked="${value}"
-      @change="${(e: Event) => {
-        apply((e.target as HTMLInputElement).checked);
-        this.changed();
-      }}"
-      >${label}</wa-checkbox
-    >`;
+    return html`
+      <wa-checkbox
+        ?checked="${value}"
+        @change="${(e: Event) => {
+          apply((e.target as HTMLInputElement).checked);
+          this.changed();
+        }}"
+        >${label}</wa-checkbox
+      >
+    `;
   }
 
   /** A pattern from the list, or a field for one's own */
@@ -112,15 +116,17 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
       })}
       ${
         !known
-          ? html`<wa-input
-              label="${label} (eigenes Format)"
-              hint="YYYY oder YY Jahr, MMMM oder MMM Monatsname, MM oder M Monat, DD oder D Tag, [Text] bleibt wie er ist"
-              .value="${value}"
-              @input="${(e: Event) => {
-                apply(text(e));
-                this.changed();
-              }}"
-            ></wa-input>`
+          ? html`
+              <wa-input
+                label="${label} (eigenes Format)"
+                hint="YYYY oder YY Jahr, MMMM oder MMM Monatsname, MM oder M Monat, DD oder D Tag, [Text] bleibt wie er ist"
+                .value="${value}"
+                @input="${(e: Event) => {
+                  apply(text(e));
+                  this.changed();
+                }}"
+              ></wa-input>
+            `
           : nothing
       }
     `;

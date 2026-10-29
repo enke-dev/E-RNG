@@ -87,10 +87,12 @@ export class SheetComponent extends ErngElement.withStyles(styles) {
       <div class="page">
         ${
           page
-            ? html`<img
-                alt="Seite ${this.page + 1} von ${this.pages.length}"
-                src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(page)}"
-              >`
+            ? html`
+                <img
+                  alt="Seite ${this.page + 1} von ${this.pages.length}"
+                  src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(page)}"
+                >
+              `
             : html`<span class="hint">${this.hint}</span>`
         }
         ${this.regions
@@ -99,39 +101,43 @@ export class SheetComponent extends ErngElement.withStyles(styles) {
             const key = regionKey(region);
             // a rule has no height, it still needs something to point at
             const height = Math.max(region.h, 4);
-            return html`<button
-              type="button"
-              class="region ${key === this.active ? 'active' : key === this.hover ? 'hover' : ''}"
-              style="left: ${(region.x / 210) * 100}%; top: ${(region.y / 297) * 100}%; width: ${(region.w / 210) * 100}%; height: ${(height / 297) * 100}%"
-              data-key="${key}"
-              aria-label="Element bearbeiten"
-              @mouseenter="${() => this.emit('region-hover', key)}"
-              @mouseleave="${() => this.emit('region-hover', null)}"
-              @click="${() => this.emit('region-click', key)}"
-            ></button>`;
+            return html`
+              <button
+                type="button"
+                class="region ${key === this.active ? 'active' : key === this.hover ? 'hover' : ''}"
+                style="left: ${(region.x / 210) * 100}%; top: ${(region.y / 297) * 100}%; width: ${(region.w / 210) * 100}%; height: ${(height / 297) * 100}%"
+                data-key="${key}"
+                aria-label="Element bearbeiten"
+                @mouseenter="${() => this.emit('region-hover', key)}"
+                @mouseleave="${() => this.emit('region-hover', null)}"
+                @click="${() => this.emit('region-click', key)}"
+              ></button>
+            `;
           })}
       </div>
       ${
         this.paged
-          ? html`<wa-button-group label="Seiten">
-              <wa-button
-                appearance="outlined"
-                size="s"
-                ?disabled="${this.page === 0}"
-                @click="${() => this.turn(-1)}"
-                >Zurück</wa-button
-              >
-              <wa-button appearance="outlined" size="s" disabled>
-                Seite ${this.page + 1} von ${this.pages.length}
-              </wa-button>
-              <wa-button
-                appearance="outlined"
-                size="s"
-                ?disabled="${this.page >= this.pages.length - 1}"
-                @click="${() => this.turn(1)}"
-                >Weiter</wa-button
-              >
-            </wa-button-group>`
+          ? html`
+              <wa-button-group label="Seiten">
+                <wa-button
+                  appearance="outlined"
+                  size="s"
+                  ?disabled="${this.page === 0}"
+                  @click="${() => this.turn(-1)}"
+                  >Zurück</wa-button
+                >
+                <wa-button appearance="outlined" size="s" disabled>
+                  Seite ${this.page + 1} von ${this.pages.length}
+                </wa-button>
+                <wa-button
+                  appearance="outlined"
+                  size="s"
+                  ?disabled="${this.page >= this.pages.length - 1}"
+                  @click="${() => this.turn(1)}"
+                  >Weiter</wa-button
+                >
+              </wa-button-group>
+            `
           : nothing
       }
     `;

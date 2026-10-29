@@ -74,33 +74,37 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
     unit = 'mm',
     optional = false
   ) {
-    return html`<wa-input
-      label="${label}"
-      type="number"
-      step="0.5"
-      .value="${value === null ? '' : String(value)}"
-      @input="${(e: Event) => {
-        const raw = text(e).trim();
-        const parsed = Number(raw);
-        apply(raw === '' ? (optional ? null : 0) : Number.isFinite(parsed) ? parsed : 0);
-        this.changed();
-      }}"
-    >
-      <span slot="end">${unit}</span>
-    </wa-input>`;
+    return html`
+      <wa-input
+        label="${label}"
+        type="number"
+        step="0.5"
+        .value="${value === null ? '' : String(value)}"
+        @input="${(e: Event) => {
+          const raw = text(e).trim();
+          const parsed = Number(raw);
+          apply(raw === '' ? (optional ? null : 0) : Number.isFinite(parsed) ? parsed : 0);
+          this.changed();
+        }}"
+      >
+        <span slot="end">${unit}</span>
+      </wa-input>
+    `;
   }
 
   private align(value: Align, apply: (value: Align) => void) {
-    return html`<wa-select
-      label="Ausrichtung"
-      .value="${value}"
-      @change="${(e: Event) => {
-        apply(String((e.target as WaSelect).value) as Align);
-        this.changed();
-      }}"
-    >
-      ${ALIGNS.map(([id, label]) => html`<wa-option value="${id}">${label}</wa-option>`)}
-    </wa-select>`;
+    return html`
+      <wa-select
+        label="Ausrichtung"
+        .value="${value}"
+        @change="${(e: Event) => {
+          apply(String((e.target as WaSelect).value) as Align);
+          this.changed();
+        }}"
+      >
+        ${ALIGNS.map(([id, label]) => html`<wa-option value="${id}">${label}</wa-option>`)}
+      </wa-select>
+    `;
   }
 
   private async chooseImage() {
@@ -191,10 +195,12 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
           </div>
           ${
             dpi < MIN_DPI
-              ? html`<span class="warning">
-                  Nur ${Math.round(dpi)} dpi bei dieser Breite, im Druck wird das Bild unscharf. Ein
-                  kleineres Maß oder ein größeres Bild (oder eine SVG) hilft.
-                </span>`
+              ? html`
+                  <span class="warning">
+                    Nur ${Math.round(dpi)} dpi bei dieser Breite, im Druck wird das Bild unscharf.
+                    Ein kleineres Maß oder ein größeres Bild (oder eine SVG) hilft.
+                  </span>
+                `
               : nothing
           }
           <span class="muted">

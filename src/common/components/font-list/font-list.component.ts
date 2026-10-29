@@ -68,28 +68,30 @@ export class FontListComponent extends ErngElement.withStyles(styles) {
       <div class="stack">
         ${
           fonts.length > 0
-            ? html`<div class="fonts">
-                ${fonts.map(
-                  (font, index) => html`
-                    <div class="font">
-                      <span class="name">
-                        <strong>${font.family}</strong>
-                        ${font.style ? html`<span class="muted">${font.style}</span>` : nothing}
-                        <span class="muted">${font.path.split('/').pop()}</span>
-                      </span>
-                      <wa-button
-                        appearance="outlined"
-                        variant="danger"
-                        title="Schrift entfernen"
-                        aria-label="Schrift entfernen"
-                        @click="${() => this.removeFont(index)}"
-                      >
-                        <wa-icon name="trash"></wa-icon>
-                      </wa-button>
-                    </div>
-                  `
-                )}
-              </div>`
+            ? html`
+                <div class="fonts">
+                  ${fonts.map(
+                    (font, index) => html`
+                      <div class="font">
+                        <span class="name">
+                          <strong>${font.family}</strong>
+                          ${font.style ? html`<span class="muted">${font.style}</span>` : nothing}
+                          <span class="muted">${font.path.split('/').pop()}</span>
+                        </span>
+                        <wa-button
+                          appearance="outlined"
+                          variant="danger"
+                          title="Schrift entfernen"
+                          aria-label="Schrift entfernen"
+                          @click="${() => this.removeFont(index)}"
+                        >
+                          <wa-icon name="trash"></wa-icon>
+                        </wa-button>
+                      </div>
+                    `
+                  )}
+                </div>
+              `
             : nothing
         }
         <div>
@@ -97,16 +99,18 @@ export class FontListComponent extends ErngElement.withStyles(styles) {
         </div>
         ${
           families.length > 1
-            ? html`<wa-select
-                label="Schrift der Inhalte"
-                .value="${this.layout.font ?? families[0] ?? ''}"
-                @change="${(e: Event) => {
-                  this.layout.font = String((e.target as WaSelect).value);
-                  this.changed();
-                }}"
-              >
-                ${families.map(f => html`<wa-option value="${f}">${f}</wa-option>`)}
-              </wa-select>`
+            ? html`
+                <wa-select
+                  label="Schrift der Inhalte"
+                  .value="${this.layout.font ?? families[0] ?? ''}"
+                  @change="${(e: Event) => {
+                    this.layout.font = String((e.target as WaSelect).value);
+                    this.changed();
+                  }}"
+                >
+                  ${families.map(f => html`<wa-option value="${f}">${f}</wa-option>`)}
+                </wa-select>
+              `
             : nothing
         }
         <span class="muted">

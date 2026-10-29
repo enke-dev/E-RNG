@@ -40,27 +40,29 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
 
   private setup(setup: PageSetup, families: string[], first: boolean) {
     const reveal = this.reveal?.first === first ? this.reveal : undefined;
-    return html`<erng-page-setup-form
-      .setup="${setup}"
-      .families="${families}"
-      .hover="${this.hover?.first === first ? this.hover.index : null}"
-      .reveal="${reveal}"
-      @change="${() => this.changed()}"
-      @part-focus="${(e: CustomEvent<{ hovered: number | null; opened: number | null }>) => {
-        e.stopPropagation();
-        this.pointAt(first, e.detail);
-      }}"
-      @part-open="${(e: CustomEvent<number>) => {
-        e.stopPropagation();
-        this.dispatchEvent(
-          new CustomEvent<{ first: boolean; index: number }>('part-open', {
-            detail: { first, index: e.detail },
-            bubbles: true,
-            composed: true,
-          })
-        );
-      }}"
-    ></erng-page-setup-form>`;
+    return html`
+      <erng-page-setup-form
+        .setup="${setup}"
+        .families="${families}"
+        .hover="${this.hover?.first === first ? this.hover.index : null}"
+        .reveal="${reveal}"
+        @change="${() => this.changed()}"
+        @part-focus="${(e: CustomEvent<{ hovered: number | null; opened: number | null }>) => {
+          e.stopPropagation();
+          this.pointAt(first, e.detail);
+        }}"
+        @part-open="${(e: CustomEvent<number>) => {
+          e.stopPropagation();
+          this.dispatchEvent(
+            new CustomEvent<{ first: boolean; index: number }>('part-open', {
+              detail: { first, index: e.detail },
+              bubbles: true,
+              composed: true,
+            })
+          );
+        }}"
+      ></erng-page-setup-form>
+    `;
   }
 
   /** The part to mark in the form, because the pointer is over it in the sample */
@@ -155,16 +157,22 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) {
 
             ${
               l.first
-                ? html`<wa-tab-group
-                    @wa-tab-show="${(e: CustomEvent<{ name: string }>) =>
-                      e.target === e.currentTarget &&
-                      this.pointAt(e.detail.name === 'first', { hovered: null, opened: null })}"
-                  >
-                    <wa-tab slot="nav" panel="first">Erste Seite</wa-tab>
-                    <wa-tab slot="nav" panel="page">Folgeseiten</wa-tab>
-                    <wa-tab-panel name="first">${this.setup(l.first, families, true)}</wa-tab-panel>
-                    <wa-tab-panel name="page">${this.setup(l.page, families, false)}</wa-tab-panel>
-                  </wa-tab-group>`
+                ? html`
+                    <wa-tab-group
+                      @wa-tab-show="${(e: CustomEvent<{ name: string }>) =>
+                        e.target === e.currentTarget &&
+                        this.pointAt(e.detail.name === 'first', { hovered: null, opened: null })}"
+                    >
+                      <wa-tab slot="nav" panel="first">Erste Seite</wa-tab>
+                      <wa-tab slot="nav" panel="page">Folgeseiten</wa-tab>
+                      <wa-tab-panel name="first"
+                        >${this.setup(l.first, families, true)}</wa-tab-panel
+                      >
+                      <wa-tab-panel name="page"
+                        >${this.setup(l.page, families, false)}</wa-tab-panel
+                      >
+                    </wa-tab-group>
+                  `
                 : this.setup(l.page, families, false)
             }
           </div>

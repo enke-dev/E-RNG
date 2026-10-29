@@ -303,19 +303,21 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
         >
           ${
             available.get().length > 1
-              ? html`<wa-select
-                  slot="filters"
-                  size="s"
-                  aria-label="Kontext"
-                  .value="${this.all ? 'all' : 'active'}"
-                  @change="${(e: Event) => {
-                    this.all = String((e.target as WaSelect).value) === 'all';
-                    void this.load();
-                  }}"
-                >
-                  <wa-option value="active">Dieser Kontext</wa-option>
-                  <wa-option value="all">Alle Kontexte</wa-option>
-                </wa-select>`
+              ? html`
+                  <wa-select
+                    slot="filters"
+                    size="s"
+                    aria-label="Kontext"
+                    .value="${this.all ? 'all' : 'active'}"
+                    @change="${(e: Event) => {
+                      this.all = String((e.target as WaSelect).value) === 'all';
+                      void this.load();
+                    }}"
+                  >
+                    <wa-option value="active">Dieser Kontext</wa-option>
+                    <wa-option value="all">Alle Kontexte</wa-option>
+                  </wa-select>
+                `
               : nothing
           }
           <wa-dropdown slot="filters" @wa-select="${this.handleStatus}">
@@ -409,12 +411,14 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
         ${
           this.entries
             ? this.current === ''
-              ? html`<div slot="detail" class="placeholder">
-                  <span> ${this.entries.length === 0 ? texts.empty : texts.none} </span>
-                  <wa-button variant="brand" @click="${() => goto(kindRoute(this.kind, 'new'))}">
-                    ${texts.newLabel}
-                  </wa-button>
-                </div>`
+              ? html`
+                  <div slot="detail" class="placeholder">
+                    <span> ${this.entries.length === 0 ? texts.empty : texts.none} </span>
+                    <wa-button variant="brand" @click="${() => goto(kindRoute(this.kind, 'new'))}">
+                      ${texts.newLabel}
+                    </wa-button>
+                  </div>
+                `
               : html`
                   <erng-invoice-edit
                     slot="detail"

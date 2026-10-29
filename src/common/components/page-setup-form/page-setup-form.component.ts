@@ -164,9 +164,11 @@ export class PageSetupFormComponent extends ErngElement.withStyles(styles) {
   private summary(part: Part) {
     const what = KINDS[part.kind].label.replace(/ \(.*\)$/, '');
     const snippet = part.kind === 'text' ? (part.text.split('\n')[0]?.slice(0, 28) ?? '') : '';
-    return html`<span slot="summary"
-      >${what}${snippet ? html` <span class="muted">${snippet}</span>` : nothing}</span
-    >`;
+    return html`
+      <span slot="summary"
+        >${what}${snippet ? html` <span class="muted">${snippet}</span>` : nothing}</span
+      >
+    `;
   }
 
   override render() {

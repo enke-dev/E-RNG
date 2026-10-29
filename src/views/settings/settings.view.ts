@@ -750,78 +750,90 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     const choice = this.removing;
     const others = available.get().filter(c => c.id !== this.context?.id);
     const usage = this.contextUsage;
-    return html`<wa-dialog
-      ?open="${choice !== undefined}"
-      label="Kontext entfernen"
-      @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.removing = undefined)}"
-    >
-      ${
-        choice
-          ? html`<div class="stack">
-              <span>
-                „${label(this.context)}“ wird entfernt. Es hat weder Rechnungen noch Angebote,
-                dieser Schritt lässt sich nicht rückgängig machen.
-              </span>
-              ${
-                usage && this.scoped > 0
-                  ? html`<span>
-                        Zu diesem Kontext gehören ${usage.customers} Kunden, ${usage.templates}
-                        gespeicherte Positionen und ${usage.layouts} Layouts. Was soll damit
-                        geschehen?
-                      </span>
-                      <wa-select
-                        label="Dazugehörige Einträge"
-                        .value="${choice.what}"
-                        @change="${(e: Event) => {
-                          const what = String((e.target as WaSelect).value) as
-                            'share' | 'move' | 'delete';
-                          this.removing = {
-                            what,
-                            to: what === 'move' ? (others[0]?.id ?? null) : null,
-                          };
-                        }}"
-                      >
-                        <wa-option value="share">Für alle Kontexte freigeben</wa-option>
-                        ${
-                          others.length > 0
-                            ? html`<wa-option value="move"
-                                >In einen anderen Kontext verschieben</wa-option
-                              >`
-                            : nothing
-                        }
-                        <wa-option value="delete">Mit entfernen</wa-option>
-                      </wa-select>
-                      ${
-                        choice.what === 'move'
-                          ? html`<wa-select
-                              label="Verschieben nach"
-                              .value="${String(choice.to ?? '')}"
-                              @change="${(e: Event) => {
-                                this.removing = {
-                                  what: 'move',
-                                  to: Number((e.target as WaSelect).value),
-                                };
-                              }}"
-                            >
-                              ${others.map(
-                                c =>
-                                  html`<wa-option value="${String(c.id)}">${label(c)}</wa-option>`
-                              )}
-                            </wa-select>`
-                          : nothing
-                      }`
-                  : nothing
-              }
-            </div>`
-          : nothing
-      }
-      <div slot="footer" class="dialog-footer">
-        <wa-button appearance="outlined" @click="${() => (this.removing = undefined)}">
-          Abbrechen
-        </wa-button>
-        <wa-button variant="danger" @click="${this.confirmRemove}">Entfernen</wa-button>
-      </div>
-    </wa-dialog>`;
+    return html`
+      <wa-dialog
+        ?open="${choice !== undefined}"
+        label="Kontext entfernen"
+        @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.removing = undefined)}"
+      >
+        ${
+          choice
+            ? html`
+                <div class="stack">
+                  <span>
+                    „${label(this.context)}“ wird entfernt. Es hat weder Rechnungen noch Angebote,
+                    dieser Schritt lässt sich nicht rückgängig machen.
+                  </span>
+                  ${
+                    usage && this.scoped > 0
+                      ? html`
+                          <span>
+                            Zu diesem Kontext gehören ${usage.customers} Kunden, ${usage.templates}
+                            gespeicherte Positionen und ${usage.layouts} Layouts. Was soll damit
+                            geschehen?
+                          </span>
+                          <wa-select
+                            label="Dazugehörige Einträge"
+                            .value="${choice.what}"
+                            @change="${(e: Event) => {
+                              const what = String((e.target as WaSelect).value) as
+                                'share' | 'move' | 'delete';
+                              this.removing = {
+                                what,
+                                to: what === 'move' ? (others[0]?.id ?? null) : null,
+                              };
+                            }}"
+                          >
+                            <wa-option value="share">Für alle Kontexte freigeben</wa-option>
+                            ${
+                              others.length > 0
+                                ? html`
+                                    <wa-option value="move"
+                                      >In einen anderen Kontext verschieben</wa-option
+                                    >
+                                  `
+                                : nothing
+                            }
+                            <wa-option value="delete">Mit entfernen</wa-option>
+                          </wa-select>
+                          ${
+                            choice.what === 'move'
+                              ? html`
+                                  <wa-select
+                                    label="Verschieben nach"
+                                    .value="${String(choice.to ?? '')}"
+                                    @change="${(e: Event) => {
+                                      this.removing = {
+                                        what: 'move',
+                                        to: Number((e.target as WaSelect).value),
+                                      };
+                                    }}"
+                                  >
+                                    ${others.map(
+                                      c =>
+                                        html`<wa-option value="${String(c.id)}"
+                                          >${label(c)}</wa-option
+                                        >`
+                                    )}
+                                  </wa-select>
+                                `
+                              : nothing
+                          }
+                        `
+                      : nothing
+                  }
+                </div>
+              `
+            : nothing
+        }
+        <div slot="footer" class="dialog-footer">
+          <wa-button appearance="outlined" @click="${() => (this.removing = undefined)}">
+            Abbrechen
+          </wa-button>
+          <wa-button variant="danger" @click="${this.confirmRemove}">Entfernen</wa-button>
+        </div>
+      </wa-dialog>
+    `;
   }
 
   /** The period of the counter depends on the saved reset and business year, the number on the pattern */
@@ -885,10 +897,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         </span>
         ${
           edited
-            ? html`<wa-tooltip for="change-counter">
-                Erst speichern: der Zähler gilt für die gespeicherten Einstellungen von Muster,
-                Zähler und Geschäftsjahr.
-              </wa-tooltip>`
+            ? html`
+                <wa-tooltip for="change-counter">
+                  Erst speichern: der Zähler gilt für die gespeicherten Einstellungen zu Muster,
+                  Zurücksetzen und Geschäftsjahr.
+                </wa-tooltip>
+              `
             : nothing
         }
       </div>
@@ -899,44 +913,48 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     const dialog = this.counterEdit;
     const sequence = dialog && this.sequences[dialog.kind];
     const highest = sequence?.highest;
-    return html`<wa-dialog
-      ?open="${dialog !== undefined}"
-      label="Zähler ändern"
-      @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.counterEdit = undefined)}"
-    >
-      ${
-        dialog
-          ? html`<div class="stack">
-              <wa-callout variant="warning">
-                Nur ändern, um die Nummern eines anderen Programms fortzusetzen. Eine Nummer darf
-                nie doppelt vergeben werden: Werte bis zur höchsten vergebenen
-                Nummer${highest ? html` (${highest})` : nothing} werden abgelehnt.
-              </wa-callout>
-              <wa-input
-                type="number"
-                min="1"
-                step="1"
-                label="Zähler der nächsten Nummer"
-                hint="${sequence ? `Jetzt: ${sequence.next_number}` : ''}"
-                .value="${dialog.value}"
-                @input="${(e: Event) => (this.counterEdit = { ...dialog, value: text(e), error: '' })}"
-                @keydown="${(e: KeyboardEvent) => e.key === 'Enter' && void this.changeCounter()}"
-              ></wa-input>
-              ${
-                dialog.error
-                  ? html`<wa-callout variant="danger">${dialog.error}</wa-callout>`
-                  : nothing
-              }
-            </div>`
-          : nothing
-      }
-      <div slot="footer" class="dialog-footer">
-        <wa-button appearance="outlined" @click="${() => (this.counterEdit = undefined)}">
-          Abbrechen
-        </wa-button>
-        <wa-button variant="brand" @click="${this.changeCounter}">Ändern</wa-button>
-      </div>
-    </wa-dialog>`;
+    return html`
+      <wa-dialog
+        ?open="${dialog !== undefined}"
+        label="Zähler ändern"
+        @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.counterEdit = undefined)}"
+      >
+        ${
+          dialog
+            ? html`
+                <div class="stack">
+                  <wa-callout variant="warning">
+                    Nur ändern, um die Nummern eines anderen Programms fortzusetzen. Eine Nummer
+                    darf nie doppelt vergeben werden: Werte bis zur höchsten vergebenen
+                    Nummer${highest ? html` (${highest})` : nothing} werden abgelehnt.
+                  </wa-callout>
+                  <wa-input
+                    type="number"
+                    min="1"
+                    step="1"
+                    label="Zähler der nächsten Nummer"
+                    hint="${sequence ? `Jetzt: ${sequence.next_number}` : ''}"
+                    .value="${dialog.value}"
+                    @input="${(e: Event) => (this.counterEdit = { ...dialog, value: text(e), error: '' })}"
+                    @keydown="${(e: KeyboardEvent) => e.key === 'Enter' && void this.changeCounter()}"
+                  ></wa-input>
+                  ${
+                    dialog.error
+                      ? html`<wa-callout variant="danger">${dialog.error}</wa-callout>`
+                      : nothing
+                  }
+                </div>
+              `
+            : nothing
+        }
+        <div slot="footer" class="dialog-footer">
+          <wa-button appearance="outlined" @click="${() => (this.counterEdit = undefined)}">
+            Abbrechen
+          </wa-button>
+          <wa-button variant="brand" @click="${this.changeCounter}">Ändern</wa-button>
+        </div>
+      </wa-dialog>
+    `;
   }
 
   // layouts
@@ -1012,80 +1030,92 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   private importDialog() {
     const pending = this.importQuestion;
     const question = pending?.question;
-    return html`<wa-dialog
-      ?open="${pending !== undefined}"
-      label="${question?.kind === 'replace' ? 'Layout ersetzen?' : 'Name vergeben'}"
-      @wa-after-hide="${(e: Event) => e.target === e.currentTarget && this.answerImport()}"
-    >
-      ${
-        question?.kind === 'replace'
-          ? html`
-              <div class="stack">
-                <span>
-                  „${question.existing.name}“ gibt es schon (gespeichert
-                  ${this.when(question.existing.updated_at)}). Die Datei
-                  ${
-                    question.incoming_updated_at > question.existing.updated_at
-                      ? 'ist neuer'
-                      : question.incoming_updated_at < question.existing.updated_at
-                        ? 'ist älter'
-                        : 'hat denselben Stand'
-                  }
-                  (${this.when(question.incoming_updated_at)}).
-                </span>
-                ${
-                  question.existing.uses > 0 || question.existing.is_default
-                    ? html`<span class="muted">
-                        ${question.existing.is_default ? 'Es ist das Standard-Layout. ' : ''}
-                        ${
-                          question.existing.uses > 0
-                            ? `${question.existing.uses} Rechnungen und Entwürfe verwenden es, bereits exportierte behalten ihr Aussehen.`
-                            : ''
-                        }
-                      </span>`
-                    : nothing
-                }
-              </div>
-            `
-          : question?.kind === 'name-taken'
-            ? html`<div class="stack">
-                <span>
-                  Ein anderes Layout heißt schon „${question.name}“. Unter welchem Namen soll das
-                  importierte gespeichert werden?
-                </span>
-                <wa-input
-                  label="Name"
-                  required
-                  .value="${pending?.name ?? ''}"
-                  @input="${(e: Event) => {
-                    if (this.importQuestion) {
-                      this.importQuestion = { ...this.importQuestion, name: text(e) };
-                    }
-                  }}"
-                ></wa-input>
-              </div>`
-            : nothing
-      }
-      <div slot="footer" class="dialog-footer">
-        <wa-button appearance="outlined" @click="${() => this.answerImport()}">Abbrechen</wa-button>
+    return html`
+      <wa-dialog
+        ?open="${pending !== undefined}"
+        label="${question?.kind === 'replace' ? 'Layout ersetzen?' : 'Name vergeben'}"
+        @wa-after-hide="${(e: Event) => e.target === e.currentTarget && this.answerImport()}"
+      >
         ${
           question?.kind === 'replace'
-            ? html`<wa-button
-                variant="${question.incoming_updated_at < question.existing.updated_at ? 'danger' : 'brand'}"
-                @click="${() => this.answerImport({ replace: true })}"
-              >
-                Ersetzen
-              </wa-button>`
-            : html`<wa-button
-                variant="brand"
-                ?disabled="${(pending?.name ?? '').trim() === ''}"
-                @click="${() => this.answerImport({ name: pending?.name })}"
-              >
-                Importieren
-              </wa-button>`
+            ? html`
+                <div class="stack">
+                  <span>
+                    „${question.existing.name}“ gibt es schon (gespeichert
+                    ${this.when(question.existing.updated_at)}). Die Datei
+                    ${
+                      question.incoming_updated_at > question.existing.updated_at
+                        ? 'ist neuer'
+                        : question.incoming_updated_at < question.existing.updated_at
+                          ? 'ist älter'
+                          : 'hat denselben Stand'
+                    }
+                    (${this.when(question.incoming_updated_at)}).
+                  </span>
+                  ${
+                    question.existing.uses > 0 || question.existing.is_default
+                      ? html`
+                          <span class="muted">
+                            ${question.existing.is_default ? 'Es ist das Standard-Layout. ' : ''}
+                            ${
+                              question.existing.uses > 0
+                                ? `${question.existing.uses} Rechnungen und Entwürfe verwenden es, bereits exportierte behalten ihr Aussehen.`
+                                : ''
+                            }
+                          </span>
+                        `
+                      : nothing
+                  }
+                </div>
+              `
+            : question?.kind === 'name-taken'
+              ? html`
+                  <div class="stack">
+                    <span>
+                      Ein anderes Layout heißt schon „${question.name}“. Unter welchem Namen soll
+                      das importierte gespeichert werden?
+                    </span>
+                    <wa-input
+                      label="Name"
+                      required
+                      .value="${pending?.name ?? ''}"
+                      @input="${(e: Event) => {
+                        if (this.importQuestion) {
+                          this.importQuestion = { ...this.importQuestion, name: text(e) };
+                        }
+                      }}"
+                    ></wa-input>
+                  </div>
+                `
+              : nothing
         }
-      </div>
-    </wa-dialog>`;
+        <div slot="footer" class="dialog-footer">
+          <wa-button appearance="outlined" @click="${() => this.answerImport()}"
+            >Abbrechen</wa-button
+          >
+          ${
+            question?.kind === 'replace'
+              ? html`
+                  <wa-button
+                    variant="${question.incoming_updated_at < question.existing.updated_at ? 'danger' : 'brand'}"
+                    @click="${() => this.answerImport({ replace: true })}"
+                  >
+                    Ersetzen
+                  </wa-button>
+                `
+              : html`
+                  <wa-button
+                    variant="brand"
+                    ?disabled="${(pending?.name ?? '').trim() === ''}"
+                    @click="${() => this.answerImport({ name: pending?.name })}"
+                  >
+                    Importieren
+                  </wa-button>
+                `
+          }
+        </div>
+      </wa-dialog>
+    `;
   }
 
   /** Writes a layout, as it is in the form, to a file; fonts only if the user wants to hand them out */
@@ -1374,20 +1404,22 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       ${
         settings.fiscal_year_start === null
           ? nothing
-          : html`<wa-input
-              type="date"
-              label="Beginn des ersten Geschäftsjahres"
-              hint="Tag und Monat wiederholen sich jedes Jahr. Davor gilt das Kalenderjahr, das erste Geschäftsjahr kann also kürzer sein."
-              .value="${settings.fiscal_year_start}"
-              @input="${(e: Event) => {
-                // a half typed date is empty: keep the last good one
-                const date = text(e);
-                if (date !== '') {
-                  this.edit(s => (s.fiscal_year_start = date));
-                  void this.showNumberExample();
-                }
-              }}"
-            ></wa-input>`
+          : html`
+              <wa-input
+                type="date"
+                label="Beginn des ersten Geschäftsjahres"
+                hint="Tag und Monat wiederholen sich jedes Jahr. Davor gilt das Kalenderjahr, das erste Geschäftsjahr kann also kürzer sein."
+                .value="${settings.fiscal_year_start}"
+                @input="${(e: Event) => {
+                  // a half typed date is empty: keep the last good one
+                  const date = text(e);
+                  if (date !== '') {
+                    this.edit(s => (s.fiscal_year_start = date));
+                    void this.showNumberExample();
+                  }
+                }}"
+              ></wa-input>
+            `
       }
     `;
   }
@@ -1448,8 +1480,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           // the fiscal year marks only matter when it differs from the calendar year
           settings.fiscal_year_start === null
             ? 'Quartal Q.'
-            : html`Geschäftsjahr: GGGG oder GG für das Jahr, in dem es beginnt, gggg oder gg für das
-                Jahr, in dem es endet (<code>GGGG/gg</code> gibt 2026/27), Q für sein Quartal.`
+            : html`
+                Geschäftsjahr: GGGG oder GG für das Jahr, in dem es beginnt, gggg oder gg für das
+                Jahr, in dem es endet (<code>GGGG/gg</code> gibt 2026/27), Q für sein Quartal.
+              `
         }
         Buchstaben als Text in [eckige Klammern].
         <table class="examples">
@@ -1581,12 +1615,14 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       </div>
       ${
         settings.tax_rate.trim() === ''
-          ? html`<wa-input
-              label="Hinweis zur Steuerbefreiung"
-              hint="Steht auf der Rechnung und in der XML-Datei, solange keine Umsatzsteuer berechnet wird."
-              .value="${settings.vat_note}"
-              @input="${(e: Event) => this.edit(s => (s.vat_note = text(e)))}"
-            ></wa-input>`
+          ? html`
+              <wa-input
+                label="Hinweis zur Steuerbefreiung"
+                hint="Steht auf der Rechnung und in der XML-Datei, solange keine Umsatzsteuer berechnet wird."
+                .value="${settings.vat_note}"
+                @input="${(e: Event) => this.edit(s => (s.vat_note = text(e)))}"
+              ></wa-input>
+            `
           : nothing
       }
       ${this.numberFields('invoice', settings)} ${this.wordingFields('invoice', settings)}
@@ -1702,10 +1738,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     if (page === 'units') {
       // the units are saved by their own dialogs, there is no form to save here
       return context.id === null
-        ? html`<wa-callout slot="detail" variant="neutral">
-            Ein neuer Kontext übernimmt die Einheiten des aktiven. Nach dem Speichern lassen sie
-            sich hier ändern.
-          </wa-callout>`
+        ? html`
+            <wa-callout slot="detail" variant="neutral">
+              Ein neuer Kontext übernimmt die Einheiten des aktiven. Nach dem Speichern lassen sie
+              sich hier ändern.
+            </wa-callout>
+          `
         : html`<erng-unit-list slot="detail" context-id="${context.id}"></erng-unit-list>`;
     }
     const settings = context.settings;
@@ -1744,29 +1782,31 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     // the first page shows what is set up for it, the second what the others look like
     const page = this.pointed && !this.pointed.first && this.editing?.first ? 1 : 0;
     const { openPart, hovered } = this;
-    return html`<erng-sheet
-      slot="preview"
-      .page="${page}"
-      .pages="${this.sample?.pages ?? []}"
-      .regions="${interactive ? (this.sample?.parts ?? []) : []}"
-      .reveal="${this.showInSample}"
-      .active="${openPart ? regionKey(openPart) : null}"
-      .hover="${hovered ? regionKey(hovered) : null}"
-      @page-change="${(e: CustomEvent<number>) => {
-        // the first page is the first setup, the others belong to the other: the tab follows
-        this.pointed = { first: e.detail === 0, index: null };
-      }}"
-      @region-hover="${(e: CustomEvent<string | null>) => {
-        this.overSample = e.detail ? parseKey(e.detail) : null;
-      }}"
-      @region-click="${(e: CustomEvent<string>) => {
-        const part = parseKey(e.detail);
-        this.pointed = { ...part };
-        this.openPart = { ...part };
-        this.reveal = { ...part, token: (this.reveal?.token ?? 0) + 1 };
-      }}"
-      hint="${this.sampleError ? `Vorschau nicht verfügbar: ${this.sampleError}` : (this.sample?.problems.map(p => p.message).join(', ') ?? 'Die Vorschau wird erzeugt…')}"
-    ></erng-sheet>`;
+    return html`
+      <erng-sheet
+        slot="preview"
+        .page="${page}"
+        .pages="${this.sample?.pages ?? []}"
+        .regions="${interactive ? (this.sample?.parts ?? []) : []}"
+        .reveal="${this.showInSample}"
+        .active="${openPart ? regionKey(openPart) : null}"
+        .hover="${hovered ? regionKey(hovered) : null}"
+        @page-change="${(e: CustomEvent<number>) => {
+          // the first page is the first setup, the others belong to the other: the tab follows
+          this.pointed = { first: e.detail === 0, index: null };
+        }}"
+        @region-hover="${(e: CustomEvent<string | null>) => {
+          this.overSample = e.detail ? parseKey(e.detail) : null;
+        }}"
+        @region-click="${(e: CustomEvent<string>) => {
+          const part = parseKey(e.detail);
+          this.pointed = { ...part };
+          this.openPart = { ...part };
+          this.reveal = { ...part, token: (this.reveal?.token ?? 0) + 1 };
+        }}"
+        hint="${this.sampleError ? `Vorschau nicht verfügbar: ${this.sampleError}` : (this.sample?.problems.map(p => p.message).join(', ') ?? 'Die Vorschau wird erzeugt…')}"
+      ></erng-sheet>
+    `;
   }
 
   /** The guides are for looking at layouts: they stay as they were left, for the next start too */
@@ -1776,17 +1816,19 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   private guidesToggle() {
-    return html`<wa-checkbox
-      slot="form"
-      ?checked="${this.guides}"
-      hint="Zeichnet Linien an die Ränder des Inhalts und den druckbaren Bereich"
-      @change="${(e: Event) => {
-        this.setGuides((e.target as HTMLInputElement).checked);
-        this.schedulePreview(0);
-      }}"
-    >
-      Hilfslinien in der Vorschau
-    </wa-checkbox>`;
+    return html`
+      <wa-checkbox
+        slot="form"
+        ?checked="${this.guides}"
+        hint="Zeichnet Linien an die Ränder des Inhalts und den druckbaren Bereich"
+        @change="${(e: Event) => {
+          this.setGuides((e.target as HTMLInputElement).checked);
+          this.schedulePreview(0);
+        }}"
+      >
+        Hilfslinien in der Vorschau
+      </wa-checkbox>
+    `;
   }
 
   private standardPage() {
@@ -1810,13 +1852,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         ${
           this.defaultLayout === 'standard'
             ? html`<span slot="actions" class="muted">Dieses Layout ist das Standard-Layout.</span>`
-            : html`<wa-button
-                slot="actions"
-                variant="brand"
-                @click="${() => this.makeDefault('standard')}"
-              >
-                Als Standard-Layout festlegen
-              </wa-button>`
+            : html`
+                <wa-button
+                  slot="actions"
+                  variant="brand"
+                  @click="${() => this.makeDefault('standard')}"
+                >
+                  Als Standard-Layout festlegen
+                </wa-button>
+              `
         }
       </erng-page>
     `;
@@ -1859,10 +1903,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       </span>
       ${
         reasons.length > 0
-          ? html`<wa-tooltip slot="actions" for="delete-layout">
-              <strong>Kann nur archiviert werden, in Verwendung:</strong>
-              ${reasons.map(reason => html`<div>${reason}</div>`)}
-            </wa-tooltip>`
+          ? html`
+              <wa-tooltip slot="actions" for="delete-layout">
+                <strong>Kann nur archiviert werden, in Verwendung:</strong>
+                ${reasons.map(reason => html`<div>${reason}</div>`)}
+              </wa-tooltip>
+            `
           : nothing
       }
       <wa-button slot="actions" appearance="outlined" @click="${() => this.exportLayout(layout)}">
@@ -1879,13 +1925,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       ${
         isDefault || layout.archived
           ? nothing
-          : html`<wa-button
-              slot="actions"
-              appearance="outlined"
-              ?disabled="${this.layoutChanged}"
-              @click="${() => this.makeDefault(key)}"
-              >Als Standard-Layout festlegen</wa-button
-            >`
+          : html`
+              <wa-button
+                slot="actions"
+                appearance="outlined"
+                ?disabled="${this.layoutChanged}"
+                @click="${() => this.makeDefault(key)}"
+                >Als Standard-Layout festlegen</wa-button
+              >
+            `
       }
     `;
   }
@@ -1947,13 +1995,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         </erng-editor>
         ${
           isNew
-            ? html`<wa-button
-                slot="actions"
-                appearance="outlined"
-                @click="${() => goto(`/settings/${LAYOUT}standard`)}"
-              >
-                Abbrechen
-              </wa-button>`
+            ? html`
+                <wa-button
+                  slot="actions"
+                  appearance="outlined"
+                  @click="${() => goto(`/settings/${LAYOUT}standard`)}"
+                >
+                  Abbrechen
+                </wa-button>
+              `
             : this.layoutActions(layout)
         }
         <wa-button
@@ -1990,10 +2040,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     if (!contexts.get()) {
       return nothing;
     }
-    return html`<erng-split position-key="split:settings"
+    return html`
+      <erng-split position-key="split:settings"
         >${this.renderList()} ${this.renderDetail()}</erng-split
       >
-      ${this.importDialog()} ${this.removeDialog()} ${this.counterDialog()}`;
+      ${this.importDialog()} ${this.removeDialog()} ${this.counterDialog()}
+    `;
   }
 }
 
