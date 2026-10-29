@@ -231,6 +231,11 @@ Not built yet, nothing here is promised. Bigger features have a plan in `.claude
 Pushing to `main` runs `check`, then bumps the version (conventional commits, `release-it`), builds the app
 on macOS into a draft release, commits the bump, publishes the release and writes `latest.json` for the
 in-app updater to the `gh-e-rng-latest` branch. Needs the repo secret `TAURI_SIGNING_PRIVATE_KEY`.
+The app checks on start and from the menu (`updater.component.ts`): its button first only loads the update while
+the user goes on working, then reads `Jetzt 0.7.0 installieren`, so the restart happens when the user says so
+(after asking about unsaved changes). The loaded package lives in memory: a restart forgets it and the check on
+start offers the newest again, a check that finds a newer version drops it and offers that one. The browser mock
+offers one with `?update` (`?update=0.8.0` for that version).
 Signed ad hoc (`bundle.macOS.signingIdentity` is `-`), not notarized: no Apple Developer ID. A downloaded copy shows
 Gatekeeper's "cannot verify" dialog, and System Settings → Privacy & Security offers "Open Anyway". A bundle whose
 signature does not verify would say "damaged" instead, with no way around it: check a build with

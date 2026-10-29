@@ -1519,7 +1519,20 @@ export function installMocks() {
           return '/tmp/mock-export';
         case 'plugin:dialog|open':
           return '/tmp/mock-backup.erng-backup';
-        case 'plugin:updater|check':
+        // `?update` in the address offers a newer version (`?update=0.8.0` that one), to try the updater
+        case 'plugin:updater|check': {
+          const offered = new URLSearchParams(location.search).get('update');
+          return offered === null
+            ? null
+            : { rid: 1, currentVersion: '0.6.0', version: offered || '0.7.0', rawJson: {} };
+        }
+        case 'plugin:updater|download':
+          // a moment of loading, so the button shows it
+          return new Promise(resolve => setTimeout(() => resolve(2), 800));
+        case 'plugin:updater|install':
+          return null;
+        case 'plugin:process|restart':
+          location.reload();
           return null;
         default:
           return null;

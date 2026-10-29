@@ -9,15 +9,18 @@ import { html, nothing } from 'lit';
 import { customElement, eventOptions, state } from 'lit/decorators.js';
 
 import { ErngElement } from '../../utils/base.utils.js';
+import { confirmLeave } from '../../utils/leave.utils.js';
 import { notify, notifyError } from '../../utils/notify.utils.js';
 import styles from './updater.component.css';
 
-type UpdaterState = 'idle' | 'checking' | 'available' | 'downloading' | 'installing';
+type UpdaterState = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing';
 
 /**
- * Checks for a new release on start and offers to install it, and checks again when the menu bar
- * asks for it. The button only shows up when there is something to do, and tells how far the update
- * is while it is being installed.
+ * Checks for a new release on start and offers it, and checks again when the menu bar asks for it.
+ * The button first loads the update while the user goes on working, then offers to install it: the
+ * app restarts only when the user says so. A loaded update lives in memory, a restart forgets it and
+ * the check on start offers the newest again; a newer one found later replaces it. The button only
+ * shows up when there is something to do, and tells how far the download is.
  */
 @customElement('erng-updater')
 export class UpdaterComponent extends ErngElement.withStyles(styles) {
@@ -52,14 +55,28 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
 
   #wasSpinning = false;
 
-  /** Looks for an update, silent by default: failures (offline, dev build) only reach the log */
+  /**
+   * Looks for an update, silent by default: failures (offline, dev build) only reach the log. A
+   * loaded update stays while it is the newest, a newer one replaces it and is offered to load.
+   */
   async checkUpdate({ silent = true } = {}) {
-    this.status = 'checking';
+    const loaded = this.status === 'downloaded' ? this.#update : undefined;
+    if (!loaded) {
+      this.status = 'checking';
+    }
     try {
-      this.#update = (await check()) ?? undefined;
-      this.status = this.#update ? 'available' : 'idle';
+      const found = (await check()) ?? undefined;
+      if (loaded && (!found || found.version === loaded.version)) {
+        void found?.close();
+        return;
+      }
+      void loaded?.close();
+      this.#update = found;
+      this.status = found ? 'available' : 'idle';
     } catch (error) {
-      this.status = 'idle';
+      if (!loaded) {
+        this.status = 'idle';
+      }
       if (silent) {
         void warn(`update check failed: ${String(error)}`);
       } else {
@@ -69,8 +86,18 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
   }
 
   @eventOptions({ passive: true })
-  private async handleInstall() {
-    if (!this.#update || this.#busy) {
+  private handleClick() {
+    if (this.status === 'available') {
+      void this.download();
+    } else if (this.status === 'downloaded') {
+      void this.install();
+    }
+  }
+
+  /** Loads the update while the user goes on working, nothing is installed yet */
+  private async download() {
+    const update = this.#update;
+    if (!update) {
       return;
     }
     this.status = 'downloading';
@@ -78,7 +105,7 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
     let total = 0;
     let received = 0;
     try {
-      await this.#update.downloadAndInstall(event => {
+      await update.download(event => {
         if (event.event === 'Started') {
           total = event.data.contentLength ?? 0;
           received = 0;
@@ -87,13 +114,32 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
           received += event.data.chunkLength;
           this.progress =
             total > 0 ? Math.min(100, Math.round((received / total) * 100)) : undefined;
-        } else {
-          this.status = 'installing';
         }
       });
+      // a check while it loaded may have found a newer one
+      if (this.#update === update) {
+        this.status = 'downloaded';
+      }
+    } catch (error) {
+      void logError(`update download failed: ${String(error)}`);
+      this.status = 'available';
+      notifyError(error);
+    }
+  }
+
+  /** Installs the loaded update and restarts, when the user says so and nothing unsaved is lost */
+  private async install() {
+    const update = this.#update;
+    if (!update || !(await confirmLeave('/'))) {
+      return;
+    }
+    this.status = 'installing';
+    try {
+      await update.install();
       await relaunch();
     } catch (error) {
-      void logError(`update failed: ${String(error)}`);
+      void logError(`update install failed: ${String(error)}`);
+      // the loaded package is used up, it has to be loaded again
       this.status = 'available';
       notifyError(error);
     }
@@ -101,13 +147,19 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
 
   /** The menu bar asked: look now, and say what came of it (the check on start is silent) */
   private async handleMenuCheck() {
-    if (this.status === 'downloading' || this.status === 'installing') {
+    if (this.status === 'downloading') {
+      notify('Das Update wird gerade geladen.', 'neutral');
+      return;
+    }
+    if (this.status === 'installing') {
       notify('Das Update wird gerade installiert.', 'neutral');
       return;
     }
     try {
       await this.checkUpdate({ silent: false });
-      if (this.#update) {
+      if (this.status === 'downloaded') {
+        notify(`Version ${this.#update?.version} ist geladen und kann installiert werden.`);
+      } else if (this.#update) {
         notify(`Version ${this.#update.version} ist verfügbar.`);
       } else {
         notify('Die App ist auf dem neuesten Stand.', 'neutral');
@@ -159,7 +211,7 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
   }
 
   override render() {
-    if (this.status !== 'available' && !this.#busy) {
+    if (this.status !== 'available' && this.status !== 'downloaded' && !this.#busy) {
       return nothing;
     }
     // figure spaces keep `5%` as wide as `45%`, so the button does not jump while it counts
@@ -169,18 +221,20 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
         ? `Wird geladen ${percent}%`
         : this.status === 'installing'
           ? 'Wird installiert…'
-          : `Auf ${this.#update?.version} aktualisieren`;
+          : this.status === 'downloaded'
+            ? `Jetzt ${this.#update?.version} installieren`
+            : `Auf ${this.#update?.version} aktualisieren`;
 
     return html`
       <wa-button
         size="s"
         variant="brand"
         class="${this.#spinning ? 'spinning' : ''}"
-        title="${this.#spinning ? label : ''}"
+        title="${this.#spinning ? label : this.status === 'downloaded' ? `Version ${this.#update?.version} ist geladen, die App startet zum Installieren neu` : ''}"
         aria-label="${label}"
         ?loading="${this.#spinning}"
         ?disabled="${this.#busy && !this.#spinning}"
-        @click="${this.handleInstall}"
+        @click="${this.handleClick}"
       >
         ${this.#spinning ? nothing : label}
       </wa-button>
