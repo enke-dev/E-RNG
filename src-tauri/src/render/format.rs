@@ -249,13 +249,13 @@ mod tests {
     }
 
     #[test]
-    fn a_percent_sign_has_a_space_or_not() {
-        assert_eq!(german().percent("19.00"), "19\u{a0}%");
-        let tight = Formatter::new(&Format {
-            percent_space: false,
+    fn a_percent_sign_has_no_space_unless_asked() {
+        assert_eq!(german().percent("19.00"), "19%");
+        let spaced = Formatter::new(&Format {
+            percent_space: true,
             ..Format::default()
         });
-        assert_eq!(tight.percent("7"), "7%");
+        assert_eq!(spaced.percent("7"), "7\u{a0}%");
     }
 
     #[test]

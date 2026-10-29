@@ -84,7 +84,7 @@ pub fn check(rate: &RateDef, others: &[Rate]) -> Result<RateDef> {
         .iter()
         .any(|o| canonical(&o.rate).as_deref() == Some(value.as_str()))
     {
-        bail!("Den Steuersatz {value} % gibt es schon.");
+        bail!("Den Steuersatz {value}% gibt es schon.");
     }
     Ok(RateDef {
         label: label.into(),

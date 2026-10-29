@@ -215,7 +215,7 @@ pub struct Format {
     pub currency_after: bool,
     /// A (non-breaking) space between amount and currency
     pub currency_space: bool,
-    /// `19 %` instead of `19%`
+    /// `19 %` instead of `19%`; off by default, like the app writes it
     pub percent_space: bool,
     /// `−` instead of `-` for deductions
     pub true_minus: bool,
@@ -235,7 +235,7 @@ impl Default for Format {
             currency_symbol: true,
             currency_after: true,
             currency_space: true,
-            percent_space: true,
+            percent_space: false,
             true_minus: false,
             iban_groups: false,
             date: "DD.MM.YYYY".into(),

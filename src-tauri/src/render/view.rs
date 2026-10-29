@@ -849,13 +849,13 @@ mod tests {
         let settings = crate::draft::fixtures::settings();
         let mut draft = crate::draft::fixtures::draft();
 
-        assert_eq!(vat_rows(&draft, &settings), ["Umsatzsteuer 19\u{a0}%"]);
+        assert_eq!(vat_rows(&draft, &settings), ["Umsatzsteuer 19%"]);
 
         // every position at the one rate that is not the default is still one rate
         draft.positions.iter_mut().for_each(|p| {
             p.tax_rate = Some("7".into());
         });
-        assert_eq!(vat_rows(&draft, &settings), ["Umsatzsteuer 7\u{a0}%"]);
+        assert_eq!(vat_rows(&draft, &settings), ["Umsatzsteuer 7%"]);
     }
 
     #[test]
@@ -867,15 +867,15 @@ mod tests {
         assert_eq!(
             vat_rows(&draft, &settings),
             [
-                "Umsatzsteuer 19\u{a0}% auf 950,00\u{a0}€",
-                "Umsatzsteuer 7\u{a0}% auf 42,50\u{a0}€",
+                "Umsatzsteuer 19% auf 950,00\u{a0}€",
+                "Umsatzsteuer 7% auf 42,50\u{a0}€",
             ]
         );
         // the order of the positions does not matter
         draft.positions.reverse();
         assert_eq!(
             vat_rows(&draft, &settings)[0],
-            "Umsatzsteuer 19\u{a0}% auf 950,00\u{a0}€"
+            "Umsatzsteuer 19% auf 950,00\u{a0}€"
         );
     }
 
@@ -890,7 +890,7 @@ mod tests {
         let view = build(&invoice, &branding, &Format::default());
 
         let rates: Vec<_> = view.lines.iter().map(|l| l.vat_rate.as_str()).collect();
-        assert_eq!(rates, ["19\u{a0}%", "7\u{a0}%"]);
+        assert_eq!(rates, ["19%", "7%"]);
     }
 
     #[test]

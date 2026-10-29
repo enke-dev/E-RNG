@@ -162,11 +162,11 @@ export class UpdaterComponent extends ErngElement.withStyles(styles) {
     if (this.status !== 'available' && !this.#busy) {
       return nothing;
     }
-    // figure spaces keep `5 %` as wide as `45 %`, so the button does not jump while it counts
+    // figure spaces keep `5%` as wide as `45%`, so the button does not jump while it counts
     const percent = String(this.progress ?? 0).padStart(3, '\u2007');
     const label =
       this.status === 'downloading'
-        ? `Wird geladen ${percent} %`
+        ? `Wird geladen ${percent}%`
         : this.status === 'installing'
           ? 'Wird installiert…'
           : `Auf ${this.#update?.version} aktualisieren`;

@@ -558,7 +558,7 @@ function checkedRate(rate: RateDef, others: Rate[]): RateDef {
     throw `Die Bezeichnung „${label}“ gibt es schon.`;
   }
   if (others.some(o => o.rate === value)) {
-    throw `Den Steuersatz ${value} % gibt es schon.`;
+    throw `Den Steuersatz ${value}% gibt es schon.`;
   }
   return { label, rate: value };
 }
@@ -939,7 +939,7 @@ export function installMocks() {
             if (charged !== undefined && !start.some(r => r.rate === charged)) {
               const taken = start.some(r => r.label.toLowerCase() === 'steuersatz');
               start.push({
-                label: taken ? `Steuersatz ${charged} %` : 'Steuersatz',
+                label: taken ? `Steuersatz ${charged}%` : 'Steuersatz',
                 rate: charged,
               });
             }

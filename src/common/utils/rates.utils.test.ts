@@ -22,9 +22,9 @@ const rate = (id: number, label: string, value: string): Rate => ({
 const list = [rate(1, 'Regelsatz', '19'), rate(2, 'Ermäßigt', '7'), rate(3, 'Halb', '5.5')];
 
 describe('percent', () => {
-  it('writes the German way, with a no-break space', () => {
-    expect(percent('19')).toBe('19 %');
-    expect(percent('5.5')).toBe('5,5 %');
+  it('writes a comma and no space, like the rest of the app', () => {
+    expect(percent('19')).toBe('19%');
+    expect(percent('5.5')).toBe('5,5%');
   });
 });
 
@@ -43,7 +43,7 @@ describe('sameRate', () => {
 
 describe('rateText', () => {
   it('names the label and the percent', () => {
-    expect(rateText(rate(1, 'Regelsatz', '19'))).toBe('Regelsatz (19 %)');
+    expect(rateText(rate(1, 'Regelsatz', '19'))).toBe('Regelsatz (19%)');
   });
 });
 
@@ -105,8 +105,8 @@ describe('pickRate', () => {
 
 describe('pickedText', () => {
   it('shows what the position was picked with', () => {
-    expect(pickedText({ tax_rate: '16', tax_label: 'Essen' })).toBe('Essen (16 %)');
-    expect(pickedText({ tax_rate: '16', tax_label: null })).toBe('16 %');
+    expect(pickedText({ tax_rate: '16', tax_label: 'Essen' })).toBe('Essen (16%)');
+    expect(pickedText({ tax_rate: '16', tax_label: null })).toBe('16%');
   });
 });
 

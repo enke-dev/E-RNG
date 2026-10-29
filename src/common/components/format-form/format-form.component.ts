@@ -172,7 +172,7 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
             f.currency_space,
             v => (f.currency_space = v)
           )}
-          ${this.check('Leerzeichen vor dem Prozentzeichen (19 %)', f.percent_space, v => (f.percent_space = v))}
+          ${this.check('Leerzeichen vor dem Prozentzeichen des Steuersatzes', f.percent_space, v => (f.percent_space = v))}
           ${this.check('Echtes Minuszeichen (−) bei Abzügen', f.true_minus, v => (f.true_minus = v))}
           ${this.check('IBAN in Vierergruppen', f.iban_groups, v => (f.iban_groups = v))}
         </div>

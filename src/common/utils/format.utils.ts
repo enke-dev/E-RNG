@@ -11,7 +11,7 @@ export function money(amount: string | null | undefined): string {
 
 /** `19` → `19 %`, `5.5` → `5,5 %`: the German default of the documents, with a no-break space */
 export function percent(rate: string): string {
-  return `${rate.replace('.', ',')}\u00a0%`;
+  return `${rate.replace('.', ',')}%`;
 }
 
 /**
@@ -46,10 +46,10 @@ export function formatMoment(iso: string): string {
   return `${moment.toLocaleDateString('de-DE')} um ${time}`;
 }
 
-/** `1536000` → `1,5 MB`, for the size of a file */
+/** `1536000` → `1,5MB`, for the size of a file */
 export function megabytes(bytes: number): string {
   const size = bytes / (1024 * 1024);
-  return `${size.toLocaleString('de-DE', { maximumFractionDigits: size < 10 ? 1 : 0 })} MB`;
+  return `${size.toLocaleString('de-DE', { maximumFractionDigits: size < 10 ? 1 : 0 })}MB`;
 }
 
 export const UNITS = [

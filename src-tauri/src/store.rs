@@ -425,7 +425,7 @@ fn charged_entry(list: &[Rate], rate: &str) -> RateDef {
             .any(|r| r.label.trim().to_lowercase() == label.to_lowercase())
     };
     let label = if taken(rates::CHARGED_LABEL) {
-        format!("{} {rate} %", rates::CHARGED_LABEL)
+        format!("{} {rate}%", rates::CHARGED_LABEL)
     } else {
         rates::CHARGED_LABEL.to_owned()
     };
@@ -5436,7 +5436,7 @@ mod tests {
 
         assert_eq!(
             rate_list(&store, made.id.unwrap()),
-            pairs(&[("steuersatz", "16"), ("Steuersatz 19 %", "19")])
+            pairs(&[("steuersatz", "16"), ("Steuersatz 19%", "19")])
         );
     }
 
