@@ -583,6 +583,59 @@ mod tests {
         }
     }
 
+    /// A color on a rule, a text and the page number reaches the page; a layout without colors is
+    /// drawn with the grey of the rule as before.
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn colored_parts_are_drawn_in_their_color_and_others_as_before() {
+        use crate::layout::{builtin, Anchor, Part, PartContent};
+        let sidecars = Sidecars::in_repo();
+        let (_, invoice, _) = crate::invoice::golden::cases().remove(0);
+        let render = |color: Option<&str>| {
+            let mut layout = builtin();
+            let own = |content| Part {
+                anchor: Anchor::TopLeft,
+                x: 25.0,
+                y: 10.0,
+                width: Some(100.0),
+                content,
+            };
+            layout.page.parts = vec![
+                own(PartContent::Line {
+                    thickness: 1.0,
+                    color: color.map(Into::into),
+                }),
+                own(PartContent::Text {
+                    text: "Farbtext".into(),
+                    family: None,
+                    size: 12.0,
+                    align: crate::layout::Align::Left,
+                    color: color.map(Into::into),
+                }),
+            ];
+            layout.first = None;
+            let branding = Branding {
+                custom: Some(layout),
+                ..with_letter()
+            };
+            let dir = tempfile::tempdir().unwrap();
+            render::render_preview(&sidecars, dir.path(), &invoice, &branding).unwrap()
+        };
+
+        let plain = render(None).remove(0);
+        let grey = |svg: &str| svg.matches("#bebebe").count();
+        assert!(!plain.contains("#ff0000"));
+        let red = render(Some("#ff0000")).remove(0);
+        // the rule of the layout was grey, the rules of the content (table) stay
+        assert_eq!(
+            grey(&red) + 1,
+            grey(&plain),
+            "the layout rule changed color"
+        );
+        // the stroke of the rule and the fill of the text glyphs
+        assert!(red.matches("#ff0000").count() >= 2, "{red}");
+    }
+
     /// Enough of base64 for a fixture.
     fn base64_decode(text: &str) -> Vec<u8> {
         const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

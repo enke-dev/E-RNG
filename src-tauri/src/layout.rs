@@ -112,11 +112,17 @@ pub enum PartContent {
         /// Dates as `18. Oktober 2026` instead of `18.10.2026`
         long_dates: bool,
         size: f64,
+        /// Color of the values, the labels stay grey
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
     },
     /// The recipient, with the sender in small print above it
     Address {
         sender_line: bool,
         size: f64,
+        /// Color of the address, the sender line stays grey
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
     },
     Image {
         image: Option<ImageFile>,
@@ -129,17 +135,47 @@ pub enum PartContent {
         family: Option<String>,
         size: f64,
         align: Align,
+        /// `#rrggbb`, none keeps the look of the kind of part
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
     },
     /// `{page}` and `{pages}` stand for the numbers
     PageNumber {
         text: String,
         size: f64,
         align: Align,
+        /// `#rrggbb`, none keeps the look of the kind of part
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
     },
     /// A horizontal rule as wide as the part
     Line {
         thickness: f64,
+        /// `#rrggbb`, none keeps the look of the kind of part
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
     },
+}
+
+/// Whether `value` is a color as the layouts store it: `#rrggbb`.
+pub fn is_hex_color(value: &str) -> bool {
+    value
+        .strip_prefix('#')
+        .is_some_and(|hex| hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+impl PartContent {
+    /// The color the part is set in, none for the look of its kind and for pictures
+    pub fn color(&self) -> Option<&str> {
+        match self {
+            Self::Infos { color, .. }
+            | Self::Address { color, .. }
+            | Self::Text { color, .. }
+            | Self::PageNumber { color, .. }
+            | Self::Line { color, .. } => color.as_deref(),
+            Self::Image { .. } => None,
+        }
+    }
 }
 
 /// Something placed on the page. `x` and `y` are millimetres from the anchor towards the inside of
@@ -244,6 +280,16 @@ impl CustomLayout {
         format!("custom-{}", self.id.unwrap_or_default())
     }
 
+    /// The first color of a part that is no `#rrggbb`: such a layout is refused where it comes in
+    pub fn invalid_color(&self) -> Option<&str> {
+        let first = self.first.iter();
+        std::iter::once(&self.page)
+            .chain(first)
+            .flat_map(|setup| &setup.parts)
+            .filter_map(|part| part.content.color())
+            .find(|color| !is_hex_color(color))
+    }
+
     /// The family the content is set in, if the layout brings fonts
     pub fn family(&self) -> Option<&str> {
         self.font
@@ -263,6 +309,7 @@ fn text(anchor: Anchor, x: f64, y: f64, width: f64, text: &str, size: f64, align
             family: None,
             size,
             align,
+            color: None,
         },
     }
 }
@@ -279,7 +326,10 @@ fn footer() -> Vec<Part> {
             x: 25.0,
             y: 263.0,
             width: Some(165.0),
-            content: PartContent::Line { thickness: 0.5 },
+            content: PartContent::Line {
+                thickness: 0.5,
+                color: None,
+            },
         },
         text(
             TopLeft,
@@ -320,6 +370,7 @@ fn footer() -> Vec<Part> {
                 text: "Seite {page} von {pages}".into(),
                 size: 7.5,
                 align: Align::Right,
+                color: None,
             },
         },
     ]
@@ -355,6 +406,7 @@ pub fn builtin() -> CustomLayout {
             content: PartContent::Address {
                 sender_line: true,
                 size: 10.0,
+                color: None,
             },
         },
         Part {
@@ -377,6 +429,7 @@ pub fn builtin() -> CustomLayout {
                 align: Align::Right,
                 long_dates: false,
                 size: 9.0,
+                color: None,
             },
         },
     ]);
@@ -427,5 +480,71 @@ mod tests {
         assert_eq!(json["kind"], "text");
         assert_eq!(json["anchor"], "top-left");
         assert_eq!(json["size"], 7.5);
+    }
+
+    #[test]
+    fn a_color_is_six_hex_digits_after_a_hash() {
+        ["#000000", "#231F20", "#bebebe"]
+            .iter()
+            .for_each(|c| assert!(is_hex_color(c), "{c}"));
+        [
+            "",
+            "#",
+            "000000",
+            "#fff",
+            "#12345g",
+            "#1234567",
+            "red",
+            "#ffffffff",
+            "# 12345",
+        ]
+        .iter()
+        .for_each(|c| assert!(!is_hex_color(c), "{c}"));
+    }
+
+    #[test]
+    fn a_part_without_a_color_reads_as_before_and_is_written_without_one() {
+        let old = r#"{"anchor":"top-left","x":1,"y":2,"width":null,"kind":"line","thickness":0.5}"#;
+        let part: Part = serde_json::from_str(old).unwrap();
+        assert_eq!(part.content.color(), None);
+        assert!(!serde_json::to_string(&part).unwrap().contains("color"));
+
+        let colored: Part = serde_json::from_str(
+            r##"{"anchor":"top-left","x":1,"y":2,"width":null,"kind":"line","thickness":0.5,"color":"#231f20"}"##,
+        )
+        .unwrap();
+        assert_eq!(colored.content.color(), Some("#231f20"));
+    }
+
+    #[test]
+    fn a_layout_with_a_broken_color_on_any_page_is_found() {
+        let mut layout = builtin();
+        assert_eq!(layout.invalid_color(), None);
+
+        let setup = layout.first.as_mut().unwrap();
+        setup.parts.push(Part {
+            anchor: Anchor::TopLeft,
+            x: 0.0,
+            y: 0.0,
+            width: None,
+            content: PartContent::Line {
+                thickness: 0.5,
+                color: Some("rot".into()),
+            },
+        });
+        assert_eq!(layout.invalid_color(), Some("rot"));
+
+        layout.first = None;
+        layout.page.parts.push(Part {
+            anchor: Anchor::TopLeft,
+            x: 0.0,
+            y: 0.0,
+            width: None,
+            content: PartContent::Line {
+                thickness: 0.5,
+                color: Some("#12345".into()),
+            },
+        });
+        assert_eq!(layout.invalid_color(), Some("#12345"));
     }
 }

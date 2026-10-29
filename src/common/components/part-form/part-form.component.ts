@@ -1,11 +1,13 @@
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
+import '@awesome.me/webawesome/dist/components/color-picker/color-picker.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '../anchor-picker/anchor-picker.component.js';
 
+import type WaColorPicker from '@awesome.me/webawesome/dist/components/color-picker/color-picker.js';
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import { open } from '@tauri-apps/plugin-dialog';
 import { html, nothing } from 'lit';
@@ -44,6 +46,14 @@ export const BUILTIN_FAMILIES = ['Libertinus Serif', 'New Computer Modern', 'Dej
 /** The placeholders a text can use, for the hint under it */
 const PLACEHOLDERS =
   '{seller_name} {seller_address} {seller_contact} {seller_registration} {legal} {bank}';
+
+/** Presets of the color picker: black, the letterhead's black and the greys the parts have by default */
+const SWATCHES = [
+  { color: '#000000', label: 'Schwarz' },
+  { color: '#231f20', label: 'Briefkopf-Schwarz' },
+  { color: '#6e6e6e', label: 'Grau (Seitenzahl)' },
+  { color: '#bebebe', label: 'Hellgrau (Linie)' },
+];
 
 const MIN_DPI = 150;
 
@@ -108,6 +118,33 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
     `;
   }
 
+  /** The color of a part, empty keeps the look of its kind */
+  private color(part: { color?: string | null }) {
+    return html`
+      <div class="color">
+        <wa-color-picker
+          label="Farbe"
+          format="hex"
+          .swatches="${SWATCHES}"
+          .value="${part.color ?? ''}"
+          @change="${(e: Event) => {
+            part.color = (e.target as WaColorPicker).value || null;
+            this.changed();
+          }}"
+        ></wa-color-picker>
+        <wa-button
+          appearance="outlined"
+          ?disabled="${!part.color}"
+          @click="${() => {
+            part.color = null;
+            this.changed();
+          }}"
+          >Standard</wa-button
+        >
+      </div>
+    `;
+  }
+
   private async chooseImage() {
     if (this.item.kind !== 'image') {
       return;
@@ -151,9 +188,10 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
               `
             )}
           </div>
-          <div class="fields">
+          <div class="fields styled">
             ${this.align(part.align, align => (part.align = align))}
             ${this.number('Schriftgröße', part.size, size => (part.size = size ?? 9), 'pt')}
+            ${this.color(part)}
           </div>
           <wa-checkbox
             ?checked="${part.labels}"
@@ -175,7 +213,10 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
       }
       case 'address':
         return html`
-          ${this.number('Schriftgröße', part.size, size => (part.size = size ?? 10), 'pt')}
+          <div class="fields styled">
+            ${this.number('Schriftgröße', part.size, size => (part.size = size ?? 10), 'pt')}
+            ${this.color(part)}
+          </div>
           <wa-checkbox
             ?checked="${part.sender_line}"
             @change="${(e: Event) => {
@@ -223,8 +264,9 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
               this.changed();
             }}"
           ></wa-textarea>
-          <div class="fields">
+          <div class="fields styled">
             <wa-select
+              class="family"
               label="Schrift"
               .value="${part.family ?? ''}"
               @change="${(e: Event) => {
@@ -238,7 +280,7 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
               )}
             </wa-select>
             ${this.number('Schriftgröße', part.size, size => (part.size = size ?? 9), 'pt')}
-            ${this.align(part.align, align => (part.align = align))}
+            ${this.align(part.align, align => (part.align = align))} ${this.color(part)}
           </div>
         `;
       case 'page-number':
@@ -252,13 +294,18 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
               this.changed();
             }}"
           ></wa-input>
-          <div class="fields">
+          <div class="fields styled">
             ${this.number('Schriftgröße', part.size, size => (part.size = size ?? 7.5), 'pt')}
-            ${this.align(part.align, align => (part.align = align))}
+            ${this.align(part.align, align => (part.align = align))} ${this.color(part)}
           </div>
         `;
       case 'line':
-        return this.number('Stärke', part.thickness, t => (part.thickness = t ?? 0.5), 'pt');
+        return html`
+          <div class="fields styled">
+            ${this.number('Stärke', part.thickness, t => (part.thickness = t ?? 0.5), 'pt')}
+            ${this.color(part)}
+          </div>
+        `;
     }
   }
 

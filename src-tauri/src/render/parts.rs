@@ -35,11 +35,13 @@ pub enum PartViewContent {
         labels: bool,
         align: Align,
         size: f64,
+        color: Option<String>,
     },
     Address {
         sender: Option<String>,
         lines: Vec<String>,
         size: f64,
+        color: Option<String>,
     },
     Image {
         /// File name next to the template
@@ -52,14 +54,17 @@ pub enum PartViewContent {
         family: Option<String>,
         size: f64,
         align: Align,
+        color: Option<String>,
     },
     PageNumber {
         text: String,
         size: f64,
         align: Align,
+        color: Option<String>,
     },
     Line {
         thickness: f64,
+        color: Option<String>,
     },
 }
 
@@ -203,6 +208,7 @@ fn part_view(
             align,
             long_dates,
             size,
+            color,
         } => PartViewContent::Infos {
             rows: fields
                 .iter()
@@ -211,14 +217,20 @@ fn part_view(
             labels: *labels,
             align: *align,
             size: *size,
+            color: color.clone(),
         },
-        PartContent::Address { sender_line, size } => PartViewContent::Address {
+        PartContent::Address {
+            sender_line,
+            size,
+            color,
+        } => PartViewContent::Address {
             sender: sender_line
                 .then(|| format!("{} · {}", view.seller.name, view.seller.address.join(" · "))),
             lines: std::iter::once(view.buyer.name.clone())
                 .chain(view.buyer.address.iter().cloned())
                 .collect(),
             size: *size,
+            color: color.clone(),
         },
         PartContent::Image { image } => {
             let Some(image) = image else { return Ok(None) };
@@ -240,19 +252,28 @@ fn part_view(
             family,
             size,
             align,
+            color,
         } => PartViewContent::Text {
             lines: fill(runs(text), &|name| placeholder(view, name)),
             family: family.clone(),
             size: *size,
             align: *align,
+            color: color.clone(),
         },
-        PartContent::PageNumber { text, size, align } => PartViewContent::PageNumber {
+        PartContent::PageNumber {
+            text,
+            size,
+            align,
+            color,
+        } => PartViewContent::PageNumber {
             text: text.clone(),
             size: *size,
             align: *align,
+            color: color.clone(),
         },
-        PartContent::Line { thickness } => PartViewContent::Line {
+        PartContent::Line { thickness, color } => PartViewContent::Line {
             thickness: *thickness,
+            color: color.clone(),
         },
     };
     Ok(Some(PartView {
@@ -569,7 +590,10 @@ mod tests {
         // the picture comes last in the list, the letterhead is added after the rest
         let setup = PageSetup {
             parts: vec![
-                at(PartContent::Line { thickness: 0.5 }),
+                at(PartContent::Line {
+                    thickness: 0.5,
+                    color: None,
+                }),
                 at(PartContent::Image { image: Some(image) }),
             ],
             ..PageSetup::default()
@@ -579,6 +603,76 @@ mod tests {
 
         assert!(matches!(views[0].content, PartViewContent::Image { .. }));
         assert!(matches!(views[1].content, PartViewContent::Line { .. }));
+    }
+
+    #[test]
+    fn a_color_reaches_the_template_and_without_one_the_part_is_as_before() {
+        let invoice =
+            crate::invoice::golden::standard_invoice(crate::invoice::ProfileKind::En16931);
+        let view = super::super::view::build(
+            &invoice,
+            &super::super::view::Branding::default(),
+            &crate::layout::Format::default(),
+        );
+        let part = |content| Part {
+            anchor: Anchor::TopLeft,
+            x: 0.0,
+            y: 0.0,
+            width: Some(50.0),
+            content,
+        };
+        let color = |c: &str| Some(c.to_owned());
+        let contents = |color: Option<String>| {
+            vec![
+                PartContent::Text {
+                    text: "Hallo".into(),
+                    family: None,
+                    size: 9.0,
+                    align: Align::Left,
+                    color: color.clone(),
+                },
+                PartContent::Line {
+                    thickness: 0.5,
+                    color: color.clone(),
+                },
+                PartContent::PageNumber {
+                    text: "{page}".into(),
+                    size: 7.5,
+                    align: Align::Right,
+                    color: color.clone(),
+                },
+                PartContent::Infos {
+                    fields: vec![InfoField::Number],
+                    labels: true,
+                    align: Align::Left,
+                    long_dates: false,
+                    size: 9.0,
+                    color: color.clone(),
+                },
+                PartContent::Address {
+                    sender_line: true,
+                    size: 10.0,
+                    color,
+                },
+            ]
+        };
+        let json = |color| {
+            contents(color)
+                .into_iter()
+                .map(|content| {
+                    let view = part_view(0, &part(content), &view, &mut |_| Ok(String::new()))
+                        .unwrap()
+                        .unwrap();
+                    serde_json::to_value(view).unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert!(json(color("#231f20"))
+            .iter()
+            .all(|part| part["color"] == "#231f20"));
+        // the template tells "no color" by null and keeps the grey of the kind
+        assert!(json(None).iter().all(|part| part["color"].is_null()));
     }
 
     #[test]

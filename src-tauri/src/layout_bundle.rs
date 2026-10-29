@@ -130,6 +130,9 @@ pub fn parse(text: &str) -> Result<Parsed> {
     }
     bundle.layout.name = bundle.layout.name.trim().to_string();
     ensure!(!bundle.layout.name.is_empty(), "the layout has no name");
+    if let Some(color) = bundle.layout.invalid_color() {
+        bail!("the layout has the color {color}, expected #rrggbb");
+    }
     Ok(Parsed(bundle))
 }
 
@@ -300,6 +303,44 @@ mod tests {
         ))
         .is_err());
         assert!(load(&text).is_ok());
+    }
+
+    fn colored(layout: &mut CustomLayout, color: Option<&str>) {
+        layout
+            .page
+            .parts
+            .iter_mut()
+            .for_each(|part| match &mut part.content {
+                PartContent::Text { color: c, .. }
+                | PartContent::Line { color: c, .. }
+                | PartContent::PageNumber { color: c, .. } => *c = color.map(Into::into),
+                _ => {}
+            });
+    }
+
+    #[test]
+    fn colors_travel_with_the_layout_and_a_broken_one_is_refused() {
+        let from = tempfile::tempdir().unwrap();
+        let to = tempfile::tempdir().unwrap();
+        let mut layout = stored(from.path());
+        colored(&mut layout, Some("#231f20"));
+
+        let text = export(&layout, true, from.path()).unwrap();
+        let imported = install(parse(&text).unwrap(), None, to.path()).unwrap();
+        let colors = |layout: &CustomLayout| {
+            layout
+                .page
+                .parts
+                .iter()
+                .map(|part| part.content.color().map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(colors(&imported.layout), colors(&layout));
+        assert!(colors(&imported.layout).contains(&Some("#231f20".into())));
+
+        colored(&mut layout, Some("rot"));
+        let broken = export(&layout, true, from.path()).unwrap();
+        assert!(parse(&broken).is_err());
     }
 
     #[test]

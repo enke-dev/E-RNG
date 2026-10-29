@@ -122,7 +122,7 @@ A layout is a **frame** and **parts**. The frame (`PageSetup.margins`) is where 
 positions, totals, notices, payment, closing: `render/layouts/standard.typ`) stays; the parts are placed around it by
 an anchor (one of the nine points of the page) and an offset in millimetres towards the inside: information block
 (`infos`), the address, an image, a text (bold and italic as markdown, `{seller_name}`-like placeholders, a font family),
-the page number, a rule. Every page has such a setup; the first page can have one of its own (`first`) with the same
+the page number, a rule. Text, rule, page number, infos and address can have a color (`color`, `#rrggbb`, none keeps the grey or black of the kind; on infos and address the labels and the sender line stay grey; pictures have none): it is checked where a layout comes in (`CustomLayout::invalid_color`, in `layout_save` and when a layout file is read), `prelude.typ` sets it as the text fill or the stroke of the rule. Every page has such a setup; the first page can have one of its own (`first`) with the same
 tools. The built-in layout, _Klassisch_, is such a list (`layout::builtin()`, a window letter after DIN 5008 form B), a new
 layout starts as a copy of it, so there is no logo setting: a logo is an image part.
 

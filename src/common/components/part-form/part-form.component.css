@@ -9,6 +9,30 @@
   gap: var(--wa-space-s);
 }
 
+/* a row with the color control: it keeps the width it needs, the others share the rest, so the
+   color stays with its siblings instead of wrapping alone */
+.fields.styled {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+}
+
+.styled > * {
+  flex: 1 1 7rem;
+  min-width: 0;
+}
+
+/* the family names are long: the select asks for more room than the numbers and keeps the room its
+   value needs, so the row wraps before the value is cut */
+.styled > .family {
+  flex: 2 1 13rem;
+  min-width: min(13rem, 100%);
+}
+
+.styled > .color {
+  flex: 0 0 auto;
+}
+
 .place {
   display: flex;
   flex-wrap: wrap;
@@ -35,4 +59,10 @@
 
 .warning {
   color: var(--wa-color-warning-on-quiet);
+}
+
+.color {
+  display: flex;
+  align-items: end;
+  gap: var(--wa-space-s);
 }

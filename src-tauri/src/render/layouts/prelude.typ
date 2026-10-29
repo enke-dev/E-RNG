@@ -37,6 +37,9 @@
   place(center + bottom, dy: -0.2mm, text(size: 6pt, weight: "bold", fill: white)[!])
 })
 
+// the color a part was given (`#rrggbb`), else the one its kind has
+#let color-of(part, default) = if part.color == none { default } else { rgb(part.color) }
+
 #let part-body(d, part, base) = {
   let size = part.at("size", default: 9) * 1pt
   let family(own) = if own == none { base } else { (own, ..base) }
@@ -44,6 +47,7 @@
   let alignment = if aligned == "right" { right } else if aligned == "center" { center } else { left }
   if part.kind == "text" {
     set text(size: size, font: family(part.family))
+    set text(fill: rgb(part.color)) if part.color != none
     set align(alignment)
     part.lines.map(runs => runs.map(r => text(
       weight: if r.bold { "bold" } else { "regular" },
@@ -52,6 +56,7 @@
     )).join()).join(linebreak())
   } else if part.kind == "infos" {
     set text(size: size)
+    set text(fill: rgb(part.color)) if part.color != none
     if part.labels {
       // the rows hug the side the part is aligned to, the labels end where the values start
       align(alignment, grid(
@@ -71,6 +76,7 @@
       v(2pt)
     }
     set text(size: size)
+    set text(fill: rgb(part.color)) if part.color != none
     strong(part.lines.first())
     for line in part.lines.slice(1) { linebreak(); line }
   } else if part.kind == "image" {
@@ -79,13 +85,13 @@
       place(top + right, dx: -1mm, dy: 1mm, blurry-mark())
     }
   } else if part.kind == "page-number" {
-    set text(size: size, fill: luma(110))
+    set text(size: size, fill: color-of(part, luma(110)))
     set align(alignment)
     context part.text
       .replace("{page}", str(counter(page).get().first()))
       .replace("{pages}", str(counter(page).final().first()))
   } else if part.kind == "line" {
-    line(length: 100%, stroke: part.thickness * 1pt + luma(190))
+    line(length: 100%, stroke: part.thickness * 1pt + color-of(part, luma(190)))
   }
 }
 

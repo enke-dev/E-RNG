@@ -399,6 +399,9 @@ export interface ImageFile {
   vector: boolean;
 }
 
+/** `#rrggbb`, none keeps the look of the kind of part */
+type Color = string | null;
+
 export type PartContent =
   | {
       kind: 'infos';
@@ -407,12 +410,20 @@ export type PartContent =
       align: Align;
       long_dates: boolean;
       size: number;
+      color?: Color;
     }
-  | { kind: 'address'; sender_line: boolean; size: number }
+  | { kind: 'address'; sender_line: boolean; size: number; color?: Color }
   | { kind: 'image'; image: ImageFile | null }
-  | { kind: 'text'; text: string; family: string | null; size: number; align: Align }
-  | { kind: 'page-number'; text: string; size: number; align: Align }
-  | { kind: 'line'; thickness: number };
+  | {
+      kind: 'text';
+      text: string;
+      family: string | null;
+      size: number;
+      align: Align;
+      color?: Color;
+    }
+  | { kind: 'page-number'; text: string; size: number; align: Align; color?: Color }
+  | { kind: 'line'; thickness: number; color?: Color };
 
 /** Something placed on the page, offsets in millimetres from the anchor towards the inside */
 export type Part = {

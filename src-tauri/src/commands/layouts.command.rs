@@ -43,6 +43,9 @@ pub fn layout_save(store: State<'_, Store>, layout: CustomLayout) -> CommandResu
     if layout.name.trim().is_empty() {
         return Err("Bitte dem Layout einen Namen geben.".into());
     }
+    if let Some(color) = layout.invalid_color() {
+        return Err(format!("„{color}“ ist keine Farbe, erwartet wird #rrggbb.").into());
+    }
     if layout.archived && store.is_default_layout(&layout.key())? {
         return Err("Das Standard-Layout kann nicht archiviert werden.".into());
     }
