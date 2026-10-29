@@ -2942,7 +2942,8 @@ mod tests {
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/OpenSans.ttf"),
             dir.path(),
         )
-        .unwrap();
+        .unwrap()
+        .remove(0);
         assert_eq!(font.style, "Regular");
         let store = Store::in_memory().unwrap();
         // as an older version stored it

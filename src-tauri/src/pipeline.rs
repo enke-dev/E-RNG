@@ -486,7 +486,8 @@ mod tests {
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/OpenSans.ttf"),
             &files.path().join("fonts"),
         )
-        .unwrap();
+        .unwrap()
+        .remove(0);
         assert_eq!(font.family, "Open Sans");
 
         {

@@ -582,7 +582,7 @@ export const api = {
   layoutImportImage: (path: string) => invoke<ImageFile>('layout_import_image', { path }),
   layoutUsage: (id: number) => invoke<LayoutUsage[]>('layout_usage', { id }),
   layoutDelete: (id: number) => invoke<null>('layout_delete', { id }),
-  layoutImportFont: (path: string) => invoke<FontFile>('layout_import_font', { path }),
+  layoutImportFont: (path: string) => invoke<FontFile[]>('layout_import_font', { path }),
 
   templatesList: (contextId: number) => invoke<PositionTemplate[]>('templates_list', { contextId }),
   templateSave: (template: PositionTemplate) =>

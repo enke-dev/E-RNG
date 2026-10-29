@@ -164,15 +164,22 @@ pub fn install(parsed: Parsed, name: Option<&str>, own: &Path) -> Result<Importe
             .with_context(|| format!("{name} is damaged"))
     };
 
-    for font in &mut layout.fonts {
-        let kept = store_font(
-            &font.path.to_string_lossy(),
-            &data(&font.path)?,
-            &own.join("fonts"),
-        )
-        .context("a font of the layout file is not usable")?;
-        *font = kept;
-    }
+    // a font of the file is one face, but one that is a collection is taken in as all its faces
+    layout.fonts = layout
+        .fonts
+        .iter()
+        .map(|font| {
+            store_font(
+                &font.path.to_string_lossy(),
+                &data(&font.path)?,
+                &own.join("fonts"),
+            )
+            .context("a font of the layout file is not usable")
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect();
     for image in images_mut(&mut layout) {
         let name = image.name.clone();
         *image = store_image(&image.path.to_string_lossy(), &data(&image.path)?, own)
@@ -214,7 +221,7 @@ mod tests {
         layout.id = Some(7);
         layout.name = "Mein Layout".into();
         layout.archived = true;
-        layout.fonts = vec![import_font(&font(), &own.join("fonts")).unwrap()];
+        layout.fonts = import_font(&font(), &own.join("fonts")).unwrap();
         layout.page.parts.push(Part {
             anchor: Anchor::TopRight,
             x: 10.0,
@@ -253,6 +260,48 @@ mod tests {
     }
 
     #[test]
+    fn a_collection_in_a_layout_file_comes_in_as_its_faces() {
+        use crate::layout::FontFile;
+        use crate::layout_files::test_fonts::{collection, open_sans, utf16, with_names};
+        let from = tempfile::tempdir().unwrap();
+        let to = tempfile::tempdir().unwrap();
+        let face = |style: &str| {
+            with_names(
+                &open_sans(),
+                &[
+                    (3, 1, 0x0409, 1, utf16("Test Sans")),
+                    (3, 1, 0x0409, 2, utf16(style)),
+                ],
+            )
+        };
+        std::fs::create_dir_all(from.path().join("fonts")).unwrap();
+        let path = from.path().join("fonts/faces.ttc");
+        std::fs::write(&path, collection(&[face("Regular"), face("Bold")])).unwrap();
+        let mut layout = stored(from.path());
+        layout.fonts = vec![FontFile {
+            family: "Test Sans".into(),
+            style: String::new(),
+            path,
+        }];
+
+        let text = export(&layout, true, from.path()).unwrap();
+        let imported = install(parse(&text).unwrap(), None, to.path()).unwrap();
+
+        let styles: Vec<_> = imported
+            .layout
+            .fonts
+            .iter()
+            .map(|f| f.style.as_str())
+            .collect();
+        assert_eq!(styles, ["Regular", "Bold"]);
+        assert!(imported
+            .layout
+            .fonts
+            .iter()
+            .all(|f| f.path.exists() && f.path.starts_with(to.path())));
+    }
+
+    #[test]
     fn fonts_can_stay_out_and_the_importer_hears_of_it() {
         let from = tempfile::tempdir().unwrap();
         let to = tempfile::tempdir().unwrap();
@@ -269,7 +318,7 @@ mod tests {
         let own = tempfile::tempdir().unwrap();
         let elsewhere = tempfile::tempdir().unwrap();
         let mut layout = stored(own.path());
-        layout.fonts = vec![import_font(&font(), elsewhere.path()).unwrap()];
+        layout.fonts = import_font(&font(), elsewhere.path()).unwrap();
 
         assert!(export(&layout, true, own.path()).is_err());
     }

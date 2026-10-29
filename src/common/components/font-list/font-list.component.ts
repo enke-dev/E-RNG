@@ -40,7 +40,8 @@ export class FontListComponent extends ErngElement.withStyles(styles) {
       if (!Array.isArray(picked) || picked.length === 0) {
         return;
       }
-      const fonts = await Promise.all(picked.map(path => api.layoutImportFont(path)));
+      // a collection is one font per face
+      const fonts = (await Promise.all(picked.map(path => api.layoutImportFont(path)))).flat();
       // the same file twice is one font
       const known = new Set(this.layout.fonts.map(f => f.path));
       this.layout.fonts.push(...fonts.filter(f => !known.has(f.path)));
@@ -114,8 +115,8 @@ export class FontListComponent extends ErngElement.withStyles(styles) {
             : nothing
         }
         <span class="muted">
-          TTF oder OTF, alle Schnitte (Regular, Bold, …) einer Familie. Ohne eigene Schrift gilt die
-          eingebaute.
+          TTF, OTF oder eine Sammlung (TTC, OTC; jeder Schnitt wird eine eigene Schrift), alle
+          Schnitte (Regular, Bold, …) einer Familie. Ohne eigene Schrift gilt die eingebaute.
         </span>
       </div>
     `;

@@ -820,7 +820,7 @@ export function installMocks() {
           );
           return null;
         case 'layout_import_font':
-          return { family: 'Mock Sans', style: 'Regular', path: String(args['path']) };
+          return [{ family: 'Mock Sans', style: 'Regular', path: String(args['path']) }];
         case 'layouts_list':
           return [
             {

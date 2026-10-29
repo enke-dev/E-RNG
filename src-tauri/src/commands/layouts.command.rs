@@ -87,8 +87,9 @@ pub fn layout_builtin() -> CustomLayout {
     crate::layout::builtin()
 }
 
+/// Copies a font file, a collection gives one font per face.
 #[tauri::command]
-pub fn layout_import_font(app: AppHandle, path: PathBuf) -> CommandResult<FontFile> {
+pub fn layout_import_font(app: AppHandle, path: PathBuf) -> CommandResult<Vec<FontFile>> {
     layout_files::import_font(&path, &files_dir(&app)?.join("fonts")).map_err(CommandError::from)
 }
 
