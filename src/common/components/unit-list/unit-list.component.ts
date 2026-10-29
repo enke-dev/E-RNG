@@ -9,7 +9,6 @@ import '../page/page.component.js';
 import '../unit-code/unit-code.component.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
-import { ask } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -22,6 +21,7 @@ import { notify, notifyError } from '../../utils/notify.utils.js';
 import reorderStyles from '../../utils/reorder.utils.css';
 import { Reorder } from '../../utils/reorder.utils.js';
 import { catalogName, defaultUnitOf } from '../../utils/units.utils.js';
+import { ask } from '../ask/ask.component.js';
 import styles from './unit-list.component.css';
 
 /** The catalog is the same for every context and comes once, on first use */
@@ -187,6 +187,7 @@ export class UnitListComponent extends ErngElement.withStyles(reorderStyles, sty
       }
       const sure = await ask(`„${unit.label}“ aus der Liste der Einheiten löschen?`, {
         title: 'Einheit löschen',
+        danger: true,
         okLabel: 'Löschen',
         cancelLabel: 'Abbrechen',
       });

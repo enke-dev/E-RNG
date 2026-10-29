@@ -23,11 +23,12 @@ import '../../common/layouts/editor/editor.layout.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import type WaSwitch from '@awesome.me/webawesome/dist/components/switch/switch.js';
-import { ask, save } from '@tauri-apps/plugin-dialog';
+import { save } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { ask } from '../../common/components/ask/ask.component.js';
 import type {
   Check,
   Customer,
@@ -443,7 +444,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     if (this.#dirty) {
       const sure = await ask(this.texts.cancelText, {
         title: this.texts.cancelTitle,
-        kind: 'warning',
+        danger: true,
         okLabel: 'Verwerfen',
         cancelLabel: 'Zurück',
       });

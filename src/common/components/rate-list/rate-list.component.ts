@@ -8,7 +8,6 @@ import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '../page/page.component.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
-import { ask } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -22,6 +21,7 @@ import { notify, notifyError } from '../../utils/notify.utils.js';
 import { chargesVat, defaultRateOf, rateText, sameRate } from '../../utils/rates.utils.js';
 import reorderStyles from '../../utils/reorder.utils.css';
 import { Reorder } from '../../utils/reorder.utils.js';
+import { ask } from '../ask/ask.component.js';
 import styles from './rate-list.component.css';
 
 /** The value of the default's select for no VAT */
@@ -173,6 +173,7 @@ export class RateListComponent extends ErngElement.withStyles(reorderStyles, sty
       }
       const sure = await ask(`„${rate.label}“ aus der Liste der Steuersätze löschen?`, {
         title: 'Steuersatz löschen',
+        danger: true,
         okLabel: 'Löschen',
         cancelLabel: 'Abbrechen',
       });

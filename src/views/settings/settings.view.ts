@@ -24,12 +24,13 @@ import '../../common/layouts/split/split.layout.js';
 import WaInput from '@awesome.me/webawesome/dist/components/input/input.js';
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import type WaSwitch from '@awesome.me/webawesome/dist/components/switch/switch.js';
-import { ask, open, save } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
 
+import { ask } from '../../common/components/ask/ask.component.js';
 import { BRANDS } from '../../common/components/brand-select/brand-select.component.js';
 import { regionKey } from '../../common/components/sheet/sheet.component.js';
 import type {

@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
-import { ask } from '@tauri-apps/plugin-dialog';
 
+import { ask } from '../components/ask/ask.component.js';
 import { api } from './api.utils.js';
 import { goto } from './routing.utils.js';
 

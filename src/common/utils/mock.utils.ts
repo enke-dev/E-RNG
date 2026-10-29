@@ -1514,12 +1514,6 @@ export function installMocks() {
           return '/tmp/mock-export';
         case 'plugin:dialog|open':
           return '/tmp/mock-backup.erng-backup';
-        // `ask` is a message with two custom buttons: the question is answered yes (the label of the
-        // first button), except the one that stops leaving a form with edits
-        case 'plugin:dialog|message': {
-          const [ok, cancel] = (args['buttons']?.OkCancelCustom ?? ['Ok', 'Abbrechen']) as string[];
-          return args['title'] === 'Änderungen verwerfen?' ? cancel : ok;
-        }
         case 'plugin:updater|check':
           return null;
         default:

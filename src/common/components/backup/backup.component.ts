@@ -5,7 +5,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '../page/page.component.js';
 
-import { ask, open, save } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
@@ -15,6 +15,7 @@ import { ErngElement } from '../../utils/base.utils.js';
 import { text, today } from '../../utils/form.utils.js';
 import { formatMoment, megabytes } from '../../utils/format.utils.js';
 import { notify, notifyError } from '../../utils/notify.utils.js';
+import { ask } from '../ask/ask.component.js';
 import { reloadReplaced, revealLink } from '../replaced/replaced.component.js';
 import styles from './backup.component.css';
 
@@ -93,7 +94,7 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
         `Alle jetzigen Daten werden durch die der Sicherung ersetzt. Vorher legt e-rng eine Kopie der jetzigen Daten an: ${this.status?.safety_dir ?? 'im Ordner „backups“ der App-Daten'}. Fortfahren?`,
         {
           title: 'Datensicherung einspielen',
-          kind: 'warning',
+          danger: true,
           okLabel: 'Einspielen',
           cancelLabel: 'Abbrechen',
         }

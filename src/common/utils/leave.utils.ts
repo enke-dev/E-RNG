@@ -1,4 +1,4 @@
-import { ask } from '@tauri-apps/plugin-dialog';
+import { ask } from '../components/ask/ask.component.js';
 
 /**
  * A view with unsaved edits registers a check: would going to this address lose them? Whoever
@@ -25,7 +25,7 @@ export async function confirmLeave(target: string): Promise<boolean> {
   }
   return ask('Es gibt ungespeicherte Änderungen. Beim Verlassen gehen sie verloren.', {
     title: 'Änderungen verwerfen?',
-    kind: 'warning',
+    danger: true,
     okLabel: 'Verlassen',
     cancelLabel: 'Bleiben',
   });
