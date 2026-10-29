@@ -10,7 +10,8 @@
 }
 
 .created,
-.payed {
+.payed,
+.linked {
   aspect-ratio: 1;
   padding: var(--wa-space-3xs);
 }

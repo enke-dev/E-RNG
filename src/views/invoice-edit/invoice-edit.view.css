@@ -187,6 +187,22 @@ wa-dialog::part(dialog) {
   align-self: flex-end;
 }
 
+/* a linked document opens by its row, the button beside it takes the link away */
+.link {
+  display: flex;
+  align-items: center;
+  gap: var(--wa-space-s);
+
+  & erng-list-item {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+.add-link {
+  align-self: flex-end;
+}
+
 .templates {
   display: grid;
   gap: var(--wa-space-s);

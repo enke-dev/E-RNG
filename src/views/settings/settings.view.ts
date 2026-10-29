@@ -58,6 +58,7 @@ import {
   loadContexts,
   switchContext,
 } from '../../common/utils/context.utils.js';
+import { inheritedDefaults } from '../../common/utils/defaults.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { parseDays } from '../../common/utils/kind.utils.js';
 import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
@@ -379,17 +380,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       const active = activeContext.get();
       if (active) {
         // the defaults of the one in use are a better start than the app's, the seller is its own
-        const { tax_rate, vat_note, payment_days, number_pattern, intro, closing } =
-          active.settings;
-        blank.settings = {
-          ...blank.settings,
-          tax_rate,
-          vat_note,
-          payment_days,
-          number_pattern,
-          intro,
-          closing,
-        };
+        blank.settings = { ...blank.settings, ...inheritedDefaults(active.settings) };
       }
       // the first context is blue, the next ones take a color no other context has
       const used = new Set((contexts.get() ?? []).map(c => c.brand));

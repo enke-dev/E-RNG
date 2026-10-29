@@ -237,6 +237,18 @@ export interface ListEntry {
   paid_at: string | null;
   updated_at: string;
   archived_at: string | null;
+  /** How many documents of the other kind it is linked to */
+  linked: number;
+}
+
+/** The other end of a link between an offer and an invoice */
+export interface Linked {
+  id: number;
+  kind: Kind;
+  number: string | null;
+  status: Status;
+  customer_name: string;
+  issue_date: string;
 }
 
 export interface Totals {
@@ -548,6 +560,15 @@ export const api = {
     invoke<StoredInvoice>('invoice_set_paid', { id, paidAt }),
   invoiceDuplicate: (id: number) => invoke<StoredInvoice>('invoice_duplicate', { id }),
   invoiceDelete: (id: number) => invoke<null>('invoice_delete', { id }),
+  /** A new invoice draft from a created offer, linked to it, with the layout and texts of invoices */
+  offerToInvoice: (offerId: number) => invoke<StoredInvoice>('offer_to_invoice', { offerId }),
+  /** The documents an offer or an invoice is linked to */
+  documentLinks: (id: number) => invoke<Linked[]>('document_links', { id }),
+  /** Both ends are in one context, the offer comes first; linking twice is fine */
+  documentLink: (offerId: number, invoiceId: number) =>
+    invoke<null>('document_link', { offerId, invoiceId }),
+  documentUnlink: (offerId: number, invoiceId: number) =>
+    invoke<null>('document_unlink', { offerId, invoiceId }),
   /** Totals and findings, an offer has no findings */
   invoiceCheck: (contextId: number, kind: Kind, draft: InvoiceDraft) =>
     invoke<Check>('check_invoice', { contextId, kind, draft }),

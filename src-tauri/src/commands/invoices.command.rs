@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::draft::{build_invoice, totals};
-use crate::model::{InvoiceDraft, Kind, ListEntry, StoredInvoice};
+use crate::model::{InvoiceDraft, Kind, Linked, ListEntry, StoredInvoice};
 use crate::store::Store;
 use crate::utils::{today, CommandError, CommandResult};
 
@@ -90,4 +90,36 @@ pub fn invoice_duplicate(store: State<'_, Store>, id: i64) -> CommandResult<Stor
 #[tauri::command]
 pub fn invoice_delete(store: State<'_, Store>, id: i64) -> CommandResult<()> {
     store.delete_draft(id).map_err(CommandError::from)
+}
+
+/// A new invoice draft from a created offer, linked to it: customer and positions are copied, layout
+/// and texts are what the invoices of its context have.
+#[tauri::command]
+pub fn offer_to_invoice(store: State<'_, Store>, offer_id: i64) -> CommandResult<StoredInvoice> {
+    let settings = store.settings(store.invoice(offer_id)?.context_id)?;
+    store
+        .invoice_from_offer(offer_id, &today(), &settings)
+        .map_err(CommandError::from)
+}
+
+/// The documents an offer or an invoice is linked to
+#[tauri::command]
+pub fn document_links(store: State<'_, Store>, id: i64) -> CommandResult<Vec<Linked>> {
+    store.links(id).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn document_link(store: State<'_, Store>, offer_id: i64, invoice_id: i64) -> CommandResult<()> {
+    store.link(offer_id, invoice_id).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn document_unlink(
+    store: State<'_, Store>,
+    offer_id: i64,
+    invoice_id: i64,
+) -> CommandResult<()> {
+    store
+        .unlink(offer_id, invoice_id)
+        .map_err(CommandError::from)
 }

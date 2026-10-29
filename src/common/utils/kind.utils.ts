@@ -1,4 +1,5 @@
-import type { Kind, Settings } from './api.utils.js';
+import type { Kind, ListEntry, Settings } from './api.utils.js';
+import { formatDate, money } from './format.utils.js';
 
 /** What a kind of document is called in the UI: invoices and offers share their views, not their words */
 export interface KindTexts {
@@ -24,7 +25,15 @@ export interface KindTexts {
   cancelTitle: string;
   cancelText: string;
   missingContext: string;
+  /** What a link to documents of this kind says, for the badge of the list */
+  linkedTo: (count: number) => string;
+  /** The button and the dialog that link one of this kind; nothing there to pick from */
+  link: string;
+  linkNone: string;
 }
+
+/** The kind a document of `kind` is linked to */
+export const otherKind = (kind: Kind): Kind => (kind === 'offer' ? 'invoice' : 'offer');
 
 export const KINDS: Record<Kind, KindTexts> = {
   invoice: {
@@ -46,6 +55,10 @@ export const KINDS: Record<Kind, KindTexts> = {
     cancelTitle: 'Neue Rechnung abbrechen',
     cancelText: 'Die Eingaben dieser Rechnung gehen verloren.',
     missingContext: 'Für die Rechnung fehlt der Kontext.',
+    linkedTo: count =>
+      count === 1 ? 'Mit einer Rechnung verknüpft' : `Mit ${count} Rechnungen verknüpft`,
+    link: 'Rechnung verknüpfen…',
+    linkNone: 'Keine weitere Rechnung zum Verknüpfen.',
   },
   offer: {
     list: 'Angebote',
@@ -66,6 +79,10 @@ export const KINDS: Record<Kind, KindTexts> = {
     cancelTitle: 'Neues Angebot abbrechen',
     cancelText: 'Die Eingaben dieses Angebots gehen verloren.',
     missingContext: 'Für das Angebot fehlt der Kontext.',
+    linkedTo: count =>
+      count === 1 ? 'Mit einem Angebot verknüpft' : `Mit ${count} Angeboten verknüpft`,
+    link: 'Angebot verknüpfen…',
+    linkNone: 'Kein weiteres Angebot zum Verknüpfen.',
   },
 };
 
@@ -100,4 +117,17 @@ export function validUntil(issue: string, days: number | null): string | null {
 export function parseDays(value: string): number | null {
   const days = value.trim();
   return days === '' ? null : Math.max(0, Math.trunc(Number(days)) || 0);
+}
+
+/** The text a search looks in: number, customer, date as shown, amount as shown */
+export function haystack(entry: ListEntry): string {
+  return [
+    entry.number ?? 'entwurf',
+    entry.customer_name,
+    entry.seller_name,
+    formatDate(entry.issue_date),
+    money(entry.total),
+  ]
+    .join(' ')
+    .toLowerCase();
 }

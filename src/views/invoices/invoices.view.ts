@@ -25,7 +25,7 @@ import { ErngElement } from '../../common/utils/base.utils.js';
 import { activeContext, available, contextById, label } from '../../common/utils/context.utils.js';
 import { today } from '../../common/utils/form.utils.js';
 import { formatDate, money } from '../../common/utils/format.utils.js';
-import { kindRoute, KINDS } from '../../common/utils/kind.utils.js';
+import { haystack, kindRoute, KINDS, otherKind } from '../../common/utils/kind.utils.js';
 import { notifyError } from '../../common/utils/notify.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
 import styles from './invoices.view.css';
@@ -96,23 +96,25 @@ function tagsOf(entry: ListEntry, mixed: boolean) {
           </wa-badge>
         `
       : null,
+    entry.linked > 0
+      ? html`
+          <wa-badge
+            pill
+            class="linked"
+            variant="neutral"
+            title="${KINDS[otherKind(entry.kind)].linkedTo(entry.linked)}"
+          >
+            <wa-icon
+              name="link"
+              label="${KINDS[otherKind(entry.kind)].linkedTo(entry.linked)}"
+            ></wa-icon>
+          </wa-badge>
+        `
+      : null,
   ].filter(tag => tag !== null);
 }
 
 const yearOf = (entry: ListEntry) => entry.issue_date.slice(0, 4);
-
-/** The text a search looks in: number, customer, date as shown, amount as shown */
-function haystack(entry: ListEntry): string {
-  return [
-    entry.number ?? 'entwurf',
-    entry.customer_name,
-    entry.seller_name,
-    formatDate(entry.issue_date),
-    money(entry.total),
-  ]
-    .join(' ')
-    .toLowerCase();
-}
 
 /**
  * Invoices or offers: a small filterable list on the left, the selected document on the right.
@@ -142,7 +144,7 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
   override connectedCallback() {
     super.connectedCallback();
     this.stages = new Set(STAGES[this.kind].map(([stage]) => stage));
-    void this.load();
+    void this.load(true);
   }
 
   protected override willUpdate(changed: PropertyValues<this>) {
@@ -165,7 +167,8 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
     }
   }
 
-  private async load() {
+  /** `open`: the address names a document to show, even one the filters leave out */
+  private async load(open = false) {
     try {
       const context = activeContext.get()?.id ?? null;
       const entries = await api.invoicesList(
@@ -180,6 +183,12 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
         const other = await api.invoiceGet(id).catch(() => undefined);
         if (other && other.kind !== this.kind) {
           redirect(kindRoute(other.kind, id));
+          return;
+        }
+        // opened by its address (a link from another document): an archived one is listed as well
+        if (open && other?.archived_at && !this.withArchived) {
+          this.withArchived = true;
+          await this.load();
           return;
         }
         this.entries = entries;

@@ -13,8 +13,9 @@ use en16931::Date;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::context::{Context, ContextUsage, Disposition, BRANDS};
+use crate::draft::{build_invoice, totals};
 use crate::model::{
-    CustomLayout, Customer, InvoiceDraft, InvoiceFiles, Kind, LayoutUsage, ListEntry,
+    CustomLayout, Customer, InvoiceDraft, InvoiceFiles, Kind, LayoutUsage, Linked, ListEntry,
     PositionTemplate, Settings, Status, StoredInvoice,
 };
 use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
@@ -34,7 +35,7 @@ pub struct Sequence {
     pub floor: Option<u32>,
 }
 
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -97,6 +98,27 @@ fn migrate(conn: &Connection) -> Result<()> {
     if version < 8 {
         migrate_to_kinds(conn)?;
     }
+    if version < 9 {
+        migrate_to_links(conn)?;
+    }
+    Ok(())
+}
+
+/// Offers and invoices can be linked, many to many. Foreign keys are not enabled in this app, so
+/// the store checks the kinds and the shared context and removes the links of a deleted draft.
+fn migrate_to_links(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS document_links (
+             offer_id INTEGER NOT NULL,
+             invoice_id INTEGER NOT NULL,
+             created_at TEXT NOT NULL,
+             PRIMARY KEY (offer_id, invoice_id)
+         );
+         CREATE INDEX IF NOT EXISTS document_links_invoice ON document_links (invoice_id);
+         PRAGMA user_version = 9;",
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -898,14 +920,18 @@ impl Store {
         let conn = self.conn();
         let mut statement = conn.prepare(
             "SELECT id, context_id, kind, number, status, draft, total, exported_at, paid_at,
-                 updated_at, archived_at, files
+                 updated_at, archived_at, files,
+                 (SELECT COUNT(*) FROM document_links
+                  WHERE offer_id = invoices.id OR invoice_id = invoices.id) AS linked
              FROM invoices WHERE (?2 OR archived_at IS NULL) AND (?1 IS NULL OR context_id = ?1)
                  AND kind = ?3
              ORDER BY updated_at DESC, id DESC",
         )?;
-        let rows = statement.query_map(params![context, with_archived, kind.as_str()], stored)?;
+        let rows = statement.query_map(params![context, with_archived, kind.as_str()], |row| {
+            Ok((stored(row)?, row.get::<_, u32>("linked")?))
+        })?;
         rows.map(|row| {
-            let (invoice, draft, _) = row?;
+            let ((invoice, draft, _), linked) = row?;
             let draft: InvoiceDraft = serde_json::from_str(&draft)?;
             // an exported invoice shows the seller it was made with
             let seller_name = draft
@@ -929,6 +955,7 @@ impl Store {
                 paid_at: invoice.paid_at,
                 updated_at: invoice.updated_at,
                 archived_at: invoice.archived_at,
+                linked,
             })
         })
         .collect()
@@ -1004,15 +1031,22 @@ impl Store {
         self.invoice(id)
     }
 
-    /// Drafts only: exported invoices stay, their numbers must not disappear.
+    /// Drafts only: exported invoices stay, their numbers must not disappear. Its links go with it.
     pub fn delete_draft(&self, id: i64) -> Result<()> {
-        let changed = self.conn().execute(
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let changed = tx.execute(
             "DELETE FROM invoices WHERE id = ?1 AND status = 'draft'",
             [id],
         )?;
         if changed == 0 {
             bail!("only drafts can be deleted");
         }
+        tx.execute(
+            "DELETE FROM document_links WHERE offer_id = ?1 OR invoice_id = ?1",
+            [id],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1028,6 +1062,116 @@ impl Store {
         draft.frozen = None;
         draft.frozen_layout = None;
         self.save_draft(None, source.context_id, source.kind, &draft, None)
+    }
+
+    /// A new invoice draft from a created offer, linked to it, in one step. It has the customer,
+    /// positions, buyer reference and note of the offer; layout and texts are the invoice defaults
+    /// of `settings` (an offer's intro does not belong on an invoice), dated `today`.
+    pub fn invoice_from_offer(
+        &self,
+        offer_id: i64,
+        today: &str,
+        settings: &Settings,
+    ) -> Result<StoredInvoice> {
+        let offer = self.invoice(offer_id)?;
+        if offer.kind != Kind::Offer {
+            bail!("only an offer can become an invoice");
+        }
+        if offer.status != Status::Exported {
+            bail!("only a created offer can become an invoice");
+        }
+        let mut draft = settings.blank_draft(Kind::Invoice, today);
+        draft.customer = offer.draft.customer;
+        draft.positions = offer.draft.positions;
+        draft.buyer_reference = offer.draft.buyer_reference;
+        draft.note = offer.draft.note;
+        // the list shows what the draft comes to, as `invoice_save` keeps it
+        let total = build_invoice(&draft, settings, "ENTWURF")
+            .ok()
+            .map(|invoice| totals(&invoice).gross);
+        let id = {
+            let conn = self.conn();
+            let tx = conn.unchecked_transaction()?;
+            tx.execute(
+                "INSERT INTO invoices (context_id, kind, status, draft, total, updated_at)
+                 VALUES (?1, 'invoice', 'draft', ?2, ?3, datetime('now'))",
+                params![offer.context_id, serde_json::to_string(&draft)?, total],
+            )?;
+            let id = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO document_links (offer_id, invoice_id, created_at)
+                 VALUES (?1, ?2, ?3)",
+                params![offer_id, id, now()],
+            )?;
+            tx.commit()?;
+            id
+        };
+        self.invoice(id)
+    }
+
+    /// The documents linked to an offer or an invoice, newest first
+    pub fn links(&self, id: i64) -> Result<Vec<Linked>> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT i.id, i.kind, i.number, i.status, i.draft
+             FROM document_links l
+             JOIN invoices i ON i.id = CASE WHEN l.offer_id = ?1 THEN l.invoice_id ELSE l.offer_id END
+             WHERE l.offer_id = ?1 OR l.invoice_id = ?1
+             ORDER BY i.updated_at DESC, i.id DESC",
+        )?;
+        let rows = statement.query_map([id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (id, kind, number, status, draft) = row?;
+            let draft: InvoiceDraft = serde_json::from_str(&draft)?;
+            Ok(Linked {
+                id,
+                kind: Kind::from_column(&kind),
+                number,
+                status: if status == "exported" {
+                    Status::Exported
+                } else {
+                    Status::Draft
+                },
+                customer_name: draft.customer.name,
+                issue_date: draft.issue_date,
+            })
+        })
+        .collect()
+    }
+
+    /// Links an offer to an invoice of the same context, nothing happens when they are linked.
+    /// Drafts and created documents can be linked, the link is no part of the document.
+    pub fn link(&self, offer_id: i64, invoice_id: i64) -> Result<()> {
+        let (offer, invoice) = (self.invoice(offer_id)?, self.invoice(invoice_id)?);
+        if offer.kind != Kind::Offer || invoice.kind != Kind::Invoice {
+            bail!("a link joins an offer and an invoice");
+        }
+        if offer.context_id != invoice.context_id {
+            bail!("an offer and an invoice are linked within one context");
+        }
+        self.conn().execute(
+            "INSERT OR IGNORE INTO document_links (offer_id, invoice_id, created_at)
+             VALUES (?1, ?2, ?3)",
+            params![offer_id, invoice_id, now()],
+        )?;
+        Ok(())
+    }
+
+    /// Removes a link, nothing happens when there is none
+    pub fn unlink(&self, offer_id: i64, invoice_id: i64) -> Result<()> {
+        self.conn().execute(
+            "DELETE FROM document_links WHERE offer_id = ?1 AND invoice_id = ?2",
+            params![offer_id, invoice_id],
+        )?;
+        Ok(())
     }
 
     /// As if the invoice had been exported by a version that did not keep files
@@ -3115,5 +3259,293 @@ mod tests {
         assert!(store
             .remove_context(b, crate::context::Disposition::Share)
             .is_err());
+    }
+
+    /// A draft of a kind with a customer's name, so linked documents can be told apart
+    fn draft_of(store: &Store, context: i64, kind: Kind, customer: &str) -> StoredInvoice {
+        let mut named = draft();
+        named.customer.name = customer.into();
+        store.save_draft(None, context, kind, &named, None).unwrap()
+    }
+
+    #[test]
+    fn a_version_eight_database_gets_links_and_keeps_its_documents() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch("DROP TABLE document_links; PRAGMA user_version = 8;")
+            .unwrap();
+        let json = serde_json::to_string(&draft()).unwrap();
+        let kept = serde_json::to_string(&files()).unwrap();
+        conn.execute(
+            "INSERT INTO invoices (context_id, kind, number, status, draft, total, exported_at,
+                 updated_at, files)
+             VALUES (1, 'offer', 'AN-2026-001', 'exported', ?1, '1.00', '2026-10-01', '2026-10-01', ?2),
+                 (1, 'invoice', NULL, 'draft', ?1, NULL, NULL, '2026-10-10', NULL)",
+            params![json, kept],
+        )
+        .unwrap();
+
+        let store = Store::init(conn).unwrap();
+
+        let version: i32 = store
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        assert_eq!(
+            store.invoice(1).unwrap().number.as_deref(),
+            Some("AN-2026-001")
+        );
+        assert_eq!(
+            store.invoices(None, Kind::Offer, true).unwrap()[0].linked,
+            0
+        );
+        store.link(1, 2).unwrap();
+        assert_eq!(store.links(2).unwrap().len(), 1);
+
+        // stamped back, it migrates again and keeps the links
+        store
+            .conn()
+            .execute_batch("PRAGMA user_version = 8;")
+            .unwrap();
+        migrate(&store.conn()).unwrap();
+        assert_eq!(store.links(1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn offers_and_invoices_are_linked_many_to_many() {
+        let store = Store::in_memory().unwrap();
+        let (a, b) = (
+            create_as(&store, 1, Kind::Offer, "AN-2026-001"),
+            draft_of(&store, 1, Kind::Offer, "Zweite GmbH"),
+        );
+        let (x, y) = (
+            draft_of(&store, 1, Kind::Invoice, "Dritte KG"),
+            create_as(&store, 1, Kind::Invoice, "RE-2026-001"),
+        );
+
+        store.link(a.id, x.id).unwrap();
+        store.link(a.id, y.id).unwrap();
+        store.link(b.id, x.id).unwrap();
+
+        let of_offer: Vec<_> = store.links(a.id).unwrap().iter().map(|l| l.id).collect();
+        assert_eq!(of_offer.len(), 2);
+        assert!(of_offer.contains(&x.id) && of_offer.contains(&y.id));
+        let of_invoice = store.links(x.id).unwrap();
+        assert_eq!(of_invoice.len(), 2);
+        assert!(of_invoice.iter().all(|l| l.kind == Kind::Offer));
+        let created = store
+            .links(y.id)
+            .unwrap()
+            .into_iter()
+            .find(|l| l.id == a.id)
+            .unwrap();
+        assert_eq!(created.number.as_deref(), Some("AN-2026-001"));
+        assert_eq!(created.status, Status::Exported);
+        assert_eq!(created.customer_name, "Beispiel AG");
+        assert_eq!(created.issue_date, "2026-10-17");
+        let draft_end = store
+            .links(a.id)
+            .unwrap()
+            .into_iter()
+            .find(|l| l.id == x.id)
+            .unwrap();
+        assert_eq!(draft_end.number, None);
+        assert_eq!(draft_end.status, Status::Draft);
+        assert_eq!(draft_end.customer_name, "Dritte KG");
+        assert_eq!(store.links(b.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_link_joins_an_offer_and_an_invoice_of_one_context() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let second = context(&store, "B").id.unwrap();
+        let offer = draft_of(&store, first, Kind::Offer, "X");
+        let other_offer = draft_of(&store, first, Kind::Offer, "Y");
+        let invoice = draft_of(&store, first, Kind::Invoice, "X");
+        let other_invoice = draft_of(&store, first, Kind::Invoice, "Y");
+        let elsewhere = draft_of(&store, second, Kind::Invoice, "X");
+
+        let across = store.link(offer.id, elsewhere.id).unwrap_err();
+        assert!(across.to_string().contains("one context"));
+        assert!(store.link(offer.id, other_offer.id).is_err());
+        assert!(store.link(invoice.id, other_invoice.id).is_err());
+        // the offer goes first
+        assert!(store.link(invoice.id, offer.id).is_err());
+        assert!(store.link(offer.id, 9999).is_err());
+
+        assert_eq!(store.links(offer.id).unwrap(), Vec::new());
+        assert_eq!(store.links(elsewhere.id).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn linking_twice_is_one_link_and_unlinking_removes_it() {
+        let store = Store::in_memory().unwrap();
+        let offer = draft_of(&store, 1, Kind::Offer, "X");
+        let invoice = draft_of(&store, 1, Kind::Invoice, "X");
+
+        store.link(offer.id, invoice.id).unwrap();
+        store.link(offer.id, invoice.id).unwrap();
+        assert_eq!(store.links(offer.id).unwrap().len(), 1);
+        assert_eq!(store.links(invoice.id).unwrap().len(), 1);
+
+        store.unlink(offer.id, invoice.id).unwrap();
+        assert_eq!(store.links(offer.id).unwrap(), Vec::new());
+        assert_eq!(store.links(invoice.id).unwrap(), Vec::new());
+        // and again is fine
+        store.unlink(offer.id, invoice.id).unwrap();
+    }
+
+    #[test]
+    fn links_can_be_changed_on_created_documents() {
+        let store = Store::in_memory().unwrap();
+        let offer = create_as(&store, 1, Kind::Offer, "AN-2026-001");
+        let invoice = create_as(&store, 1, Kind::Invoice, "RE-2026-001");
+
+        store.link(offer.id, invoice.id).unwrap();
+        assert_eq!(store.links(offer.id).unwrap().len(), 1);
+        store.unlink(offer.id, invoice.id).unwrap();
+        assert_eq!(store.links(offer.id).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn a_deleted_draft_takes_its_links_and_an_archived_document_keeps_them() {
+        let store = Store::in_memory().unwrap();
+        let offer = create_as(&store, 1, Kind::Offer, "AN-2026-001");
+        let invoice = draft_of(&store, 1, Kind::Invoice, "X");
+        let kept = create_as(&store, 1, Kind::Invoice, "RE-2026-001");
+        store.link(offer.id, invoice.id).unwrap();
+        store.link(offer.id, kept.id).unwrap();
+
+        store.archive_invoice(offer.id).unwrap();
+        store.archive_invoice(kept.id).unwrap();
+        assert_eq!(store.links(offer.id).unwrap().len(), 2);
+
+        store.delete_draft(invoice.id).unwrap();
+        let left = store.links(offer.id).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, kept.id);
+        // a refused deletion keeps the links as well
+        assert!(store.delete_draft(kept.id).is_err());
+        assert_eq!(store.links(kept.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_list_counts_the_links_of_each_entry() {
+        let store = Store::in_memory().unwrap();
+        let (a, b) = (
+            draft_of(&store, 1, Kind::Offer, "X"),
+            draft_of(&store, 1, Kind::Offer, "Y"),
+        );
+        let (x, y) = (
+            draft_of(&store, 1, Kind::Invoice, "X"),
+            draft_of(&store, 1, Kind::Invoice, "Y"),
+        );
+        store.link(a.id, x.id).unwrap();
+        store.link(a.id, y.id).unwrap();
+
+        let linked = |kind: Kind| -> std::collections::HashMap<i64, u32> {
+            store
+                .invoices(None, kind, true)
+                .unwrap()
+                .into_iter()
+                .map(|e| (e.id, e.linked))
+                .collect()
+        };
+        let offers = linked(Kind::Offer);
+        assert_eq!((offers[&a.id], offers[&b.id]), (2, 0));
+        let invoices = linked(Kind::Invoice);
+        assert_eq!((invoices[&x.id], invoices[&y.id]), (1, 1));
+    }
+
+    /// Settings in which offers and invoices differ in layout and texts
+    fn apart() -> Settings {
+        let mut apart = settings();
+        apart.layout = "standard".into();
+        apart.intro = Some("Wir berechnen Ihnen:".into());
+        apart.closing = Some("Zahlbar sofort.".into());
+        apart.offer.layout = Some("angebot".into());
+        apart.offer.intro = Some("Gerne bieten wir an:".into());
+        apart.offer.closing = Some("Gültig bis {valid_until}.".into());
+        apart
+    }
+
+    #[test]
+    fn an_invoice_draft_from_an_offer_has_its_content_and_the_invoice_defaults() {
+        let store = Store::in_memory().unwrap();
+        let mut written = draft();
+        written.buyer_reference = Some("991-01234-56".into());
+        written.note = Some("Aufwand nach Stunden".into());
+        written.validity_days = Some(30);
+        written.layout = Some("angebot".into());
+        written.intro = Some("Gerne bieten wir an:".into());
+        written.delivery_end = Some("2026-10-20".into());
+        let id = store
+            .save_draft(None, 1, Kind::Offer, &written, None)
+            .unwrap()
+            .id;
+        let offer = store
+            .finalize(id, &at("AN-2026-001", 1), &apart(), None, "1.00", &files())
+            .unwrap();
+
+        let invoice = store
+            .invoice_from_offer(offer.id, "2026-12-01", &apart())
+            .unwrap();
+
+        assert_eq!(invoice.kind, Kind::Invoice);
+        assert_eq!(invoice.status, Status::Draft);
+        assert_eq!(invoice.number, None);
+        assert_eq!(invoice.context_id, offer.context_id);
+        let made = &invoice.draft;
+        assert_eq!(made.customer, offer.draft.customer);
+        assert_eq!(made.positions, offer.draft.positions);
+        assert_eq!(made.buyer_reference.as_deref(), Some("991-01234-56"));
+        assert_eq!(made.note.as_deref(), Some("Aufwand nach Stunden"));
+        // dated today, nothing of the offer's validity or its frozen state
+        assert_eq!(made.issue_date, "2026-12-01");
+        assert_eq!(made.delivery_date, "2026-12-01");
+        assert_eq!(made.delivery_end, None);
+        assert_eq!(made.validity_days, None);
+        assert!(made.frozen.is_none() && made.frozen_layout.is_none());
+        // layout and texts are those of invoices
+        assert_eq!(made.layout.as_deref(), Some("standard"));
+        assert_eq!(made.intro.as_deref(), Some("Wir berechnen Ihnen:"));
+        assert_eq!(made.closing.as_deref(), Some("Zahlbar sofort."));
+        // the draft shows what it comes to
+        assert_eq!(invoice.total.as_deref(), Some("1181.08"));
+        // and it is linked to the offer
+        let links = store.links(invoice.id).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].id, offer.id);
+        assert_eq!(links[0].number.as_deref(), Some("AN-2026-001"));
+        assert_eq!(
+            store.invoices(None, Kind::Offer, true).unwrap()[0].linked,
+            1
+        );
+
+        // again: one more draft, linked as well
+        let second = store
+            .invoice_from_offer(offer.id, "2026-12-01", &apart())
+            .unwrap();
+        assert_ne!(second.id, invoice.id);
+        assert_eq!(store.links(offer.id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn only_a_created_offer_becomes_an_invoice_draft() {
+        let store = Store::in_memory().unwrap();
+        let drafted = draft_of(&store, 1, Kind::Offer, "X");
+        let invoice = create_as(&store, 1, Kind::Invoice, "RE-2026-001");
+
+        for id in [drafted.id, invoice.id, 9999] {
+            assert!(store
+                .invoice_from_offer(id, "2026-12-01", &apart())
+                .is_err());
+        }
+
+        // nothing was stored
+        assert_eq!(store.invoices(None, Kind::Invoice, true).unwrap().len(), 1);
+        assert_eq!(store.links(drafted.id).unwrap(), Vec::new());
     }
 }

@@ -16,6 +16,8 @@ import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '../../common/components/customer-form/customer-form.component.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
+import '../../common/components/list/list/list.component.js';
+import '../../common/components/list/list-item/list-item.component.js';
 import '../../common/components/sheet/sheet.component.js';
 import '../../common/layouts/editor/editor.layout.js';
 
@@ -32,6 +34,8 @@ import type {
   InvoiceDraft,
   Kind,
   LayoutInfo,
+  Linked,
+  ListEntry,
   Position,
   PositionTemplate,
   Preview,
@@ -43,11 +47,13 @@ import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
-import { formatDate, UNITS } from '../../common/utils/format.utils.js';
+import { formatDate, money, UNITS } from '../../common/utils/format.utils.js';
 import {
   draftTitle,
+  haystack,
   kindRoute,
   KINDS,
+  otherKind,
   parseDays,
   validUntil,
 } from '../../common/utils/kind.utils.js';
@@ -96,6 +102,13 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
   @state() private templateQuery = '';
   @state() private preview: Preview | undefined;
   @state() private previewError = '';
+  /** The documents of the other kind this one is linked to */
+  @state() private links: Linked[] = [];
+  /** The documents that can be linked, while the dialog to pick one is open */
+  @state() private linkable: ListEntry[] | undefined;
+  @state() private linkQuery = '';
+  /** An invoice draft is being made from this offer */
+  @state() private converting = false;
 
   /** Edits that are not saved yet: a stored draft saves them shortly, a new one when it is left */
   #dirty = false;
@@ -209,6 +222,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         this.draft = stored.draft;
         this.outputKind = stored.draft.profile === 'xrechnung' ? 'xml' : 'pdf';
       }
+      this.links = stored ? await api.documentLinks(stored.id) : [];
       await this.runCheck();
       void this.renderPreview();
     } catch (error) {
@@ -633,6 +647,109 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     }
   }
 
+  /** What a linked document is called: its number, a draft has none */
+  private nameOf(linked: Linked) {
+    return linked.number ?? KINDS[linked.kind].draftTitle;
+  }
+
+  /** Both ends of a link, the offer first */
+  private ends(other: number): [number, number] {
+    const own = this.stored?.id as number;
+    return this.kind === 'offer' ? [own, other] : [other, own];
+  }
+
+  /** Lists what can be linked: the other kind in this context, archived ones too, not yet linked ones */
+  private async openLinkPicker() {
+    try {
+      // a new document has no id to link to yet: it is saved as a draft first
+      if (!this.stored) {
+        await this.persist();
+        this.announce();
+      }
+      this.linkQuery = '';
+      const linked = new Set(this.links.map(l => l.id));
+      const customer = this.draft?.customer.name.trim() ?? '';
+      const entries = (
+        await api.invoicesList(this.contextId as number, otherKind(this.kind), true)
+      ).filter(e => !linked.has(e.id));
+      // the customer's own documents first, each group newest first as the list has them
+      const same = (e: ListEntry) => customer !== '' && e.customer_name.trim() === customer;
+      this.linkable = [...entries.filter(same), ...entries.filter(e => !same(e))];
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+
+  private async linkTo(other: ListEntry) {
+    if (!this.stored) {
+      return;
+    }
+    try {
+      await api.documentLink(...this.ends(other.id));
+      this.linkable = undefined;
+      this.links = await api.documentLinks(this.stored.id);
+      this.announce();
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+
+  private async unlink(other: Linked) {
+    if (!this.stored) {
+      return;
+    }
+    try {
+      await api.documentUnlink(...this.ends(other.id));
+      this.links = await api.documentLinks(this.stored.id);
+      this.announce();
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+
+  /** Invoices can be made under the offer's context only once it has what they need */
+  private get invoicesReady() {
+    return contextById(this.contextId)?.missing.length === 0;
+  }
+
+  /** A created offer becomes an invoice draft, linked to it; asks first when it has invoices already */
+  private async invoiceFromOffer() {
+    const offer = this.stored;
+    if (!offer || this.kind !== 'offer' || !this.locked || this.converting) {
+      return;
+    }
+    this.converting = true;
+    try {
+      this.links = await api.documentLinks(offer.id);
+      const invoices = this.links.filter(l => l.kind === 'invoice');
+      if (invoices.length > 0) {
+        const numbers = invoices.flatMap(l => (l.number === null ? [] : [l.number]));
+        const drafts = invoices.length - numbers.length;
+        const named = new Intl.ListFormat('de', { type: 'conjunction' }).format([
+          ...numbers,
+          ...(drafts === 0
+            ? []
+            : [drafts === 1 ? 'ein Rechnungsentwurf' : `${drafts} Rechnungsentwürfe`]),
+        ]);
+        const sure = await ask(
+          `Zu diesem Angebot gibt es schon ${named}. Noch eine Rechnung anlegen, z. B. eine Teilrechnung?`,
+          { title: 'Rechnung erstellen', okLabel: 'Anlegen', cancelLabel: 'Abbrechen' }
+        );
+        if (!sure) {
+          return;
+        }
+      }
+      const invoice = await api.offerToInvoice(offer.id);
+      this.announce();
+      notify(`Rechnungsentwurf aus Angebot ${offer.number ?? ''} angelegt.`);
+      goto(kindRoute('invoice', invoice.id));
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      this.converting = false;
+    }
+  }
+
   /** Marks an exported invoice as paid on a date or as open again, the one change it allows */
   private async setPaid(paidAt: string | null) {
     const id = this.stored?.id;
@@ -943,6 +1060,114 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
     `;
   }
 
+  /** The offers or invoices this document belongs to: metadata, so it can be changed on created ones too */
+  private renderLinks() {
+    const other = KINDS[otherKind(this.kind)];
+    return html`
+      <wa-card id="links">
+        <div slot="header">${this.links.length === 1 ? other.noun : other.list}</div>
+        <div class="stack">
+          ${
+            this.links.length === 0
+              ? html`<span class="muted">Noch nichts verknüpft.</span>`
+              : html`
+                  <erng-list>
+                    ${this.links.map(
+                      l => html`
+                        <div class="link">
+                          <erng-list-item @click="${() => goto(kindRoute(l.kind, l.id))}">
+                            ${l.customer_name || '–'}
+                            <span slot="sub">
+                              ${l.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
+                            </span>
+                            <span slot="sub-end">${formatDate(l.issue_date)}</span>
+                          </erng-list-item>
+                          <wa-button
+                            size="s"
+                            appearance="outlined"
+                            title="Verknüpfung mit ${this.nameOf(l)} aufheben"
+                            aria-label="Verknüpfung mit ${this.nameOf(l)} aufheben"
+                            @click="${() => void this.unlink(l)}"
+                          >
+                            <wa-icon name="unlink"></wa-icon>
+                          </wa-button>
+                        </div>
+                      `
+                    )}
+                  </erng-list>
+                `
+          }
+          <wa-button
+            class="add-link"
+            size="s"
+            appearance="outlined"
+            @click="${() => void this.openLinkPicker()}"
+          >
+            ${other.link}
+          </wa-button>
+        </div>
+      </wa-card>
+    `;
+  }
+
+  private renderLinkPicker() {
+    const other = KINDS[otherKind(this.kind)];
+    const query = this.linkQuery.trim().toLowerCase();
+    const shown = (this.linkable ?? []).filter(e => haystack(e).includes(query));
+    return html`
+      <wa-dialog
+        ?open="${this.linkable !== undefined}"
+        label="${other.link.replace('…', '')}"
+        @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.linkable = undefined)}"
+      >
+        <div class="stack">
+          <erng-filter-bar
+            .query="${this.linkQuery}"
+            placeholder="${other.search}"
+            @query-change="${(e: CustomEvent<string>) => (this.linkQuery = e.detail)}"
+          ></erng-filter-bar>
+          ${
+            shown.length === 0
+              ? html`<wa-callout variant="neutral">
+                  ${this.linkable?.length === 0 ? other.linkNone : 'Keine Treffer.'}
+                </wa-callout>`
+              : html`
+                  <erng-list>
+                    ${shown.map(
+                      e => html`
+                        <erng-list-item
+                          ?archived="${e.archived_at !== null}"
+                          @click="${() => void this.linkTo(e)}"
+                        >
+                          ${e.customer_name || '–'}
+                          <span slot="sub">
+                            ${e.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
+                          </span>
+                          <span slot="sub-end">${formatDate(e.issue_date)}</span>
+                          ${
+                            e.archived_at
+                              ? html`<span slot="tags"
+                                  ><wa-tag variant="neutral" size="s">Archiviert</wa-tag></span
+                                >`
+                              : nothing
+                          }
+                          <span slot="tags-end">${money(e.total)}</span>
+                        </erng-list-item>
+                      `
+                    )}
+                  </erng-list>
+                `
+          }
+        </div>
+        <div slot="footer" class="dialog-footer">
+          <wa-button appearance="outlined" @click="${() => (this.linkable = undefined)}">
+            Schließen
+          </wa-button>
+        </div>
+      </wa-dialog>
+    `;
+  }
+
   private renderCheck() {
     const check = this.check;
     if (!check) {
@@ -1172,7 +1397,8 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
             </div>
           </wa-card>
 
-          ${this.createError ? this.renderFailure(this.createError) : nothing} ${this.renderCheck()}
+          ${this.renderLinks()} ${this.createError ? this.renderFailure(this.createError) : nothing}
+          ${this.renderCheck()}
         </section>
 
         ${this.renderPreviewSheet()}
@@ -1236,6 +1462,15 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
                     @click="${() => void this.output('pdf')}"
                   >
                     Exportieren als PDF
+                  </wa-button>
+                  <wa-button
+                    variant="brand"
+                    ?loading="${this.converting}"
+                    ?disabled="${!this.invoicesReady}"
+                    title="${this.invoicesReady ? '' : 'Für Rechnungen fehlen noch Angaben in den Einstellungen.'}"
+                    @click="${this.invoiceFromOffer}"
+                  >
+                    Rechnung erstellen
                   </wa-button>
                 `
               : locked
@@ -1310,7 +1545,7 @@ export class InvoiceEditView extends ErngElement.withStyles(styles) {
         </nav>
       </footer>
 
-      ${this.renderTemplates()}
+      ${this.renderTemplates()} ${this.renderLinkPicker()}
 
       <wa-dialog
         ?open="${this.newCustomer !== undefined}"

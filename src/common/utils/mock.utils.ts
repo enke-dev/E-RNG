@@ -11,6 +11,7 @@ import type {
   CustomLayout,
   InvoiceDraft,
   Kind,
+  Linked,
   ListEntry,
   NumberReset,
   PositionTemplate,
@@ -448,6 +449,12 @@ const invoices: StoredInvoice[] = [
   })),
 ];
 
+/** Offer id and invoice id, the first offer was billed with the first invoice */
+let links: [number, number][] = [[3, 1]];
+
+/** Ids are not reused after a draft was deleted */
+const nextId = () => Math.max(0, ...invoices.map(i => i.id)) + 1;
+
 const number = (text: string | null | undefined) =>
   Number((text ?? '').replace(/\./g, '').replace(',', '.')) || 0;
 const euro = (value: number) => (Math.round(value * 100) / 100).toFixed(2);
@@ -822,6 +829,7 @@ export function installMocks() {
               paid_at: i.paid_at,
               updated_at: i.updated_at,
               archived_at: i.archived_at,
+              linked: links.filter(l => l.includes(i.id)).length,
             }));
         case 'invoice_archive':
           find(args['id']).archived_at = new Date().toISOString();
@@ -857,7 +865,7 @@ export function installMocks() {
           const draft = args['draft'] as InvoiceDraft;
           const existing = args['id'] === null ? undefined : find(args['id']);
           const stored: StoredInvoice = existing ?? {
-            id: invoices.length + 1,
+            id: nextId(),
             context_id: (args['contextId'] as number | null) ?? 1,
             kind: args['kind'] as Kind,
             number: null,
@@ -880,7 +888,7 @@ export function installMocks() {
         case 'invoice_duplicate': {
           const copy: StoredInvoice = {
             ...structuredClone(find(args['id'])),
-            id: invoices.length + 1,
+            id: nextId(),
             number: null,
             status: 'draft',
             exported_at: null,
@@ -899,6 +907,72 @@ export function installMocks() {
             invoices.findIndex(i => i.id === args['id']),
             1
           );
+          links = links.filter(l => !l.includes(args['id']));
+          return null;
+        case 'offer_to_invoice': {
+          // mirrors `Store::invoice_from_offer`
+          const offer = find(args['offerId']);
+          if (offer.kind !== 'offer' || offer.status !== 'exported') {
+            throw 'Nur aus einem erstellten Angebot kann eine Rechnung entstehen.';
+          }
+          const own = (contexts.find(c => c.id === offer.context_id) as Context).settings;
+          const { customer, positions, buyer_reference, note } = structuredClone(offer.draft);
+          const draft: InvoiceDraft = {
+            ...draftOf(customer),
+            issue_date: today(),
+            delivery_date: today(),
+            positions,
+            buyer_reference,
+            note,
+            layout: own.layout,
+            intro: own.intro ?? '',
+            closing: own.closing ?? '',
+          };
+          const invoice: StoredInvoice = {
+            id: nextId(),
+            context_id: offer.context_id,
+            kind: 'invoice',
+            number: null,
+            status: 'draft',
+            draft,
+            total: check(draft).totals?.gross ?? null,
+            exported_at: null,
+            paid_at: null,
+            updated_at: '',
+            archived_at: null,
+            files: null,
+          };
+          invoices.push(invoice);
+          links.push([offer.id, invoice.id]);
+          return invoice;
+        }
+        case 'document_links':
+          return links
+            .filter(l => l.includes(args['id']))
+            .map(l => find(l.find(id => id !== args['id']) as number))
+            .map((i): Linked => ({
+              id: i.id,
+              kind: i.kind,
+              number: i.number,
+              status: i.status,
+              customer_name: i.draft.customer.name,
+              issue_date: i.draft.issue_date,
+            }));
+        case 'document_link': {
+          const [offer, invoice] = [find(args['offerId']), find(args['invoiceId'])];
+          if (offer.kind !== 'offer' || invoice.kind !== 'invoice') {
+            throw 'Eine Verknüpfung verbindet ein Angebot mit einer Rechnung.';
+          }
+          if (offer.context_id !== invoice.context_id) {
+            throw 'Angebot und Rechnung werden innerhalb eines Kontexts verknüpft.';
+          }
+          if (!links.some(l => l[0] === offer.id && l[1] === invoice.id)) {
+            links.push([offer.id, invoice.id]);
+          }
+          return null;
+        }
+        case 'document_unlink':
+          links = links.filter(l => l[0] !== args['offerId'] || l[1] !== args['invoiceId']);
           return null;
         case 'check_invoice':
           // an offer has no rules to check

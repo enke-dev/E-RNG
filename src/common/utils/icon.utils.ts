@@ -2,6 +2,8 @@ import { registerIconLibrary } from '@awesome.me/webawesome/dist/components/icon
 import check from '@fortawesome/fontawesome-free/svgs/solid/check.svg?url';
 import info from '@fortawesome/fontawesome-free/svgs/solid/circle-info.svg?url';
 import save from '@fortawesome/fontawesome-free/svgs/solid/floppy-disk.svg?url';
+import link from '@fortawesome/fontawesome-free/svgs/solid/link.svg?url';
+import unlink from '@fortawesome/fontawesome-free/svgs/solid/link-slash.svg?url';
 import trash from '@fortawesome/fontawesome-free/svgs/solid/trash.svg?url';
 
 /**
@@ -12,8 +14,10 @@ import trash from '@fortawesome/fontawesome-free/svgs/solid/trash.svg?url';
 const ICONS: Record<string, string> = {
   check,
   info,
+  link,
   save,
   trash,
+  unlink,
 };
 
 export type IconName = keyof typeof ICONS;

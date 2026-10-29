@@ -520,6 +520,19 @@ pub struct ListEntry {
     pub paid_at: Option<String>,
     pub updated_at: String,
     pub archived_at: Option<String>,
+    /// How many documents of the other kind it is linked to
+    pub linked: u32,
+}
+
+/// The other end of a link between an offer and an invoice
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Linked {
+    pub id: i64,
+    pub kind: Kind,
+    pub number: Option<String>,
+    pub status: Status,
+    pub customer_name: String,
+    pub issue_date: String,
 }
 
 #[cfg(test)]
