@@ -715,6 +715,8 @@ const invoices: StoredInvoice[] = [
 let links: [number, number][] = [[3, 1]];
 
 /** When the mock was last backed up, none at first */
+/** Folders of an interrupted restore, none until a test puts some here */
+let interrupted: string[] = [];
 let lastBackup: string | null = null;
 
 /** Ids are not reused after a draft was deleted */
@@ -1482,7 +1484,10 @@ export function installMocks() {
           return [];
         // backup and restore do nothing here, the answers are what the real ones would say
         case 'backup_status':
-          return { last_backup_at: lastBackup, safety_dir: '/tmp/mock-data/backups' };
+          return { last_backup_at: lastBackup, safety_dir: '/tmp/mock-data/backups', interrupted };
+        case 'backup_discard_interrupted':
+          interrupted = interrupted.filter(folder => folder !== args['folder']);
+          return null;
         case 'backup_create':
           lastBackup = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
           return {

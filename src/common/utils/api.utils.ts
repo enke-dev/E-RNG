@@ -565,6 +565,8 @@ export type ProduceError =
 export interface BackupStatus {
   last_backup_at: string | null;
   safety_dir: string;
+  /** Folders a restore or removal that was cut off left the replaced data in */
+  interrupted: string[];
 }
 
 export interface BackupCreated {
@@ -624,6 +626,8 @@ export function errorText(error: unknown): string {
 
 export const api = {
   backupStatus: () => invoke<BackupStatus>('backup_status'),
+  backupDiscardInterrupted: (folder: string) =>
+    invoke<null>('backup_discard_interrupted', { folder }),
   backupCreate: (path: string) => invoke<BackupCreated>('backup_create', { path }),
   /** Replaces all data by a backup, after a safety copy of the data in use; the app must reload */
   backupRestore: (path: string) => invoke<RestoreOutcome>('backup_restore', { path }),

@@ -125,6 +125,7 @@ pub fn run() {
             commands::backup_command::backup_create,
             commands::backup_command::backup_restore,
             commands::backup_command::backup_status,
+            commands::backup_command::backup_discard_interrupted,
             commands::backup_command::data_remove,
             commands::check_invoice_command::check_invoice,
             commands::contexts_command::context_archive,

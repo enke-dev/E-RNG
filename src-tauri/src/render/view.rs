@@ -632,7 +632,14 @@ fn total_rows(
     // the net amount per rate is only named when there are several (§ 14 Abs. 4 Nr. 7, 8 UStG),
     // with one rate it is the net sum above
     let several = invoice.vat_breakdown.len() > 1;
-    for entry in invoice.vat_breakdown.iter().filter(|_| !branding.vat_free) {
+    let mut breakdown: Vec<_> = invoice
+        .vat_breakdown
+        .iter()
+        .filter(|_| !branding.vat_free)
+        .collect();
+    // the regular rate first, then the reduced ones
+    breakdown.sort_by_key(|entry| std::cmp::Reverse(entry.rate));
+    for entry in breakdown {
         let rate = fmt.percent(&entry.rate.map_or_else(|| "0".to_owned(), |r| r.to_string()));
         rows.push(Total {
             label: if several {
@@ -852,21 +859,23 @@ mod tests {
     }
 
     #[test]
-    fn with_several_rates_each_row_names_its_net_amount() {
+    fn with_several_rates_each_row_names_its_net_amount_the_higher_rate_first() {
         let settings = crate::draft::fixtures::settings();
         let mut draft = crate::draft::fixtures::draft();
         draft.positions[1].tax_rate = Some("7".into());
 
-        let rows = vat_rows(&draft, &settings);
-
-        assert_eq!(rows.len(), 2);
-        assert!(
-            rows.contains(&"Umsatzsteuer 19\u{a0}% auf 950,00\u{a0}€".to_owned()),
-            "{rows:?}"
+        assert_eq!(
+            vat_rows(&draft, &settings),
+            [
+                "Umsatzsteuer 19\u{a0}% auf 950,00\u{a0}€",
+                "Umsatzsteuer 7\u{a0}% auf 42,50\u{a0}€",
+            ]
         );
-        assert!(
-            rows.contains(&"Umsatzsteuer 7\u{a0}% auf 42,50\u{a0}€".to_owned()),
-            "{rows:?}"
+        // the order of the positions does not matter
+        draft.positions.reverse();
+        assert_eq!(
+            vat_rows(&draft, &settings)[0],
+            "Umsatzsteuer 19\u{a0}% auf 950,00\u{a0}€"
         );
     }
 

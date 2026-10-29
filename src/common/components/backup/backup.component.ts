@@ -62,6 +62,54 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
     }
   }
 
+  private async discard(folder: string) {
+    const sure = await ask(
+      `Den Ordner mit den damals ersetzten Daten endgültig löschen? Prüfe vorher, ob alles da ist, was du davon brauchst: ${folder}`,
+      { title: 'Ordner löschen', okLabel: 'Löschen', cancelLabel: 'Abbrechen', danger: true }
+    );
+    if (!sure) {
+      return;
+    }
+    try {
+      await api.backupDiscardInterrupted(folder);
+      await this.load();
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+
+  /** What a restore or removal that was cut off left behind, the user decides about it */
+  private interrupted() {
+    const folders = this.status?.interrupted ?? [];
+    return folders.length > 0
+      ? html`
+          <wa-callout variant="warning">
+            <wa-icon slot="icon" name="warning"></wa-icon>
+            <div class="stack">
+              <span>
+                Eine Wiederherstellung oder das Entfernen aller Daten wurde unterbrochen. Die Daten
+                von davor liegen noch hier, falls etwas fehlt:
+              </span>
+              ${folders.map(
+                folder => html`
+                  <div class="action">
+                    ${revealLink(folder)}
+                    <wa-button
+                      size="s"
+                      appearance="outlined"
+                      @click="${() => this.discard(folder)}"
+                    >
+                      Löschen
+                    </wa-button>
+                  </div>
+                `
+              )}
+            </div>
+          </wa-callout>
+        `
+      : nothing;
+  }
+
   private async create() {
     this.busy = 'backup';
     try {
@@ -203,6 +251,7 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
     const busy = this.busy !== undefined;
     return html`
       <erng-page heading="Datensicherung">
+        ${this.interrupted()}
         <section>
           <div class="last">
             <strong>Letzte Sicherung</strong>

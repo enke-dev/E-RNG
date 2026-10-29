@@ -18,6 +18,8 @@ pub struct BackupStatus {
     pub last_backup_at: Option<String>,
     /// The folder the automatic safety backups go to
     pub safety_dir: String,
+    /// Folders a restore or removal that was cut off left the replaced data in
+    pub interrupted: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,10 +64,18 @@ fn text(path: &std::path::Path) -> String {
 /// When the last backup was made, and where the safety backups go
 #[tauri::command]
 pub fn backup_status(app: AppHandle, store: State<'_, Store>) -> CommandResult<BackupStatus> {
+    let data = data_dir(&app)?;
     Ok(BackupStatus {
         last_backup_at: store.last_backup_at()?,
-        safety_dir: text(&backup::safety_dir(&data_dir(&app)?)),
+        safety_dir: text(&backup::safety_dir(&data)),
+        interrupted: backup::interrupted(&data).iter().map(|p| text(p)).collect(),
     })
+}
+
+/// Deletes a folder of replaced data that a cut off restore or removal left behind
+#[tauri::command]
+pub fn backup_discard_interrupted(app: AppHandle, folder: PathBuf) -> CommandResult<()> {
+    backup::discard_interrupted(&data_dir(&app)?, &folder).map_err(CommandError::from)
 }
 
 /// Writes a backup of all data to the file the user picked

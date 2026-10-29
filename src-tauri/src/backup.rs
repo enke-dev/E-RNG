@@ -556,7 +556,7 @@ fn safety_backup(store: &Store, data: &Path, reason: Reason, app_version: &str) 
 /// A name for the folder the replaced data waits in
 fn aside_dir(data: &Path) -> PathBuf {
     data.join(format!(
-        ".erng-replaced-{}",
+        "{ASIDE_PREFIX}{}",
         chrono::Local::now().format("%Y%m%d-%H%M%S")
     ))
 }
@@ -613,6 +613,39 @@ pub fn remove_all(store: &Store, data: &Path, app_version: &str) -> Result<Remov
     Store::open(&staging.path().join(DB_FILE)).map(drop)?;
     replace_data(store, data, staging.path(), &aside_dir(data))?;
     Ok(Removed { safety_copy })
+}
+
+/// The start of the folders the replaced data waits in while a restore or a removal swaps it
+const ASIDE_PREFIX: &str = ".erng-replaced-";
+
+/// Folders of replaced data that a cut off restore or removal left behind: they may hold the only
+/// copy of data that was lost, the user decides what happens with them.
+pub fn interrupted(data: &Path) -> Vec<PathBuf> {
+    let Ok(listing) = std::fs::read_dir(data) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = listing
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(ASIDE_PREFIX)
+        })
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.path())
+        .collect();
+    found.sort();
+    found
+}
+
+/// Deletes such a folder of replaced data, and nothing that is not one
+pub fn discard_interrupted(data: &Path, folder: &Path) -> Result<()> {
+    if !interrupted(data).iter().any(|known| known == folder) {
+        bail!("Diesen Ordner kann e-rng nicht löschen.");
+    }
+    std::fs::remove_dir_all(folder)?;
+    Ok(())
 }
 
 /// Clears what a run that was cut off left in the data folder: unpacked backups and database
@@ -1254,6 +1287,25 @@ mod tests {
         remove_all(&store, data.path(), APP).unwrap();
 
         assert_eq!(store.last_backup_at().unwrap(), None);
+    }
+
+    #[test]
+    fn folders_of_an_interrupted_swap_are_listed_and_only_they_can_be_deleted() {
+        let data = tempfile::tempdir().unwrap();
+        write(
+            data.path(),
+            ".erng-replaced-20261029-120000/e-rng.sqlite3",
+            b"x",
+        );
+        write(data.path(), "invoices/a.pdf", b"x");
+
+        let found = interrupted(data.path());
+        assert_eq!(found, [data.path().join(".erng-replaced-20261029-120000")]);
+
+        assert!(discard_interrupted(data.path(), &data.path().join("invoices")).is_err());
+        assert!(data.path().join("invoices/a.pdf").exists());
+        discard_interrupted(data.path(), &found[0]).unwrap();
+        assert!(interrupted(data.path()).is_empty());
     }
 
     #[test]
