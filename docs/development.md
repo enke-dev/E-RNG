@@ -162,7 +162,7 @@ What is remembered between runs is a convenience of the machine, not a setting: 
 
 ## Open work
 
-Not built yet, nothing here is promised. Bigger features have a plan in `.claude/plans/` (build targets, historic import, Steuerberater export).
+Not built yet, nothing here is promised. Bigger features have a plan in `.claude/plans/` (build targets, historic import, Steuerberater export, VAT categories for invoicing abroad).
 
 - **Invoices**: credit notes from the UI (the model and the template support them; the Steuerberater export must include them once they exist), several VAT rates, reverse charge and other VAT-free cases, discounts and surcharges, other payment means (direct debit, card), tax representative, payee, attachments (BG-24), the EAS scheme list for electronic addresses (the form always uses e-mail), a register number for BT-30, customer-specific payment terms, dunning, proper Abschlags- and Schlussrechnungen (deducting earlier partial invoices, § 14 (5) UStG).
 - **Offers**: status accepted or declined, a chain of revisions ("ersetzt AN-2026-003"), billed versus offered amount, a counter for a future period, other kinds on the same sequences (Auftragsbestätigung, Lieferschein, Gutschrift as its own sequence); once a third kind exists the table and types could be called `documents`.
