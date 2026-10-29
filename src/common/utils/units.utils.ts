@@ -18,11 +18,15 @@ export function pick(position: Named, unit: Unit | undefined) {
   }
 }
 
-/** The unit a new position starts with: the first of the list */
-export const firstUnit = (units: Unit[]): Named => ({
-  unit: units[0]?.code ?? null,
-  unit_label: units[0]?.label ?? null,
-});
+/** The unit a context's default names by its label; none, or a label the list lacks: the first */
+export const defaultUnitOf = (units: Unit[], label: string | null | undefined): Unit | undefined =>
+  units.find(u => u.label === label) ?? units[0];
+
+/** The unit a new position starts with: the default of the context */
+export const startUnit = (units: Unit[], label: string | null | undefined): Named => {
+  const unit = defaultUnitOf(units, label);
+  return { unit: unit?.code ?? null, unit_label: unit?.label ?? null };
+};
 
 /** What a code is called: the German name of a common code, else the English one */
 export const catalogName = (entry: CatalogEntry): string => entry.de ?? entry.name;

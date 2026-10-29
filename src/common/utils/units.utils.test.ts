@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 import names from '../../../src-tauri/data/unit-names.json' with { type: 'json' };
 import type { CatalogEntry, Unit } from './api.utils.js';
 import {
+  defaultUnitOf,
   describe as describeCode,
-  firstUnit,
   pick,
   searchCatalog,
+  startUnit,
   unitLabel,
   unitOf,
 } from './units.utils.js';
@@ -35,7 +36,7 @@ describe('unitOf', () => {
   });
 });
 
-describe('pick and firstUnit', () => {
+describe('pick', () => {
   it('writes code and label into the position', () => {
     const position = { unit: null, unit_label: null };
 
@@ -44,10 +45,25 @@ describe('pick and firstUnit', () => {
     expect(position).toEqual({ unit: 'HUR', unit_label: 'Stunde' });
     expect(unitLabel(position)).toBe('Stunde');
   });
+});
 
-  it('starts a new position with the first unit, or none for an empty list', () => {
-    expect(firstUnit(list)).toEqual({ unit: 'C62', unit_label: 'Stk.' });
-    expect(firstUnit([])).toEqual({ unit: null, unit_label: null });
+describe('the default unit', () => {
+  it('is the unit the label names', () => {
+    expect(defaultUnitOf(list, 'Stunde')?.id).toBe(3);
+    expect(defaultUnitOf(list, 'Std.')?.id).toBe(2);
+  });
+
+  it('is the first unit without a label, or with one the list no longer has', () => {
+    expect(defaultUnitOf(list, null)?.id).toBe(1);
+    expect(defaultUnitOf(list, undefined)?.id).toBe(1);
+    expect(defaultUnitOf(list, 'Meter')?.id).toBe(1);
+    expect(defaultUnitOf([], 'Std.')).toBeUndefined();
+  });
+
+  it('is what a new position starts with, none for an empty list', () => {
+    expect(startUnit(list, 'Stunde')).toEqual({ unit: 'HUR', unit_label: 'Stunde' });
+    expect(startUnit(list, null)).toEqual({ unit: 'C62', unit_label: 'Stk.' });
+    expect(startUnit([], null)).toEqual({ unit: null, unit_label: null });
   });
 });
 

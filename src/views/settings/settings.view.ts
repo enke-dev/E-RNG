@@ -15,6 +15,7 @@ import '../../common/components/list/list-group/list-group.component.js';
 import '../../common/components/list/list-item/list-item.component.js';
 import '../../common/components/page/page.component.js';
 import '../../common/components/scope-select/scope-select.component.js';
+import '../../common/components/rate-list/rate-list.component.js';
 import '../../common/components/unit-list/unit-list.component.js';
 import '../../common/layouts/editor/editor.layout.js';
 import '../../common/layouts/split/split.layout.js';
@@ -59,7 +60,11 @@ import {
   loadContexts,
   switchContext,
 } from '../../common/utils/context.utils.js';
-import { inheritedDefaults, inheritedUnits } from '../../common/utils/defaults.utils.js';
+import {
+  inheritedDefaults,
+  inheritedRates,
+  inheritedUnits,
+} from '../../common/utils/defaults.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { parseDays } from '../../common/utils/kind.utils.js';
 import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
@@ -70,10 +75,11 @@ import { indexAfterMove } from '../../common/utils/reorder.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
 import styles from './settings.view.css';
 
-/** The pages of a context: all but the units are saved together, the units save themselves */
+/** The pages of a context: all but the rates and units are saved together, those save themselves */
 const PAGES = [
   ['company', 'Unternehmen'],
   ['bank', 'Bankverbindung'],
+  ['rates', 'Steuersätze'],
   ['units', 'Einheiten'],
   ['offers', 'Angebote'],
   ['invoices', 'Rechnungen'],
@@ -103,7 +109,7 @@ const RESET_NAMES: Record<NumberReset, string> = {
 };
 
 /** `context-<id>-<page>`, or `context-new-<page>` for one that is not stored yet */
-const CONTEXT_PAGE = /^context-(new|\d+)-(company|bank|offers|invoices|units)$/;
+const CONTEXT_PAGE = /^context-(new|\d+)-(company|bank|rates|units|offers|invoices)$/;
 
 /** What the form calls the fields that must be filled in before an invoice can be issued */
 const FIELD_LABELS: Record<string, string> = {
@@ -118,7 +124,7 @@ const FIELD_LABELS: Record<string, string> = {
   number_reset: 'Zähler periodisch zurücksetzen (Rechnungen)',
   'offer.number_pattern': 'Muster der Angebotsnummer',
   'offer.number_reset': 'Zähler periodisch zurücksetzen (Angebote)',
-  tax_rate: 'Umsatzsteuersatz',
+  tax_rate: 'Standard-Steuersatz (unter Steuersätze)',
   vat_note: 'Hinweis zur Steuerbefreiung',
   'seller.contact_name': 'Ansprechpartner',
   'seller.phone': 'Telefon',
@@ -408,6 +414,33 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     void this.loadSequence();
   }
 
+  /**
+   * A list page saved something: the default of the context may have followed it (a changed or
+   * replaced rate, a renamed or deleted unit, or the default chosen there). The settings in the
+   * store are taken over here for those fields, other edits that are not saved yet stay.
+   */
+  private async listsChanged() {
+    const id = this.context?.id;
+    if (id == null) {
+      return;
+    }
+    await loadContexts();
+    const fresh = contextById(id);
+    if (!fresh || this.context?.id !== id) {
+      return;
+    }
+    const [, stored] = JSON.parse(this.#saved) as [string, Settings];
+    const followed = (['tax_rate', 'unit'] as const).filter(
+      field => fresh.settings[field] !== stored[field]
+    );
+    if (followed.length > 0) {
+      const settings = { ...this.context.settings };
+      followed.forEach(field => Object.assign(settings, { [field]: fresh.settings[field] }));
+      this.context = { ...this.context, settings };
+      this.#saved = snapshot(fresh);
+    }
+  }
+
   private async loadSequence() {
     const id = this.context?.id ?? null;
     this.sequences = {};
@@ -658,22 +691,19 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     if (!context) {
       return;
     }
-    const settings = context.settings;
-    const rate = Number(settings.tax_rate.replace(',', '.'));
-    // blank is no VAT, a rate is more than 0 and at most 100
-    if (settings.tax_rate.trim() !== '' && (!Number.isFinite(rate) || rate <= 0 || rate > 100)) {
-      notify(
-        'Der Steuersatz muss zwischen 0 und 100 liegen (in Prozent), oder leer sein.',
-        'danger'
-      );
-      return;
-    }
     try {
       const wasNew = context.id === null;
-      // a new context starts with a copy of the units of the one in use
+      // a new context starts with a copy of the units and rates of the one in use
       const from = activeContext.get()?.id;
-      const units = wasNew && from != null ? inheritedUnits(await api.unitsList(from)) : undefined;
-      const saved = await api.contextSave(context, units);
+      const [units, rates] =
+        wasNew && from != null
+          ? await Promise.all([api.unitsList(from), api.ratesList(from)])
+          : [undefined, undefined];
+      const saved = await api.contextSave(
+        context,
+        units && inheritedUnits(units),
+        rates && inheritedRates(rates)
+      );
       await loadContexts();
       if (wasNew && saved.id !== null) {
         // the one just made is the one to work in
@@ -1277,7 +1307,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         <span slot="action" class="row">${extra}</span>
         ${
           open === id
-            ? PAGES.filter(([page]) => id !== 'new' || page !== 'units').map(
+            ? PAGES.filter(([page]) => id !== 'new' || (page !== 'units' && page !== 'rates')).map(
                 ([page, caption]) => html`
                   <erng-list-item
                     ?selected="${this.contextRoute?.page === page}"
@@ -1621,27 +1651,18 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   private invoicesPage(settings: Settings) {
     return html`
-      <div class="grid">
-        <wa-input
-          label="Umsatzsteuersatz (%)"
-          inputmode="decimal"
-          hint="Leer: keine Umsatzsteuer, z. B. als Kleinunternehmer"
-          .value="${settings.tax_rate}"
-          @input="${(e: Event) => this.edit(s => (s.tax_rate = text(e)))}"
-        ></wa-input>
-        <wa-input
-          label="Zahlungsziel (Tage)"
-          type="number"
-          min="0"
-          hint="Leer: kein Fälligkeitsdatum, kein Zahlungshinweis"
-          .value="${settings.payment_days === null ? '' : String(settings.payment_days)}"
-          @input="${(e: Event) =>
-            this.edit(s => {
-              const days = text(e).trim();
-              s.payment_days = days === '' ? null : Math.max(0, Math.trunc(Number(days)) || 0);
-            })}"
-        ></wa-input>
-      </div>
+      <wa-input
+        label="Zahlungsziel (Tage)"
+        type="number"
+        min="0"
+        hint="Leer: kein Fälligkeitsdatum, kein Zahlungshinweis"
+        .value="${settings.payment_days === null ? '' : String(settings.payment_days)}"
+        @input="${(e: Event) =>
+          this.edit(s => {
+            const days = text(e).trim();
+            s.payment_days = days === '' ? null : Math.max(0, Math.trunc(Number(days)) || 0);
+          })}"
+      ></wa-input>
       ${
         settings.tax_rate.trim() === ''
           ? html`
@@ -1771,6 +1792,24 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   private contextPage(context: Context, page: Page) {
+    if (page === 'rates') {
+      // the rates are saved by their own dialogs, there is no form to save here
+      return context.id === null
+        ? html`
+            <wa-callout slot="detail" variant="neutral">
+              Ein neuer Kontext übernimmt die Steuersätze des aktiven. Nach dem Speichern lassen sie
+              sich hier ändern.
+            </wa-callout>
+          `
+        : html`
+            <erng-rate-list
+              slot="detail"
+              context-id="${context.id}"
+              default-rate="${contextById(context.id)?.settings.tax_rate ?? ''}"
+              @rates-change="${() => void this.listsChanged()}"
+            ></erng-rate-list>
+          `;
+    }
     if (page === 'units') {
       // the units are saved by their own dialogs, there is no form to save here
       return context.id === null
@@ -1780,7 +1819,14 @@ export class SettingsView extends ErngElement.withStyles(styles) {
               sich hier ändern.
             </wa-callout>
           `
-        : html`<erng-unit-list slot="detail" context-id="${context.id}"></erng-unit-list>`;
+        : html`
+            <erng-unit-list
+              slot="detail"
+              context-id="${context.id}"
+              default-unit="${contextById(context.id)?.settings.unit ?? ''}"
+              @units-change="${() => void this.listsChanged()}"
+            ></erng-unit-list>
+          `;
     }
     const settings = context.settings;
     const content = {

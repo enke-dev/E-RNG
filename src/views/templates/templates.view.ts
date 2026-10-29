@@ -15,25 +15,29 @@ import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.
 import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
-import type { PositionTemplate, Unit } from '../../common/utils/api.utils.js';
+import type { PositionTemplate, Rate, Unit } from '../../common/utils/api.utils.js';
 import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { activeContext, contextsOf, label } from '../../common/utils/context.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
+import { percent } from '../../common/utils/format.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
-import { firstUnit, pick, unitLabel, unitOf } from '../../common/utils/units.utils.js';
+import { chargesVat, pickRate, rateChoice, rateText } from '../../common/utils/rates.utils.js';
+import { pick, startUnit, unitLabel, unitOf } from '../../common/utils/units.utils.js';
 import styles from './templates.view.css';
 
-const blank = (units: Unit[]): PositionTemplate => ({
+const blank = (units: Unit[], defaultUnit: string | null): PositionTemplate => ({
   id: null,
   context_id: null,
   description: '',
   quantity: null,
-  ...firstUnit(units),
+  ...startUnit(units, defaultUnit),
+  tax_rate: null,
+  tax_label: null,
   price: '',
 });
 
-/** The value of the unit select for a unit that is not in the list */
+/** The value of the unit and rate selects for one that is not in the list */
 const NOT_LISTED = 'not-listed';
 
 /** Saved positions the invoice form can start from, as cards like the customers */
@@ -42,6 +46,12 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
   @state() private templates: PositionTemplate[] = [];
   /** The units of the active context, what the positions pick from */
   @state() private units: Unit[] = [];
+  /** The VAT rates of the active context */
+  @state() private rates: Rate[] = [];
+  /** The default rate of the active context, blank: it charges no VAT */
+  @state() private defaultRate = '';
+  /** The label of the unit new positions of the active context start with */
+  @state() private defaultUnit: string | null = null;
   @state() private editing: PositionTemplate | undefined;
   @state() private query = '';
   @state() private unit = 'all';
@@ -53,12 +63,15 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
 
   private async load() {
     try {
-      const context = activeContext.get()?.id;
-      if (context != null) {
-        [this.templates, this.units] = await Promise.all([
-          api.templatesList(context),
-          api.unitsList(context),
+      const context = activeContext.get();
+      if (context?.id != null) {
+        [this.templates, this.units, this.rates] = await Promise.all([
+          api.templatesList(context.id),
+          api.unitsList(context.id),
+          api.ratesList(context.id),
         ]);
+        this.defaultRate = context.settings.tax_rate;
+        this.defaultUnit = context.settings.unit;
       }
     } catch (error) {
       notifyError(error);
@@ -149,6 +162,43 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
     `;
   }
 
+  /**
+   * The rate of the position, from the list of the active context; one that picks none shows its
+   * default. One that is not in the list still shows. Not offered when the active context charges
+   * no VAT.
+   */
+  private rateSelect(template: PositionTemplate) {
+    const { selected, missing } = rateChoice(this.rates, template, this.defaultRate);
+    return html`
+      <wa-select
+        label="USt."
+        .value="${selected ? String(selected.id) : NOT_LISTED}"
+        @change="${(e: Event) => {
+          const id = String((e.target as WaSelect).value);
+          const rate = this.rates.find(r => String(r.id) === id);
+          this.change(t => pickRate(t, rate));
+        }}"
+      >
+        ${this.rates.map(
+          r => html`
+            <wa-option value="${String(r.id)}" .label="${percent(r.rate)}">
+              ${rateText(r)}
+            </wa-option>
+          `
+        )}
+        ${
+          missing
+            ? html`
+                <wa-option value="${NOT_LISTED}" .label="${missing.percent}">
+                  ${missing.text} (nicht in der Liste)
+                </wa-option>
+              `
+            : nothing
+        }
+      </wa-select>
+    `;
+  }
+
   override render() {
     const editing = this.editing;
     const shown = this.shown;
@@ -174,7 +224,7 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
             slot="actions"
             size="s"
             variant="brand"
-            @click="${() => this.edit(blank(this.units))}"
+            @click="${() => this.edit(blank(this.units, this.defaultUnit))}"
           >
             Neue Position
           </wa-button>
@@ -243,6 +293,7 @@ export class TemplatesView extends ErngElement.withStyles(styles) {
                         @input="${(e: Event) => this.change(t => (t.quantity = nullable(text(e))))}"
                       ></wa-input>
                       ${this.unitSelect(editing)}
+                      ${chargesVat(this.defaultRate) ? this.rateSelect(editing) : nothing}
                       <wa-input
                         label="Preis (netto)"
                         inputmode="decimal"

@@ -14,6 +14,7 @@ mod numbering;
 mod originals;
 mod package;
 mod pipeline;
+mod rates;
 mod render;
 mod sidecar;
 mod store;
@@ -78,6 +79,8 @@ fn add_entries_to_menu(app: &tauri::App) -> tauri::Result<()> {
 ///
 /// When the window or the plugins cannot be set up: the app is of no use then.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// the list of commands is most of it
+#[allow(clippy::too_many_lines)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
@@ -162,9 +165,17 @@ pub fn run() {
             commands::opened_files_command::opened_files,
             commands::preview_invoice_command::preview_invoice,
             commands::preview_invoice_command::invoice_draft_pdf,
+            commands::rates_command::rate_default,
+            commands::rates_command::rate_delete,
+            commands::rates_command::rate_save,
+            commands::rates_command::rate_usage,
+            commands::rates_command::rates_counts,
+            commands::rates_command::rates_list,
+            commands::rates_command::rates_reorder,
             commands::templates_command::template_delete,
             commands::templates_command::template_save,
             commands::templates_command::templates_list,
+            commands::units_command::unit_default,
             commands::units_command::unit_delete,
             commands::units_command::unit_save,
             commands::units_command::unit_usage,

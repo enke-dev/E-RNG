@@ -9,6 +9,11 @@ export function money(amount: string | null | undefined): string {
   return `${sign}${grouped},${frac.padEnd(2, '0')} €`;
 }
 
+/** `19` → `19 %`, `5.5` → `5,5 %`: the German default of the documents, with a no-break space */
+export function percent(rate: string): string {
+  return `${rate.replace('.', ',')}\u00a0%`;
+}
+
 /**
  * Without time, only the date is shown
  * `2026-10-17` → `17.10.2026`

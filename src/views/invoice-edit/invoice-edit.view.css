@@ -69,17 +69,33 @@ wa-dialog::part(dialog) {
   break-inside: auto;
   --reorder-radius: var(--wa-border-radius-m);
 
+  /* with VAT each position has a rate, a compact column of its own between the unit and the price */
+  &.taxed {
+    grid-template-columns:
+      var(--wa-form-control-height) minmax(8rem, 1fr) 5rem 7rem 5.5rem 7rem
+      auto;
+  }
+
   /* side by side, the header row names the columns: the labels of the fields would repeat it;
      the width is what the columns above need at least, with the actions and the gaps */
-  @container positions (width >= 42rem) {
+  @container positions (width >= 46rem) {
     & :is(wa-input, wa-textarea, wa-select)::part(form-control-label) {
       display: none;
     }
   }
 
   /* narrower than that: stacked, the fields carry their labels then */
-  @container positions (width < 42rem) {
+  @container positions (width < 46rem) {
     grid-template-columns: var(--wa-form-control-height) repeat(3, minmax(0, 1fr));
+
+    &.taxed {
+      grid-template-columns: var(--wa-form-control-height) repeat(4, minmax(0, 1fr));
+    }
+
+    /* the price is the last of the four, after the rate */
+    &.taxed .position > :nth-child(6) {
+      grid-column: 5;
+    }
 
     & .position {
       align-items: end;
@@ -88,7 +104,7 @@ wa-dialog::part(dialog) {
         display: none;
       }
 
-      /* handle beside the description, which sits over quantity / unit / price over the actions */
+      /* handle beside the description, which sits over quantity / unit / rate / price over the actions */
       & > :nth-child(1) {
         grid-row: 1;
       }
@@ -140,6 +156,12 @@ wa-dialog::part(dialog) {
   &:not(.head) + &:not(.head) {
     border-top-color: var(--wa-color-surface-border);
   }
+}
+
+/* the select is as narrow as its percent, the list needs room for the labels */
+wa-select.rate::part(listbox) {
+  width: max-content;
+  min-width: 100%;
 }
 
 .row-actions::part(base) {

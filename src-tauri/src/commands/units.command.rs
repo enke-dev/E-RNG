@@ -58,3 +58,15 @@ pub fn units_reorder(store: State<'_, Store>, context_id: i64, ids: Vec<i64>) ->
         .reorder_units(context_id, &ids)
         .map_err(CommandError::from)
 }
+
+/// Makes the unit called `label` the one new positions of a context start with, none: the first
+#[tauri::command]
+pub fn unit_default(
+    store: State<'_, Store>,
+    context_id: i64,
+    label: Option<String>,
+) -> CommandResult<()> {
+    store
+        .choose_default_unit(context_id, label.as_deref())
+        .map_err(CommandError::from)
+}

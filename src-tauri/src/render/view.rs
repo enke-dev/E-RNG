@@ -629,13 +629,20 @@ fn total_rows(
             strong: false,
         });
     }
+    // the net amount per rate is only named when there are several (§ 14 Abs. 4 Nr. 7, 8 UStG),
+    // with one rate it is the net sum above
+    let several = invoice.vat_breakdown.len() > 1;
     for entry in invoice.vat_breakdown.iter().filter(|_| !branding.vat_free) {
         let rate = fmt.percent(&entry.rate.map_or_else(|| "0".to_owned(), |r| r.to_string()));
         rows.push(Total {
-            label: format!(
-                "Umsatzsteuer {rate} auf {}",
-                fmt.money(entry.taxable_amount, currency)
-            ),
+            label: if several {
+                format!(
+                    "Umsatzsteuer {rate} auf {}",
+                    fmt.money(entry.taxable_amount, currency)
+                )
+            } else {
+                format!("Umsatzsteuer {rate}")
+            },
             value: fmt.money(entry.tax_amount, currency),
             strong: false,
         });
@@ -816,6 +823,65 @@ mod tests {
         );
         assert!(view.totals.iter().any(|t| t.label.contains("Umsatzsteuer")));
         assert!(view.lines[0].vat_rate.starts_with("19"));
+    }
+
+    /// The labels of the VAT rows
+    fn vat_rows(draft: &InvoiceDraft, settings: &Settings) -> Vec<String> {
+        let invoice = crate::draft::build_invoice(draft, settings, "RE-1").unwrap();
+        let branding = Branding::for_document(Kind::Invoice, draft, settings, &[]);
+        build(&invoice, &branding, &Format::default())
+            .totals
+            .into_iter()
+            .filter(|t| t.label.starts_with("Umsatzsteuer"))
+            .map(|t| t.label)
+            .collect()
+    }
+
+    #[test]
+    fn with_one_rate_the_vat_row_names_the_rate_only() {
+        let settings = crate::draft::fixtures::settings();
+        let mut draft = crate::draft::fixtures::draft();
+
+        assert_eq!(vat_rows(&draft, &settings), ["Umsatzsteuer 19\u{a0}%"]);
+
+        // every position at the one rate that is not the default is still one rate
+        draft.positions.iter_mut().for_each(|p| {
+            p.tax_rate = Some("7".into());
+        });
+        assert_eq!(vat_rows(&draft, &settings), ["Umsatzsteuer 7\u{a0}%"]);
+    }
+
+    #[test]
+    fn with_several_rates_each_row_names_its_net_amount() {
+        let settings = crate::draft::fixtures::settings();
+        let mut draft = crate::draft::fixtures::draft();
+        draft.positions[1].tax_rate = Some("7".into());
+
+        let rows = vat_rows(&draft, &settings);
+
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.contains(&"Umsatzsteuer 19\u{a0}% auf 950,00\u{a0}€".to_owned()),
+            "{rows:?}"
+        );
+        assert!(
+            rows.contains(&"Umsatzsteuer 7\u{a0}% auf 42,50\u{a0}€".to_owned()),
+            "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn each_line_shows_its_own_rate() {
+        let settings = crate::draft::fixtures::settings();
+        let mut draft = crate::draft::fixtures::draft();
+        draft.positions[1].tax_rate = Some("7".into());
+        let invoice = crate::draft::build_invoice(&draft, &settings, "RE-1").unwrap();
+        let branding = Branding::for_document(Kind::Invoice, &draft, &settings, &[]);
+
+        let view = build(&invoice, &branding, &Format::default());
+
+        let rates: Vec<_> = view.lines.iter().map(|l| l.vat_rate.as_str()).collect();
+        assert_eq!(rates, ["19\u{a0}%", "7\u{a0}%"]);
     }
 
     #[test]

@@ -98,7 +98,7 @@ export async function switchContext(id: number): Promise<boolean> {
   const missing = path.startsWith('/offers') ? next?.missing_for_offers : next?.missing;
   const incomplete = (missing?.length ?? 0) > 0;
   // in the settings the page stays: the same page of the other context, a layout stays a layout
-  const page = /^\/settings\/context-(?:new|\d+)-(company|bank|offers|invoices|units)$/.exec(
+  const page = /^\/settings\/context-(?:new|\d+)-(company|bank|rates|units|offers|invoices)$/.exec(
     path
   )?.[1];
   const inSettings = path.startsWith('/settings');

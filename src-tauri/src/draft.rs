@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::invoice::{line_from_unit_price, Invoice, ProfileKind};
 use crate::model::{Address, Customer, InvoiceDraft, Position, Seller, Settings};
+use crate::rates;
 
 /// The Peppol business process `XRechnung` asks for (BT-23)
 const BUSINESS_PROCESS: &str = "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0";
@@ -210,6 +211,50 @@ fn line(
     .map_err(|_| vec![problem(field("price"), "Der Betrag ist zu groß")])
 }
 
+/// The rate of a position: the one it picked, else the default. A context without VAT charges none
+/// whatever a position carries.
+fn position_rate(
+    index: usize,
+    position: &Position,
+    default: Percentage,
+    vat_free: bool,
+) -> Result<Percentage, InputProblem> {
+    let Some(text) = blank(position.tax_rate.as_deref()).filter(|_| !vat_free) else {
+        return Ok(default);
+    };
+    rates::parse(text).map(Percentage::new).ok_or_else(|| {
+        problem(
+            format!("positions[{index}].tax_rate"),
+            format!("Der Steuersatz „{text}“ ist nicht zulässig"),
+        )
+    })
+}
+
+/// The lines of the positions, each with the rate it picked or else `default`; what is wrong with a
+/// position is noted in `problems`.
+fn lines_of(
+    draft: &InvoiceDraft,
+    default: Percentage,
+    vat_free: bool,
+    problems: &mut Vec<InputProblem>,
+) -> Vec<en16931::InvoiceLine> {
+    draft
+        .positions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, position)| {
+            // a rate that cannot be read is a problem, the line is still checked for the others
+            let rate = position_rate(index, position, default, vat_free).unwrap_or_else(|p| {
+                problems.push(p);
+                default
+            });
+            line(index, position, rate, vat_free)
+                .map_err(|p| problems.extend(p))
+                .ok()
+        })
+        .collect()
+}
+
 /// The invoice for a draft, with the settings in force (or, for exported ones, frozen).
 ///
 /// `number` is the final one, or a placeholder while the draft is only being checked.
@@ -248,15 +293,9 @@ pub fn build_invoice(
         ));
     }
 
-    let mut lines = Vec::new();
-    if let Some(rate) = rate {
-        for (index, position) in draft.positions.iter().enumerate() {
-            match line(index, position, rate, vat_free) {
-                Ok(line) => lines.push(line),
-                Err(p) => problems.extend(p),
-            }
-        }
-    }
+    let lines = rate.map_or_else(Vec::new, |default| {
+        lines_of(draft, default, vat_free, &mut problems)
+    });
     let (Some(issue), Some((delivery, delivery_end)), Some(seller), Some(buyer)) =
         (issue, service, seller, buyer)
     else {
@@ -389,6 +428,9 @@ pub fn for_preview(draft: &InvoiceDraft) -> InvoiceDraft {
         if position.description.trim().is_empty() {
             position.description = "–".into();
         }
+        if blank(position.tax_rate.as_deref()).is_some_and(|r| rates::parse(r).is_none()) {
+            position.tax_rate = None;
+        }
     }
     draft
 }
@@ -464,6 +506,8 @@ pub(crate) mod fixtures {
                     quantity: Some("10".into()),
                     unit: Some("HUR".into()),
                     unit_label: None,
+                    tax_rate: None,
+                    tax_label: None,
                     price: "95,00".into(),
                 },
                 Position {
@@ -471,6 +515,8 @@ pub(crate) mod fixtures {
                     quantity: None,
                     unit: None,
                     unit_label: None,
+                    tax_rate: None,
+                    tax_label: None,
                     price: "42.50".into(),
                 },
             ],
@@ -559,6 +605,123 @@ mod tests {
             };
             assert!(build_invoice(&draft(), &invalid, "X").is_err(), "{bad}");
         }
+    }
+
+    /// The draft with its second position at a rate of its own
+    fn mixed(rate: &str) -> InvoiceDraft {
+        let mut mixed = draft();
+        mixed.positions[1].tax_rate = Some(rate.into());
+        mixed.positions[1].tax_label = Some("Ermäßigt".into());
+        mixed
+    }
+
+    #[test]
+    fn a_position_with_a_rate_of_its_own_is_taxed_with_it_and_each_rate_gets_a_breakdown() {
+        let invoice = build_invoice(&mixed("7,0"), &settings(), "RE-1").unwrap();
+
+        assert_eq!(validate(&invoice, ProfileKind::En16931), Vec::new());
+        let rates: Vec<_> = invoice
+            .lines
+            .iter()
+            .map(|l| l.vat.rate.map(|r| r.to_string()))
+            .collect();
+        assert_eq!(rates, [Some("19".into()), Some("7".into())]);
+        // 950,00 at 19 % = 180,50 and 42,50 at 7 % = 2,975 (rounded), one breakdown each
+        assert_eq!(invoice.vat_breakdown.len(), 2);
+        let amounts: Vec<_> = invoice
+            .vat_breakdown
+            .iter()
+            .map(|b| (b.taxable_amount.to_string(), b.tax_amount.to_string()))
+            .collect();
+        assert!(
+            amounts.contains(&("950.00".into(), "180.50".into())),
+            "{amounts:?}"
+        );
+        assert!(
+            amounts.contains(&("42.50".into(), "2.98".into())),
+            "{amounts:?}"
+        );
+        assert_eq!(totals(&invoice).gross, "1175.98");
+
+        // the same rate as the default is one breakdown
+        let same = build_invoice(&mixed("19"), &settings(), "RE-1").unwrap();
+        assert_eq!(same.vat_breakdown.len(), 1);
+        // a blank rate is the default
+        let blank = build_invoice(&mixed("  "), &settings(), "RE-1").unwrap();
+        assert_eq!(blank.vat_breakdown.len(), 1);
+    }
+
+    #[test]
+    fn a_position_rate_that_is_no_rate_is_an_input_problem_on_that_position() {
+        for bad in ["abc", "0", "-7", "100,5"] {
+            let problems = build_invoice(&mixed(bad), &settings(), "X").unwrap_err();
+
+            assert_eq!(problems.len(), 1, "{bad}: {problems:?}");
+            assert_eq!(problems[0].field, "positions[1].tax_rate");
+            assert_eq!(
+                problems[0].message,
+                format!("Der Steuersatz „{bad}“ ist nicht zulässig")
+            );
+        }
+        // the other problems of the position are told as well
+        let mut both = mixed("abc");
+        both.positions[1].price = String::new();
+        let fields: Vec<_> = build_invoice(&both, &settings(), "X")
+            .unwrap_err()
+            .into_iter()
+            .map(|p| p.field)
+            .collect();
+        assert_eq!(fields, ["positions[1].tax_rate", "positions[1].price"]);
+    }
+
+    #[test]
+    fn without_vat_the_rates_of_the_positions_are_ignored() {
+        let free = Settings {
+            tax_rate: String::new(),
+            ..settings()
+        };
+        // even one that would be refused with VAT
+        for rate in ["7", "abc"] {
+            let invoice = build_invoice(&mixed(rate), &free, "RE-1").unwrap();
+
+            assert_eq!(
+                validate(&invoice, ProfileKind::En16931),
+                Vec::new(),
+                "{rate}"
+            );
+            assert!(invoice.lines.iter().all(|l| l.vat.category.as_str() == "E"));
+            assert_eq!(invoice.vat_breakdown.len(), 1);
+            let t = totals(&invoice);
+            assert_eq!(
+                (t.net.as_str(), t.vat.as_str(), t.gross.as_str()),
+                ("992.50", "0.00", "992.50")
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_of_the_settings_is_the_rate_of_a_position_that_picked_none() {
+        let seven = Settings {
+            tax_rate: "7".into(),
+            ..settings()
+        };
+
+        let invoice = build_invoice(&mixed("19"), &seven, "RE-1").unwrap();
+
+        let rates: Vec<_> = invoice
+            .lines
+            .iter()
+            .map(|l| l.vat.rate.map(|r| r.to_string()))
+            .collect();
+        assert_eq!(rates, [Some("7".into()), Some("19".into())]);
+    }
+
+    #[test]
+    fn the_preview_leaves_a_rate_that_is_no_rate_out() {
+        let preview = for_preview(&mixed("abc"));
+
+        assert_eq!(preview.positions[1].tax_rate, None);
+        assert!(build_invoice(&preview, &settings(), "X").is_ok());
     }
 
     #[test]
@@ -728,6 +891,8 @@ mod tests {
                 quantity: None,
                 unit: None,
                 unit_label: None,
+                tax_rate: None,
+                tax_label: None,
                 price: price.into(),
             }];
             let invoice = build_invoice(&d, &settings(), "RE-1").unwrap();

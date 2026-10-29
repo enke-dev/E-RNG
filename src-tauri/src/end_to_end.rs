@@ -137,7 +137,7 @@ fn out_dir() -> (PathBuf, Option<tempfile::TempDir>) {
 fn store_with(settings: &Settings) -> (Store, i64) {
     let store = Store::in_memory().unwrap();
     let context = store
-        .save_context(&Context::new(settings.clone(), ""), None)
+        .save_context(&Context::new(settings.clone(), ""), None, None)
         .unwrap()
         .id
         .unwrap();

@@ -19,6 +19,9 @@ import type {
   NumberReset,
   Position,
   PositionTemplate,
+  Rate,
+  RateDef,
+  RateUsage,
   Seller,
   Sequence,
   Settings,
@@ -58,6 +61,7 @@ const settings: Settings = {
   },
   tax_rate: '19',
   vat_note: 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.',
+  unit: null,
   payment_days: 14,
   number_pattern: '[RE-]YYYY-NNN',
   number_reset: 'fiscal_year',
@@ -420,6 +424,8 @@ const templates: PositionTemplate[] = [
     quantity: '1',
     unit: 'HUR',
     unit_label: 'Std.',
+    tax_rate: null,
+    tax_label: null,
     price: '95,00',
   },
   {
@@ -429,6 +435,8 @@ const templates: PositionTemplate[] = [
     quantity: null,
     unit: 'C62',
     unit_label: 'Stk.',
+    tax_rate: '7',
+    tax_label: 'Ermäßigt',
     price: '42,50',
   },
   {
@@ -438,6 +446,8 @@ const templates: PositionTemplate[] = [
     quantity: '12',
     unit: 'MON',
     unit_label: 'Monat(e)',
+    tax_rate: null,
+    tax_label: null,
     price: '49,00',
   },
 ];
@@ -458,6 +468,100 @@ const units: Unit[] = [
 const nextUnitId = () => Math.max(0, ...units.map(u => u.id as number)) + 1;
 
 const unitsOf = (contextId: number) => units.filter(u => u.context_id === contextId);
+
+/** What every context starts with, the same as `rates::DEFAULTS` */
+const DEFAULT_RATES: RateDef[] = [
+  { label: 'Regelsatz', rate: '19' },
+  { label: 'Ermäßigt', rate: '7' },
+];
+
+/** The rates of all contexts, in the order of their lists */
+const rates: Rate[] = [
+  ...DEFAULT_RATES.map(r => ({ ...r, context_id: 1 })),
+  ...DEFAULT_RATES.map(r => ({ ...r, context_id: 2 })),
+].map((r, i) => ({ ...r, id: i + 1 }));
+
+const nextRateId = () => Math.max(0, ...rates.map(r => r.id as number)) + 1;
+
+const ratesOf = (contextId: number) => rates.filter(r => r.context_id === contextId);
+
+/** Mirrors `rates::canonical`: more than 0 and at most 100, comma or dot, no trailing zeros */
+function canonicalRate(text: string | null | undefined): string | undefined {
+  const value = (text ?? '').trim();
+  const rate = value === '' ? Number.NaN : Number(value.replace(',', '.'));
+  return rate > 0 && rate <= 100 ? String(rate) : undefined;
+}
+
+type Rated = Pick<Position, 'tax_rate' | 'tax_label'>;
+
+const namesRate = (rate: Rate) => (p: Rated) =>
+  canonicalRate(p.tax_rate) === rate.rate && (p.tax_label ?? '').trim() === rate.label;
+
+/** The drafts of the context and the saved positions it sees, what a rate change reaches */
+const reachedByRate = (rate: Rate) => {
+  const names = namesRate(rate);
+  return {
+    templates: templates.filter(
+      t => (t.context_id === null || t.context_id === rate.context_id) && names(t)
+    ),
+    drafts: invoices.filter(
+      i => i.context_id === rate.context_id && i.status === 'draft' && i.draft.positions.some(names)
+    ),
+    names,
+  };
+};
+
+const rateUsageOf = (rate: Rate): RateUsage => {
+  const { templates: saved, drafts } = reachedByRate(rate);
+  const context = contexts.find(c => c.id === rate.context_id);
+  return {
+    templates: saved.map(t => ({
+      id: t.id as number,
+      description: t.description,
+      context_id: t.context_id,
+    })),
+    drafts: drafts.map(i => ({
+      invoice_id: i.id,
+      kind: i.kind,
+      customer: i.draft.customer.name,
+    })),
+    default: canonicalRate(context?.settings.tax_rate) === rate.rate,
+  };
+};
+
+/** What names `from` names `to` instead: drafts, saved positions, and the default by its value */
+function followRate(from: Rate, to: RateDef) {
+  const { templates: saved, drafts, names } = reachedByRate(from);
+  const point = (p: Rated) => {
+    p.tax_rate = to.rate;
+    p.tax_label = to.label;
+  };
+  saved.forEach(point);
+  drafts.forEach(i => i.draft.positions.filter(names).forEach(point));
+  const context = contexts.find(c => c.id === from.context_id);
+  if (context && from.rate !== to.rate && canonicalRate(context.settings.tax_rate) === from.rate) {
+    context.settings.tax_rate = to.rate;
+  }
+}
+
+/** Mirrors `rates::check`: a label and a rate that nothing else in the list has */
+function checkedRate(rate: RateDef, others: Rate[]): RateDef {
+  const label = rate.label.trim();
+  if (label === '') {
+    throw 'Eine Bezeichnung ist erforderlich.';
+  }
+  const value = canonicalRate(rate.rate);
+  if (value === undefined) {
+    throw 'Der Steuersatz muss größer als 0 und höchstens 100 sein (in Prozent).';
+  }
+  if (others.some(o => o.label.trim().toLowerCase() === label.toLowerCase())) {
+    throw `Die Bezeichnung „${label}“ gibt es schon.`;
+  }
+  if (others.some(o => o.rate === value)) {
+    throw `Den Steuersatz ${value} % gibt es schon.`;
+  }
+  return { label, rate: value };
+}
 
 /** The same names the app ships (`units::catalog`) */
 const catalog: CatalogEntry[] = unitNames.units;
@@ -536,6 +640,8 @@ const draftOf = (customer: Customer): InvoiceDraft => ({
       quantity: '10',
       unit: 'HUR',
       unit_label: 'Std.',
+      tax_rate: null,
+      tax_label: null,
       price: '95,00',
     },
   ],
@@ -620,7 +726,12 @@ function totals(draft: InvoiceDraft) {
     (sum, p) => sum + (number(p.quantity) || 1) * number(p.price),
     0
   );
-  const vat = (net * (Number(settings.tax_rate) || 0)) / 100;
+  // a position's own rate, else the default; no VAT at all ignores them
+  const fallback = Number(settings.tax_rate.replace(',', '.')) || 0;
+  const vat = draft.positions.reduce((sum, p) => {
+    const own = settings.tax_rate.trim() === '' ? undefined : canonicalRate(p.tax_rate);
+    return sum + ((number(p.quantity) || 1) * number(p.price) * (Number(own) || fallback)) / 100;
+  }, 0);
   return { net: euro(net), vat: euro(vat), gross: euro(net + vat) };
 }
 
@@ -638,6 +749,12 @@ function check(draft: InvoiceDraft) {
     }
     if (p.price.trim() === '') {
       problems.push({ field: `positions[${i}].price`, message: 'Ein Preis ist erforderlich' });
+    }
+    if ((p.tax_rate ?? '').trim() !== '' && canonicalRate(p.tax_rate) === undefined) {
+      problems.push({
+        field: `positions[${i}].tax_rate`,
+        message: `Der Steuersatz „${p.tax_rate}“ ist nicht zulässig`,
+      });
     }
   });
   const findings =
@@ -802,6 +919,28 @@ export function installMocks() {
             (given.length > 0 ? given : DEFAULT_UNITS).forEach(u =>
               units.push({ ...u, id: nextUnitId(), context_id: saved.id as number })
             );
+            const wanted = (args['rates'] as RateDef[] | null) ?? [];
+            const start: RateDef[] = [];
+            [...(wanted.length > 0 ? wanted : DEFAULT_RATES)].forEach(r =>
+              start.push(
+                checkedRate(
+                  r,
+                  start.map(s => ({ ...s, id: null, context_id: 0 }))
+                )
+              )
+            );
+            // the default is one of the list, whatever list the context was handed
+            const charged = canonicalRate(saved.settings.tax_rate);
+            if (charged !== undefined && !start.some(r => r.rate === charged)) {
+              const taken = start.some(r => r.label.toLowerCase() === 'steuersatz');
+              start.push({
+                label: taken ? `Steuersatz ${charged} %` : 'Steuersatz',
+                rate: charged,
+              });
+            }
+            start.forEach(r =>
+              rates.push({ ...r, id: nextRateId(), context_id: saved.id as number })
+            );
             return saved;
           }
           const at = contexts.findIndex(c => c.id === context.id);
@@ -827,6 +966,7 @@ export function installMocks() {
         }
         case 'context_remove':
           units.splice(0, units.length, ...units.filter(u => u.context_id !== args['id']));
+          rates.splice(0, rates.length, ...rates.filter(r => r.context_id !== args['id']));
           contexts.splice(
             contexts.findIndex(c => c.id === args['id']),
             1
@@ -987,6 +1127,11 @@ export function installMocks() {
           const old = { ...before };
           Object.assign(before, def);
           retarget(old, def);
+          // the default unit goes by its label
+          const owner = contexts.find(c => c.id === context);
+          if (owner?.settings.unit === old.label) {
+            owner.settings.unit = def.label;
+          }
           return { ...before };
         }
         case 'unit_usage':
@@ -1005,6 +1150,19 @@ export function installMocks() {
             retarget(unit, target);
           }
           units.splice(units.indexOf(unit), 1);
+          // no replacement for a default: the first unit is it then
+          const owner = contexts.find(c => c.id === unit.context_id);
+          if (owner?.settings.unit === unit.label) {
+            owner.settings.unit = null;
+          }
+          return null;
+        }
+        case 'unit_default': {
+          const label = args['label'] as string | null;
+          if (label !== null && !unitsOf(args['contextId']).some(u => u.label === label)) {
+            throw 'Diese Einheit gibt es nicht.';
+          }
+          (contexts.find(c => c.id === args['contextId']) as Context).settings.unit = label;
           return null;
         }
         case 'units_reorder': {
@@ -1015,6 +1173,71 @@ export function installMocks() {
             units.length,
             ...units.filter(u => u.context_id !== args['contextId']),
             ...ids.map(id => own.find(u => u.id === id) as Unit)
+          );
+          return null;
+        }
+        case 'rates_list':
+          return ratesOf(args['contextId']).map(r => ({ ...r }));
+        case 'rates_counts':
+          return Object.fromEntries(
+            ratesOf(args['contextId']).map(r => {
+              const usage = rateUsageOf(r);
+              return [r.id, usage.templates.length + usage.drafts.length];
+            })
+          );
+        case 'rate_save': {
+          const rate = args['rate'] as Rate;
+          const before = rate.id === null ? undefined : rates.find(r => r.id === rate.id);
+          const context = before?.context_id ?? rate.context_id;
+          const def = checkedRate(
+            rate,
+            ratesOf(context).filter(r => r.id !== rate.id)
+          );
+          if (!before) {
+            const added = { ...def, id: nextRateId(), context_id: context };
+            rates.push(added);
+            return { ...added };
+          }
+          const old = { ...before };
+          Object.assign(before, def);
+          if (old.rate !== def.rate || old.label !== def.label) {
+            followRate(old, def);
+          }
+          return { ...before };
+        }
+        case 'rate_usage':
+          return rateUsageOf(rates.find(r => r.id === args['id']) as Rate);
+        case 'rate_delete': {
+          const rate = rates.find(r => r.id === args['id']) as Rate;
+          const target = rates.find(r => r.id === args['replacement']);
+          const usage = rateUsageOf(rate);
+          if (usage.templates.length + usage.drafts.length > 0 || usage.default) {
+            if (!target || target.context_id !== rate.context_id || target === rate) {
+              throw 'Der Steuersatz wird noch verwendet, bitte einen Ersatz wählen.';
+            }
+            followRate(rate, target);
+          }
+          rates.splice(rates.indexOf(rate), 1);
+          return null;
+        }
+        case 'rate_default': {
+          const rate = String(args['rate']).trim();
+          const listed = ratesOf(args['contextId']).find(r => r.rate === canonicalRate(rate));
+          if (rate !== '' && !listed) {
+            throw 'Diesen Steuersatz gibt es nicht.';
+          }
+          (contexts.find(c => c.id === args['contextId']) as Context).settings.tax_rate =
+            listed?.rate ?? '';
+          return null;
+        }
+        case 'rates_reorder': {
+          const ids = args['ids'] as number[];
+          const own = ratesOf(args['contextId']);
+          rates.splice(
+            0,
+            rates.length,
+            ...rates.filter(r => r.context_id !== args['contextId']),
+            ...ids.map(id => own.find(r => r.id === id) as Rate)
           );
           return null;
         }

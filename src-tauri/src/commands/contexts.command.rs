@@ -3,6 +3,7 @@ use tauri::State;
 use crate::context::{Context, ContextUsage, Disposition, Missing, BRANDS};
 use crate::model::{Kind, Settings};
 use crate::numbering::{reset_problem, Calendar, Pattern, Reset};
+use crate::rates::RateDef;
 use crate::store::{Sequence, Store};
 use crate::units::UnitDef;
 use crate::utils::{issue_day, today, CommandError, CommandResult};
@@ -15,12 +16,13 @@ pub fn contexts_list(store: State<'_, Store>) -> CommandResult<Vec<Context>> {
 
 /// Creates (`id` is `None`) or updates a context. An incomplete one is saved as well, the data is
 /// filled in step by step, `missing` tells what is still to do. A new context starts with `units`
-/// as its list of units (none: the defaults); an existing one keeps its own.
+/// and `rates` as its lists (none: the defaults); an existing one keeps its own.
 #[tauri::command]
 pub fn context_save(
     store: State<'_, Store>,
     mut context: Context,
     units: Option<Vec<UnitDef>>,
+    rates: Option<Vec<RateDef>>,
 ) -> CommandResult<Context> {
     // what a paste brings along ends up in the XML and the PDF, so it goes before saving
     context.settings.seller = context.settings.seller.cleaned();
@@ -48,7 +50,7 @@ pub fn context_save(
         return Err(problem.into());
     }
     store
-        .save_context(&context, units.as_deref())
+        .save_context(&context, units.as_deref(), rates.as_deref())
         .map_err(CommandError::from)
 }
 

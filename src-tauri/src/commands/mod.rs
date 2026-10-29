@@ -14,6 +14,8 @@ pub mod layouts_command;
 pub mod opened_files_command;
 #[path = "preview-invoice.command.rs"]
 pub mod preview_invoice_command;
+#[path = "rates.command.rs"]
+pub mod rates_command;
 #[path = "templates.command.rs"]
 pub mod templates_command;
 #[path = "units.command.rs"]

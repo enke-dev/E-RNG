@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Unit } from './api.utils.js';
+import type { Rate, Unit } from './api.utils.js';
 import type { Defaults } from './defaults.utils.js';
-import { inheritedDefaults, inheritedUnits } from './defaults.utils.js';
+import { inheritedDefaults, inheritedRates, inheritedUnits } from './defaults.utils.js';
 
 const defaults = (): Defaults => ({
   tax_rate: '7',
   vat_note: 'Kleinunternehmer',
+  unit: 'Stunde',
   payment_days: 30,
   number_pattern: '[R-]GGGG-NNN',
   number_reset: 'quarter',
@@ -71,5 +72,19 @@ describe('inheritedUnits', () => {
     }
 
     expect(units[0]?.label).toBe('Stunde');
+  });
+});
+
+describe('inheritedRates', () => {
+  const rates: Rate[] = [
+    { id: 4, context_id: 1, label: 'Regelsatz', rate: '19' },
+    { id: 2, context_id: 1, label: 'Halb', rate: '5.5' },
+  ];
+
+  it('takes the rates along in their order, without the ids of the context they came from', () => {
+    expect(inheritedRates(rates)).toEqual([
+      { label: 'Regelsatz', rate: '19' },
+      { label: 'Halb', rate: '5.5' },
+    ]);
   });
 });

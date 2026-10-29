@@ -285,6 +285,8 @@ fn sample(settings: &crate::model::Settings, layout: Option<&CustomLayout>) -> I
             quantity: Some(n.to_string()),
             unit: Some("C62".into()),
             unit_label: Some("Stk.".into()),
+            tax_rate: None,
+            tax_label: None,
             price: "12.50".into(),
         })
         .collect();

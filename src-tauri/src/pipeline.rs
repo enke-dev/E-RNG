@@ -233,6 +233,47 @@ mod tests {
         }
     }
 
+    /// Positions with rates of their own give one breakdown per rate, valid for the validator
+    /// (`RENDER_OUT` keeps the PDF)
+    #[test]
+    #[ignore = "needs the sidecars: bun run generate:sidecars"]
+    fn an_invoice_with_two_rates_passes_the_validator() {
+        use crate::draft::{build_invoice, fixtures};
+
+        let settings = fixtures::settings();
+        for profile in [ProfileKind::En16931, ProfileKind::XRechnung] {
+            let mut draft = fixtures::draft();
+            draft.profile = profile;
+            draft.buyer_reference = Some("991-01234-56".into());
+            draft.positions[1].tax_rate = Some("7".into());
+            draft.positions[1].tax_label = Some("Ermäßigt".into());
+            let invoice = build_invoice(&draft, &settings, "RE-2026-001").unwrap();
+            assert_eq!(invoice.vat_breakdown.len(), 2);
+            let branding =
+                Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[]);
+            let dir = tempfile::tempdir().unwrap();
+
+            let produced = produce(
+                &Sidecars::in_repo(),
+                dir.path(),
+                &invoice,
+                profile,
+                &branding,
+            )
+            .unwrap();
+
+            let errors: Vec<_> = produced.report.errors().collect();
+            assert!(produced.report.valid, "{profile:?}: {errors:#?}");
+            if let Some(out) = std::env::var_os("RENDER_OUT") {
+                std::fs::copy(
+                    &produced.pdf,
+                    std::path::Path::new(&out).join(format!("two-rates-{profile:?}.pdf")),
+                )
+                .unwrap();
+            }
+        }
+    }
+
     /// A customer with only a name (as a quick invoice is often made) leaves the validator without
     /// warnings: no empty address elements in the XML
     #[test]

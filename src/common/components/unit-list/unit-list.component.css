@@ -53,3 +53,7 @@
   margin: 0;
   padding-inline-start: var(--wa-space-l);
 }
+
+.default {
+  margin-block-end: var(--wa-space-m);
+}

@@ -1,10 +1,11 @@
-import type { Settings, Unit, UnitDef } from './api.utils.js';
+import type { Rate, RateDef, Settings, Unit, UnitDef } from './api.utils.js';
 
 /** The settings that are defaults for documents, not facts about the issuer */
 export type Defaults = Pick<
   Settings,
   | 'tax_rate'
   | 'vat_note'
+  | 'unit'
   | 'payment_days'
   | 'number_pattern'
   | 'number_reset'
@@ -22,6 +23,7 @@ export function inheritedDefaults(from: Defaults): Defaults {
   return structuredClone({
     tax_rate: from.tax_rate,
     vat_note: from.vat_note,
+    unit: from.unit,
     payment_days: from.payment_days,
     number_pattern: from.number_pattern,
     number_reset: from.number_reset,
@@ -37,4 +39,9 @@ export function inheritedDefaults(from: Defaults): Defaults {
 /** The units a new context starts with: those of the one in use, in their order, as copies */
 export function inheritedUnits(from: Unit[]): UnitDef[] {
   return from.map(({ code, label }) => ({ code, label }));
+}
+
+/** The rates a new context starts with: those of the one in use, in their order, as copies */
+export function inheritedRates(from: Rate[]): RateDef[] {
+  return from.map(({ label, rate }) => ({ label, rate }));
 }

@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
+import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '../page/page.component.js';
 import '../unit-code/unit-code.component.js';
 
@@ -20,7 +21,7 @@ import { text } from '../../utils/form.utils.js';
 import { notify, notifyError } from '../../utils/notify.utils.js';
 import reorderStyles from '../../utils/reorder.utils.css';
 import { Reorder } from '../../utils/reorder.utils.js';
-import { catalogName } from '../../utils/units.utils.js';
+import { catalogName, defaultUnitOf } from '../../utils/units.utils.js';
 import styles from './unit-list.component.css';
 
 /** The catalog is the same for every context and comes once, on first use */
@@ -37,12 +38,18 @@ const isEmpty = (usage: UnitUsage) => usage.templates.length + usage.drafts.leng
  * The units of one context: what the positions of its invoices and offers pick from. Every change
  * is saved at once, in a dialog. A new label reaches drafts and saved positions, created invoices
  * keep the one they were made with. A unit that is still in use is deleted by naming the unit that
- * takes its place.
+ * takes its place. The default unit, which new positions start with, is chosen at the top and saved
+ * at once as well. Whenever something was saved, `units-change` tells the host, which holds the
+ * context's settings: a renamed or deleted default unit changes them.
  */
 @customElement('erng-unit-list')
 export class UnitListComponent extends ErngElement.withStyles(reorderStyles, styles) {
   @property({ type: Number, attribute: 'context-id' })
   contextId: number | undefined;
+
+  /** The label of the context's default unit as it is stored, none: the first unit */
+  @property({ attribute: 'default-unit' })
+  defaultUnit: string | null = null;
 
   private readonly reorder = new Reorder(this, {
     rows: '.unit',
@@ -97,6 +104,29 @@ export class UnitListComponent extends ErngElement.withStyles(reorderStyles, sty
     }
   }
 
+  /** The list changed: show it, and tell the host, whose copy of the settings may have followed */
+  private async changed() {
+    await this.load();
+    this.dispatchEvent(new CustomEvent('units-change', { bubbles: true, composed: true }));
+  }
+
+  private async chooseDefault(id: string) {
+    const contextId = this.contextId;
+    const unit = this.units.find(u => String(u.id) === id);
+    if (!unit || contextId === undefined) {
+      return;
+    }
+    const before = this.defaultUnit;
+    this.defaultUnit = unit.label;
+    try {
+      await api.unitDefault(contextId, unit.label);
+      await this.changed();
+    } catch (error) {
+      this.defaultUnit = before;
+      notifyError(error);
+    }
+  }
+
   private openAdd() {
     this.editing = { id: null, label: '', code: 'C62' };
   }
@@ -134,7 +164,7 @@ export class UnitListComponent extends ErngElement.withStyles(reorderStyles, sty
         label: edit.label,
       });
       this.editing = undefined;
-      await this.load();
+      await this.changed();
       notify('Die Einheit ist gespeichert.');
     } catch (error) {
       notifyError(error);
@@ -183,7 +213,7 @@ export class UnitListComponent extends ErngElement.withStyles(reorderStyles, sty
 
   private async deleteUnit(unit: Unit, replacement: number | null) {
     await api.unitDelete(unit.id as number, replacement);
-    await this.load();
+    await this.changed();
     notify(`„${unit.label}“ ist gelöscht.`);
   }
 
@@ -211,12 +241,26 @@ export class UnitListComponent extends ErngElement.withStyles(reorderStyles, sty
   private renderRow(unit: Unit, index: number) {
     const name = this.names.get(unit.code);
     const uses = this.counts[String(unit.id)] ?? 0;
+    const isDefault = defaultUnitOf(this.units, this.defaultUnit) === unit;
     return html`
       <div class="unit">
         ${this.reorder.handle(index)}
         <button class="main" type="button" @click="${() => void this.openEdit(unit)}">
           <strong>${unit.label}</strong>
           <span class="muted">${unit.code}${name ? ` – ${name}` : ''}</span>
+          ${
+            isDefault
+              ? html`
+                  <wa-tag
+                    size="small"
+                    variant="brand"
+                    title="Die Einheit, mit der neue Positionen beginnen"
+                  >
+                    Standard
+                  </wa-tag>
+                `
+              : nothing
+          }
           ${
             uses > 0
               ? html`
@@ -228,6 +272,22 @@ export class UnitListComponent extends ErngElement.withStyles(reorderStyles, sty
           }
         </button>
       </div>
+    `;
+  }
+
+  /** The unit new positions start with: one of the list, the first until another is chosen */
+  private defaultSelect() {
+    const chosen = defaultUnitOf(this.units, this.defaultUnit);
+    return html`
+      <wa-select
+        class="default"
+        label="Standard-Einheit"
+        hint="Mit dieser Einheit beginnen neue Positionen."
+        .value="${chosen ? String(chosen.id) : ''}"
+        @change="${(e: Event) => void this.chooseDefault(String((e.target as WaSelect).value))}"
+      >
+        ${this.units.map(u => html`<wa-option value="${String(u.id)}">${u.label}</wa-option>`)}
+      </wa-select>
     `;
   }
 
@@ -379,6 +439,7 @@ export class UnitListComponent extends ErngElement.withStyles(reorderStyles, sty
           Bezeichnung, übernehmen sie Entwürfe und gespeicherte Positionen; erstellte Rechnungen und
           Angebote behalten ihre.
         </span>
+        ${this.defaultSelect()}
         <div class="units">${this.units.map((unit, index) => this.renderRow(unit, index))}</div>
         <wa-button slot="primary" variant="brand" @click="${this.openAdd}">
           Einheit hinzufügen

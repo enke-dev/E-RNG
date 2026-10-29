@@ -40,6 +40,7 @@ import type {
   PositionTemplate,
   Preview,
   ProduceError,
+  Rate,
   Settings,
   StoredInvoice,
   Unit,
@@ -48,7 +49,7 @@ import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
-import { formatDate, money } from '../../common/utils/format.utils.js';
+import { formatDate, money, percent } from '../../common/utils/format.utils.js';
 import {
   draftTitle,
   haystack,
@@ -59,10 +60,11 @@ import {
   validUntil,
 } from '../../common/utils/kind.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
+import { chargesVat, pickRate, rateChoice, rateText } from '../../common/utils/rates.utils.js';
 import reorderStyles from '../../common/utils/reorder.utils.css';
 import { Reorder } from '../../common/utils/reorder.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
-import { firstUnit, pick, unitLabel, unitOf } from '../../common/utils/units.utils.js';
+import { pick, startUnit, unitLabel, unitOf } from '../../common/utils/units.utils.js';
 import styles from './invoice-edit.view.css';
 
 const blankCustomer = (): Customer => ({
@@ -75,7 +77,7 @@ const blankCustomer = (): Customer => ({
   buyer_reference: null,
 });
 
-/** The value of the unit select for a unit that is not in the list */
+/** The value of the unit and rate selects for one that is not in the list */
 const NOT_LISTED = 'not-listed';
 
 @customElement('erng-invoice-edit')
@@ -101,6 +103,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   @state() private customers: Customer[] = [];
   /** The units of the invoice's context, what the positions pick from */
   @state() private units: Unit[] = [];
+  /** The VAT rates of the invoice's context, what the positions pick from */
+  @state() private rates: Rate[] = [];
   @state() private layouts: LayoutInfo[] = [];
   @state() private check: Check | undefined;
   @state() private busy = false;
@@ -225,22 +229,26 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         return;
       }
       const settings = context.settings;
-      const [customers, layouts, units] = await Promise.all([
+      const [customers, layouts, units, rates] = await Promise.all([
         api.customersList(contextId),
         api.layoutsList(contextId),
         api.unitsList(contextId),
+        api.ratesList(contextId),
       ]);
       this.contextId = contextId;
       this.layouts = layouts;
       this.units = units;
+      this.rates = rates;
       this.settings = settings;
       this.customers = customers;
       if (stored === undefined) {
         this.stored = undefined;
         // with the default layout and texts of its kind, which it can change for itself
         this.draft = await api.invoiceBlank(contextId, this.kind);
-        // a new position starts with the first unit of the list
-        this.draft.positions.forEach(position => Object.assign(position, firstUnit(units)));
+        // a new position starts with the default unit of the context
+        this.draft.positions.forEach(position =>
+          Object.assign(position, startUnit(units, settings.unit))
+        );
       } else {
         this.stored = stored;
         this.draft = stored.draft;
@@ -595,7 +603,14 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       void this.openTemplates();
     } else {
       this.edit(d =>
-        d.positions.push({ description: '', quantity: null, ...firstUnit(this.units), price: '' })
+        d.positions.push({
+          description: '',
+          quantity: null,
+          ...startUnit(this.units, this.settings?.unit),
+          tax_rate: null,
+          tax_label: null,
+          price: '',
+        })
       );
     }
   }
@@ -621,11 +636,11 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
 
   private addTemplate(template: PositionTemplate) {
     this.edit(draft => {
-      const { description, quantity, unit, unit_label, price } = template;
+      const { description, quantity, unit, unit_label, tax_rate, tax_label, price } = template;
       const first = draft.positions[0];
       const untouched =
         draft.positions.length === 1 && first?.description === '' && first.price === '';
-      const position = { description, quantity, unit, unit_label, price };
+      const position = { description, quantity, unit, unit_label, tax_rate, tax_label, price };
       if (untouched) {
         draft.positions[0] = position;
       } else {
@@ -937,15 +952,64 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     `;
   }
 
+  /** The default rate of the document: the frozen settings when it is created, else the context's */
+  private get defaultRate() {
+    return this.draft?.frozen?.tax_rate ?? this.settings?.tax_rate ?? '';
+  }
+
+  /**
+   * The rate of a position, picked from the list of the context; one that picks none shows the
+   * default of the context. One that is not in the list (deleted, changed since, from an older
+   * document) still shows, and can be switched; the closed select shows only the percent, the open
+   * list the labels.
+   */
+  private rateSelect(position: Position, index: number, locked: boolean) {
+    const { selected, missing } = rateChoice(this.rates, position, this.defaultRate);
+    return html`
+      <wa-select
+        label="USt."
+        size="s"
+        class="rate"
+        ?disabled="${locked}"
+        .value="${selected ? String(selected.id) : NOT_LISTED}"
+        @change="${(e: Event) => {
+          const id = String((e.target as WaSelect).value);
+          const rate = this.rates.find(r => String(r.id) === id);
+          this.editPosition(index, pos => pickRate(pos, rate));
+        }}"
+      >
+        ${this.rates.map(
+          r => html`
+            <wa-option value="${String(r.id)}" .label="${percent(r.rate)}">
+              ${rateText(r)}
+            </wa-option>
+          `
+        )}
+        ${
+          missing
+            ? html`
+                <wa-option value="${NOT_LISTED}" .label="${missing.percent}">
+                  ${missing.text}${locked ? '' : ' (nicht in der Liste)'}
+                </wa-option>
+              `
+            : nothing
+        }
+      </wa-select>
+    `;
+  }
+
   private renderPositions(locked: boolean) {
     const draft = this.draft as InvoiceDraft;
+    // a context without VAT has no rates to pick, the position takes none
+    const taxed = chargesVat(this.defaultRate);
     return html`
-      <div class="positions">
+      <div class="${taxed ? 'positions taxed' : 'positions'}">
         <div class="position head">
           <span></span>
           <span>Beschreibung</span>
           <span>Menge</span>
           <span>Einheit</span>
+          ${taxed ? html`<span>USt.</span>` : nothing}
           <span>Preis (netto)</span>
           <span></span>
         </div>
@@ -971,7 +1035,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                 .value="${p.quantity ?? ''}"
                 @input="${(e: Event) => this.editPosition(i, pos => (pos.quantity = nullable(text(e))))}"
               ></wa-input>
-              ${this.unitSelect(p, i, locked)}
+              ${this.unitSelect(p, i, locked)} ${taxed ? this.rateSelect(p, i, locked) : nothing}
               <wa-input
                 label="Preis (netto)"
                 inputmode="decimal"

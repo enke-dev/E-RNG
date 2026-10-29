@@ -19,6 +19,7 @@ use crate::model::{
     Position, PositionTemplate, Settings, Status, StoredInvoice,
 };
 use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
+use crate::rates::{self, Rate, RateDef, RateUsage};
 use crate::units::{self, DraftRef, TemplateRef, Unit, UnitDef, UnitUsage};
 
 pub struct Store(Mutex<Connection>);
@@ -36,7 +37,7 @@ pub struct Sequence {
     pub floor: Option<u32>,
 }
 
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -105,25 +106,37 @@ fn migrate(conn: &Connection) -> Result<()> {
     if version < 10 {
         migrate_to_units(conn)?;
     }
+    if version < 11 {
+        migrate_to_rates(conn)?;
+    }
     Ok(())
 }
 
 /// A unit as a position names it: code and label
 type UnitKey = (String, String);
 
-/// What the drafts and saved positions that a context's units reach call their units, in the order
-/// of their ids: the context's own and the shared saved positions, then its drafts. Created
-/// documents are not looked at, they keep their labels.
-struct Held {
-    templates: Vec<(TemplateRef, UnitKey)>,
-    drafts: Vec<(DraftRef, Vec<UnitKey>)>,
+/// A rate as a position names it: value and label as it picked them, none for the default
+type RateKey = Option<(String, String)>;
+
+/// What the drafts and saved positions that a context's units or rates reach call them (`K` is the
+/// key of the one or the other), in the order of their ids: the context's own and the shared saved
+/// positions, then its drafts. Created documents are not looked at, they keep what they have.
+struct Held<K> {
+    templates: Vec<(TemplateRef, K)>,
+    drafts: Vec<(DraftRef, Vec<K>)>,
 }
 
 fn key_of(position: &Position) -> UnitKey {
     (position.unit_code().to_owned(), position.unit_label())
 }
 
-fn held(conn: &Connection, context: i64) -> Result<Held> {
+fn rate_key_of(position: &Position) -> RateKey {
+    let rate = position.tax_rate.as_deref().and_then(rates::canonical)?;
+    let label = position.tax_label.as_deref().unwrap_or_default().trim();
+    Some((rate, label.to_owned()))
+}
+
+fn held<K>(conn: &Connection, context: i64, key: fn(&Position) -> K) -> Result<Held<K>> {
     let mut statement = conn.prepare(
         "SELECT id, json, context_id FROM templates
          WHERE context_id IS NULL OR context_id = ?1 ORDER BY id",
@@ -147,7 +160,7 @@ fn held(conn: &Connection, context: i64) -> Result<Held> {
                     description: position.description.clone(),
                     context_id,
                 },
-                key_of(&position),
+                key(&position),
             ))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -175,28 +188,46 @@ fn held(conn: &Connection, context: i64) -> Result<Held> {
                     kind: Kind::from_column(&kind),
                     customer: draft.customer.name.clone(),
                 },
-                draft.positions.iter().map(key_of).collect(),
+                draft.positions.iter().map(key).collect(),
             ))
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(Held { templates, drafts })
 }
 
-impl Held {
-    fn usage_of(&self, key: &UnitKey) -> UnitUsage {
-        UnitUsage {
-            templates: self
-                .templates
+impl<K: PartialEq> Held<K> {
+    /// The saved positions and drafts that name `key`
+    fn reached(&self, key: &K) -> (Vec<TemplateRef>, Vec<DraftRef>) {
+        (
+            self.templates
                 .iter()
                 .filter(|(_, k)| k == key)
                 .map(|(r, _)| r.clone())
                 .collect(),
-            drafts: self
-                .drafts
+            self.drafts
                 .iter()
                 .filter(|(_, keys)| keys.contains(key))
                 .map(|(r, _)| r.clone())
                 .collect(),
+        )
+    }
+}
+
+impl Held<UnitKey> {
+    fn usage_of(&self, key: &UnitKey) -> UnitUsage {
+        let (templates, drafts) = self.reached(key);
+        UnitUsage { templates, drafts }
+    }
+}
+
+impl Held<RateKey> {
+    /// `default`: whether the rate is the context's default, the caller knows that
+    fn usage_of(&self, rate: &(String, String), default: bool) -> RateUsage {
+        let (templates, drafts) = self.reached(&Some(rate.clone()));
+        RateUsage {
+            templates,
+            drafts,
+            default,
         }
     }
 }
@@ -213,10 +244,30 @@ fn retarget(position: &mut serde_json::Value, from: &UnitKey, to: &UnitKey) -> R
     Ok(true)
 }
 
-/// Drafts of the context and saved positions it sees (shared ones included) that name the unit
-/// `from` take `to` instead, in the caller's transaction. Nothing else about them changes, not even
+/// Points the position at another rate when it picked `from`, returns whether it did. Only the two
+/// fields are written.
+fn retarget_rate(
+    position: &mut serde_json::Value,
+    from: &(String, String),
+    to: &(String, String),
+) -> Result<bool> {
+    let named: Position = serde_json::from_value(position.clone())?;
+    if rate_key_of(&named).as_ref() != Some(from) {
+        return Ok(false);
+    }
+    position["tax_rate"] = to.0.clone().into();
+    position["tax_label"] = to.1.clone().into();
+    Ok(true)
+}
+
+/// Drafts of the context and saved positions it sees (shared ones included) that `retarget` takes
+/// for its own and changes, in the caller's transaction. Nothing else about them changes, not even
 /// the time they were saved: the lists keep their order.
-fn rewrite_positions(conn: &Connection, context: i64, from: &UnitKey, to: &UnitKey) -> Result<()> {
+fn rewrite_positions(
+    conn: &Connection,
+    context: i64,
+    retarget: &dyn Fn(&mut serde_json::Value) -> Result<bool>,
+) -> Result<()> {
     let templates = conn
         .prepare("SELECT id, json FROM templates WHERE context_id IS NULL OR context_id = ?1")?
         .query_map([context], |r| {
@@ -225,7 +276,7 @@ fn rewrite_positions(conn: &Connection, context: i64, from: &UnitKey, to: &UnitK
         .collect::<std::result::Result<Vec<_>, _>>()?;
     for (id, json) in templates {
         let mut value: serde_json::Value = serde_json::from_str(&json)?;
-        if retarget(&mut value, from, to)? {
+        if retarget(&mut value)? {
             conn.execute(
                 "UPDATE templates SET json = ?1 WHERE id = ?2",
                 params![serde_json::to_string(&value)?, id],
@@ -242,7 +293,7 @@ fn rewrite_positions(conn: &Connection, context: i64, from: &UnitKey, to: &UnitK
         let mut value: serde_json::Value = serde_json::from_str(&json)?;
         let changed = value["positions"].as_array_mut().map_or(Ok(false), |all| {
             all.iter_mut().try_fold(false, |changed, position| {
-                retarget(position, from, to).map(|hit| hit || changed)
+                retarget(position).map(|hit| hit || changed)
             })
         })?;
         if changed {
@@ -314,6 +365,99 @@ fn migrate_to_units(conn: &Connection) -> Result<()> {
         }
     }
     tx.execute_batch("PRAGMA user_version = 10;")?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Appends rates to the list of a context, skipping one whose label or rate the list has already
+/// (case aside, `19,0` is `19`). What is wanted is stored trimmed with the rate in its canonical
+/// form, a rate that is none is skipped.
+fn append_rates(conn: &Connection, context: i64, wanted: &[RateDef]) -> Result<()> {
+    let mut sort: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(sort) + 1, 0) FROM rates WHERE context_id = ?1",
+        [context],
+        |r| r.get(0),
+    )?;
+    let (mut labels, mut values): (Vec<String>, Vec<String>) = rates_in(conn, context)?
+        .into_iter()
+        .map(|r| {
+            (
+                r.label.trim().to_lowercase(),
+                rates::canonical(&r.rate).unwrap_or(r.rate),
+            )
+        })
+        .unzip();
+    for def in wanted {
+        let (label, Some(value)) = (def.label.trim(), rates::canonical(&def.rate)) else {
+            continue;
+        };
+        if labels.contains(&label.to_lowercase()) || values.contains(&value) {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO rates (context_id, label, rate, sort) VALUES (?1, ?2, ?3, ?4)",
+            params![context, label, value, sort],
+        )?;
+        labels.push(label.to_lowercase());
+        values.push(value);
+        sort += 1;
+    }
+    Ok(())
+}
+
+/// The rate a context charges as a list entry, for a list that lacks it: a name nothing in the
+/// list has yet
+fn charged_entry(list: &[Rate], rate: &str) -> RateDef {
+    let taken = |label: &str| {
+        list.iter()
+            .any(|r| r.label.trim().to_lowercase() == label.to_lowercase())
+    };
+    let label = if taken(rates::CHARGED_LABEL) {
+        format!("{} {rate} %", rates::CHARGED_LABEL)
+    } else {
+        rates::CHARGED_LABEL.to_owned()
+    };
+    RateDef {
+        label,
+        rate: rate.to_owned(),
+    }
+}
+
+/// VAT rates are a list per context. Each context gets the defaults and the rate it charges now,
+/// when that is none of them, called `Steuersatz`; nothing else is looked at, a position has no
+/// rate of its own yet. A context that has rates already (a database that was stamped back) is
+/// left alone.
+fn migrate_to_rates(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS rates (
+             id INTEGER PRIMARY KEY,
+             context_id INTEGER NOT NULL,
+             label TEXT NOT NULL,
+             rate TEXT NOT NULL,
+             sort INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS rates_context ON rates (context_id);",
+    )?;
+    let contexts = tx
+        .prepare("SELECT id, json FROM contexts ORDER BY id")?
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for (context, json) in contexts {
+        let present: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM rates WHERE context_id = ?1",
+            [context],
+            |r| r.get(0),
+        )?;
+        if present == 0 {
+            let body: ContextBody = serde_json::from_str(&json)?;
+            append_rates(&tx, context, &rates::defaults())?;
+            // a rate that is none (blank, or one that never worked) is skipped by the append
+            let charged = charged_entry(&rates_in(&tx, context)?, body.settings.tax_rate.trim());
+            append_rates(&tx, context, &[charged])?;
+        }
+    }
+    tx.execute_batch("PRAGMA user_version = 11;")?;
     tx.commit()?;
     Ok(())
 }
@@ -557,6 +701,140 @@ fn placed(context: i64, unit: &UnitDef) -> Unit {
     }
 }
 
+fn read_rate(row: &Row) -> rusqlite::Result<Rate> {
+    Ok(Rate {
+        id: Some(row.get("id")?),
+        context_id: row.get("context_id")?,
+        label: row.get("label")?,
+        rate: row.get("rate")?,
+    })
+}
+
+fn rates_in(conn: &Connection, context: i64) -> Result<Vec<Rate>> {
+    let mut statement = conn.prepare(
+        "SELECT id, context_id, label, rate FROM rates WHERE context_id = ?1 ORDER BY sort, id",
+    )?;
+    let rows = statement.query_map([context], read_rate)?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+fn rate_row(conn: &Connection, id: i64) -> Result<Rate> {
+    conn.query_row(
+        "SELECT id, context_id, label, rate FROM rates WHERE id = ?1",
+        [id],
+        read_rate,
+    )
+    .optional()?
+    .ok_or_else(|| anyhow!("unknown rate"))
+}
+
+/// A rate def as a rate of a list, for the checks
+fn placed_rate(context: i64, rate: &RateDef) -> Rate {
+    Rate {
+        id: None,
+        context_id: context,
+        label: rate.label.clone(),
+        rate: rate.rate.clone(),
+    }
+}
+
+/// A rate of a list as a position names it
+fn rate_key(rate: &Rate) -> (String, String) {
+    (
+        rates::canonical(&rate.rate).unwrap_or_else(|| rate.rate.clone()),
+        rate.label.trim().to_owned(),
+    )
+}
+
+/// The rate the context's positions take when they pick none, none for a context without VAT
+fn default_rate(conn: &Connection, context: i64) -> Result<Option<String>> {
+    let json: String = conn
+        .query_row("SELECT json FROM contexts WHERE id = ?1", [context], |r| {
+            r.get(0)
+        })
+        .optional()?
+        .ok_or_else(|| anyhow!("unknown context"))?;
+    let body: ContextBody = serde_json::from_str(&json)?;
+    Ok(rates::canonical(&body.settings.tax_rate))
+}
+
+/// Writes one field of a context's settings. Only that field is written, the rest of the stored
+/// settings stays as it is.
+fn set_setting(
+    conn: &Connection,
+    context: i64,
+    field: &str,
+    value: serde_json::Value,
+) -> Result<()> {
+    let json: String = conn
+        .query_row("SELECT json FROM contexts WHERE id = ?1", [context], |r| {
+            r.get(0)
+        })
+        .optional()?
+        .ok_or_else(|| anyhow!("unknown context"))?;
+    let mut body: serde_json::Value = serde_json::from_str(&json)?;
+    body["settings"][field] = value;
+    conn.execute(
+        "UPDATE contexts SET json = ?1 WHERE id = ?2",
+        params![serde_json::to_string(&body)?, context],
+    )?;
+    Ok(())
+}
+
+/// Makes `rate` the default of the context
+fn set_default_rate(conn: &Connection, context: i64, rate: &str) -> Result<()> {
+    set_setting(conn, context, "tax_rate", rate.into())
+}
+
+/// The label of the unit new positions of the context start with, as it is stored
+fn default_unit(conn: &Connection, context: i64) -> Result<Option<String>> {
+    let json: String = conn
+        .query_row("SELECT json FROM contexts WHERE id = ?1", [context], |r| {
+            r.get(0)
+        })
+        .optional()?
+        .ok_or_else(|| anyhow!("unknown context"))?;
+    let body: ContextBody = serde_json::from_str(&json)?;
+    Ok(body.settings.unit)
+}
+
+/// The default unit is the one called `from`: it follows the label to `to`, none clears it (back
+/// to the first unit of the list)
+fn follow_default_unit(
+    conn: &Connection,
+    context: i64,
+    from: &str,
+    to: Option<&str>,
+) -> Result<()> {
+    if default_unit(conn, context)?.as_deref() == Some(from) {
+        set_setting(conn, context, "unit", to.into())?;
+    }
+    Ok(())
+}
+
+/// Where a rate of the list is used: by drafts and saved positions, and as the default
+fn usage_of_rate(conn: &Connection, rate: &Rate) -> Result<RateUsage> {
+    let key = rate_key(rate);
+    let default = default_rate(conn, rate.context_id)?.as_deref() == Some(key.0.as_str());
+    Ok(held(conn, rate.context_id, rate_key_of)?.usage_of(&key, default))
+}
+
+/// What names the rate `from` takes `to` instead, in the caller's transaction: the drafts of the
+/// context, the saved positions it sees, and its default rate when that is the value of `from`
+/// (the default has no label, a new label leaves it as it is).
+fn follow_rate(
+    conn: &Connection,
+    context: i64,
+    from: &(String, String),
+    to: &(String, String),
+) -> Result<()> {
+    rewrite_positions(conn, context, &|p| retarget_rate(p, from, to))?;
+    if from.0 != to.0 && default_rate(conn, context)?.as_deref() == Some(from.0.as_str()) {
+        set_default_rate(conn, context, &to.0)?;
+    }
+    Ok(())
+}
+
 fn new_uid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -696,9 +974,14 @@ impl Store {
     /// Creates a context (`id` is `None`) or updates one. A new one without a brand gets the default
     /// for the first, a random one that is not in use for the others. Archiving is its own step.
     ///
-    /// A new context starts with `units` as its list (none or empty: the defaults), an existing one
-    /// keeps its own.
-    pub fn save_context(&self, context: &Context, units: Option<&[UnitDef]>) -> Result<Context> {
+    /// A new context starts with `units` and `rates` as its lists (none or empty: the defaults; the
+    /// rate it charges is added to the rates when they lack it), an existing one keeps its own.
+    pub fn save_context(
+        &self,
+        context: &Context,
+        units: Option<&[UnitDef]>,
+        rates: Option<&[RateDef]>,
+    ) -> Result<Context> {
         let id = if let Some(id) = context.id {
             let brand = if context.brand.is_empty() {
                 BRANDS[0].to_owned()
@@ -741,11 +1024,28 @@ impl Store {
                     units::check(unit, &before)
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let start_rates = match rates {
+                Some(given) if !given.is_empty() => given.to_vec(),
+                _ => rates::defaults(),
+            };
+            let start_rates = start_rates
+                .iter()
+                .enumerate()
+                .map(|(i, rate)| {
+                    let before: Vec<Rate> =
+                        start_rates[..i].iter().map(|r| placed_rate(0, r)).collect();
+                    rates::check(rate, &before)
+                })
+                .collect::<Result<Vec<_>>>()?;
             let conn = self.conn();
             let tx = conn.unchecked_transaction()?;
             tx.execute("INSERT INTO contexts (json) VALUES (?1)", [json])?;
             let id = tx.last_insert_rowid();
             append_units(&tx, id, &start)?;
+            append_rates(&tx, id, &start_rates)?;
+            // the default is one of the list, whatever list the context was handed
+            let charged = charged_entry(&rates_in(&tx, id)?, context.settings.tax_rate.trim());
+            append_rates(&tx, id, &[charged])?;
             tx.commit()?;
             id
         };
@@ -859,6 +1159,7 @@ impl Store {
             };
         }
         tx.execute("DELETE FROM units WHERE context_id = ?1", [id])?;
+        tx.execute("DELETE FROM rates WHERE context_id = ?1", [id])?;
         // ids are reused, a later context must not inherit the floors
         tx.execute("DELETE FROM number_floors WHERE context_id = ?1", [id])?;
         tx.execute("DELETE FROM contexts WHERE id = ?1", [id])?;
@@ -1075,8 +1376,9 @@ impl Store {
                 (def.code.clone(), def.label.clone()),
             );
             if from != to {
-                rewrite_positions(&tx, before.context_id, &from, &to)?;
+                rewrite_positions(&tx, before.context_id, &|p| retarget(p, &from, &to))?;
             }
+            follow_default_unit(&tx, before.context_id, &before.label, Some(&def.label))?;
             Unit {
                 id: Some(id),
                 context_id: before.context_id,
@@ -1115,13 +1417,13 @@ impl Store {
     pub fn unit_usage(&self, id: i64) -> Result<UnitUsage> {
         let conn = self.conn();
         let unit = unit_row(&conn, id)?;
-        Ok(held(&conn, unit.context_id)?.usage_of(&(unit.code, unit.label)))
+        Ok(held(&conn, unit.context_id, key_of)?.usage_of(&(unit.code, unit.label)))
     }
 
     /// How many drafts and saved positions use each unit of a context, by unit id
     pub fn unit_counts(&self, context: i64) -> Result<std::collections::BTreeMap<i64, usize>> {
         let conn = self.conn();
-        let held = held(&conn, context)?;
+        let held = held(&conn, context, key_of)?;
         Ok(units_in(&conn, context)?
             .into_iter()
             .filter_map(|u| {
@@ -1154,13 +1456,38 @@ impl Store {
             None => None,
         };
         let key = (unit.code, unit.label);
-        if !held(&tx, unit.context_id)?.usage_of(&key).is_empty() {
+        if !held(&tx, unit.context_id, key_of)?
+            .usage_of(&key)
+            .is_empty()
+        {
             let Some(target) = target else {
                 bail!("Die Einheit wird noch verwendet, bitte eine Ersatz-Einheit wählen.");
             };
-            rewrite_positions(&tx, unit.context_id, &key, &(target.code, target.label))?;
+            let to = (target.code, target.label);
+            rewrite_positions(&tx, unit.context_id, &|p| retarget(p, &key, &to))?;
         }
         tx.execute("DELETE FROM units WHERE id = ?1", [id])?;
+        // no replacement for a default: the first unit of the list is it then
+        follow_default_unit(&tx, unit.context_id, &key.1, None)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Makes the unit called `label` the one new positions of a context start with, none: the
+    /// first unit of the list. The label must be one of the list.
+    pub fn choose_default_unit(&self, context: i64, label: Option<&str>) -> Result<()> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let listed = label
+            .map(|label| {
+                units_in(&tx, context)?
+                    .into_iter()
+                    .find(|u| u.label == label)
+                    .map(|u| u.label)
+                    .ok_or_else(|| anyhow!("Diese Einheit gibt es nicht."))
+            })
+            .transpose()?;
+        set_setting(&tx, context, "unit", listed.into())?;
         tx.commit()?;
         Ok(())
     }
@@ -1182,6 +1509,173 @@ impl Store {
         for (position, id) in (0_i64..).zip(ids) {
             tx.execute(
                 "UPDATE units SET sort = ?1 WHERE id = ?2",
+                params![position, id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    // VAT rates
+
+    /// The rates of a context in the order the user keeps them
+    pub fn rates(&self, context: i64) -> Result<Vec<Rate>> {
+        rates_in(&self.conn(), context)
+    }
+
+    /// Adds a rate to the end of a context's list (`id` is `None`) or changes one. A new value
+    /// reaches the drafts and saved positions that used the old one, and the default of the
+    /// context when it was that one, in the same step, and nothing else: created invoices keep the
+    /// rate in their positions.
+    pub fn save_rate(&self, rate: &Rate) -> Result<Rate> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let saved = if let Some(id) = rate.id {
+            let before = rate_row(&tx, id)?;
+            let others: Vec<Rate> = rates_in(&tx, before.context_id)?
+                .into_iter()
+                .filter(|r| r.id != Some(id))
+                .collect();
+            let def = rates::check(
+                &RateDef {
+                    label: rate.label.clone(),
+                    rate: rate.rate.clone(),
+                },
+                &others,
+            )?;
+            tx.execute(
+                "UPDATE rates SET label = ?1, rate = ?2 WHERE id = ?3",
+                params![def.label, def.rate, id],
+            )?;
+            let saved = Rate {
+                id: Some(id),
+                context_id: before.context_id,
+                label: def.label,
+                rate: def.rate,
+            };
+            if rate_key(&before) != rate_key(&saved) {
+                follow_rate(
+                    &tx,
+                    before.context_id,
+                    &rate_key(&before),
+                    &rate_key(&saved),
+                )?;
+            }
+            saved
+        } else {
+            let known: bool = tx.query_row(
+                "SELECT COUNT(*) > 0 FROM contexts WHERE id = ?1",
+                [rate.context_id],
+                |r| r.get(0),
+            )?;
+            if !known {
+                bail!("unknown context");
+            }
+            let def = rates::check(
+                &RateDef {
+                    label: rate.label.clone(),
+                    rate: rate.rate.clone(),
+                },
+                &rates_in(&tx, rate.context_id)?,
+            )?;
+            append_rates(&tx, rate.context_id, std::slice::from_ref(&def))?;
+            Rate {
+                id: Some(tx.last_insert_rowid()),
+                context_id: rate.context_id,
+                label: def.label,
+                rate: def.rate,
+            }
+        };
+        tx.commit()?;
+        Ok(saved)
+    }
+
+    /// Where a rate is used by what changing or deleting it reaches
+    pub fn rate_usage(&self, id: i64) -> Result<RateUsage> {
+        let conn = self.conn();
+        let rate = rate_row(&conn, id)?;
+        usage_of_rate(&conn, &rate)
+    }
+
+    /// How many drafts and saved positions use each rate of a context, by rate id
+    pub fn rate_counts(&self, context: i64) -> Result<std::collections::BTreeMap<i64, usize>> {
+        let conn = self.conn();
+        let held = held(&conn, context, rate_key_of)?;
+        Ok(rates_in(&conn, context)?
+            .into_iter()
+            .filter_map(|r| {
+                let usage = held.usage_of(&rate_key(&r), false);
+                Some((r.id?, usage.templates.len() + usage.drafts.len()))
+            })
+            .collect())
+    }
+
+    /// Deletes a rate. One that drafts, saved positions or the context's default still use needs a
+    /// `replacement` of the same context, they take it over in the same step.
+    pub fn delete_rate(&self, id: i64, replacement: Option<i64>) -> Result<()> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let rate = rate_row(&tx, id)?;
+        let target = match replacement {
+            Some(other) if other == id => {
+                bail!("Der Steuersatz kann nicht durch sich selbst ersetzt werden.")
+            }
+            Some(other) => {
+                let target = rate_row(&tx, other)?;
+                if target.context_id != rate.context_id {
+                    bail!("Der Ersatz-Steuersatz gehört zu einem anderen Kontext.");
+                }
+                Some(target)
+            }
+            None => None,
+        };
+        if !usage_of_rate(&tx, &rate)?.is_empty() {
+            let Some(target) = target else {
+                bail!("Der Steuersatz wird noch verwendet, bitte einen Ersatz wählen.");
+            };
+            follow_rate(&tx, rate.context_id, &rate_key(&rate), &rate_key(&target))?;
+        }
+        tx.execute("DELETE FROM rates WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Makes the rate of the list that `rate` names the default of a context, blank: no VAT is
+    /// charged. A rate the list lacks is refused.
+    pub fn choose_default_rate(&self, context: i64, rate: &str) -> Result<()> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let chosen = if rate.trim().is_empty() {
+            String::new()
+        } else {
+            let wanted = rates::canonical(rate);
+            rates_in(&tx, context)?
+                .into_iter()
+                .find_map(|r| rates::canonical(&r.rate).filter(|c| Some(c) == wanted.as_ref()))
+                .ok_or_else(|| anyhow!("Diesen Steuersatz gibt es nicht."))?
+        };
+        set_default_rate(&tx, context, &chosen)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Puts the rates of a context in the order of `ids`, which must name each of them once
+    pub fn reorder_rates(&self, context: i64, ids: &[i64]) -> Result<()> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let mut have: Vec<i64> = rates_in(&tx, context)?
+            .into_iter()
+            .filter_map(|r| r.id)
+            .collect();
+        let mut asked = ids.to_vec();
+        have.sort_unstable();
+        asked.sort_unstable();
+        if have != asked {
+            bail!("the order must name every rate of the context once");
+        }
+        for (position, id) in (0_i64..).zip(ids) {
+            tx.execute(
+                "UPDATE rates SET sort = ?1 WHERE id = ?2",
                 params![position, id],
             )?;
         }
@@ -1906,7 +2400,7 @@ mod tests {
         let mut settings = settings();
         settings.seller.name = seller.into();
         store
-            .save_context(&Context::new(settings, ""), None)
+            .save_context(&Context::new(settings, ""), None, None)
             .unwrap()
     }
 
@@ -1922,7 +2416,7 @@ mod tests {
         let mut changed = first.clone();
         changed.settings.payment_days = Some(30);
         changed.settings.seller.iban.clear();
-        let saved = store.save_context(&changed, None).unwrap();
+        let saved = store.save_context(&changed, None, None).unwrap();
 
         assert_eq!(
             store.settings(first.id.unwrap()).unwrap().payment_days,
@@ -2014,6 +2508,8 @@ mod tests {
                 quantity: None,
                 unit: None,
                 unit_label: None,
+                tax_rate: None,
+                tax_label: None,
                 price: price.into(),
             },
         };
@@ -2042,6 +2538,8 @@ mod tests {
                 quantity: Some("2".into()),
                 unit: Some("HUR".into()),
                 unit_label: None,
+                tax_rate: None,
+                tax_label: None,
                 price: "95,00".into(),
             },
         };
@@ -2756,6 +3254,8 @@ mod tests {
                 quantity: None,
                 unit: None,
                 unit_label: None,
+                tax_rate: None,
+                tax_label: None,
                 price: "10".into(),
             },
         };
@@ -2792,6 +3292,8 @@ mod tests {
                     quantity: None,
                     unit: None,
                     unit_label: None,
+                    tax_rate: None,
+                    tax_label: None,
                     price: "1".into(),
                 },
             })
@@ -2869,7 +3371,7 @@ mod tests {
         let mut with_layout = settings();
         with_layout.layout = "custom-7".into();
         let a = store
-            .save_context(&Context::new(with_layout, ""), None)
+            .save_context(&Context::new(with_layout, ""), None, None)
             .unwrap();
         assert!(store.is_default_layout("custom-7").unwrap());
         assert!(!store.is_default_layout("custom-8").unwrap());
@@ -3688,7 +4190,7 @@ mod tests {
         let mut with_offer_layout = settings();
         with_offer_layout.offer.layout = Some(layout.key());
         store
-            .save_context(&Context::new(with_offer_layout, ""), None)
+            .save_context(&Context::new(with_offer_layout, ""), None, None)
             .unwrap();
         assert!(store.is_default_layout(&layout.key()).unwrap());
     }
@@ -4097,6 +4599,8 @@ mod tests {
             quantity: None,
             unit: unit.map(Into::into),
             unit_label: label.map(Into::into),
+            tax_rate: None,
+            tax_label: None,
             price: "1".into(),
         }
     }
@@ -4240,10 +4744,10 @@ mod tests {
         with_settings.seller.name = "B".into();
 
         let own = store
-            .save_context(&Context::new(with_settings.clone(), ""), Some(&given))
+            .save_context(&Context::new(with_settings.clone(), ""), Some(&given), None)
             .unwrap();
         let empty = store
-            .save_context(&Context::new(with_settings, ""), Some(&[]))
+            .save_context(&Context::new(with_settings, ""), Some(&[]), None)
             .unwrap();
 
         assert_eq!(labels(&store, own.id.unwrap()), ["Tag", "Lizenz"]);
@@ -4252,7 +4756,7 @@ mod tests {
             ["Stk.", "Std.", "pauschal"]
         );
         // saving an existing context keeps its units
-        store.save_context(&own, Some(&[])).unwrap();
+        store.save_context(&own, Some(&[]), None).unwrap();
         assert_eq!(labels(&store, own.id.unwrap()), ["Tag", "Lizenz"]);
     }
 
@@ -4264,7 +4768,7 @@ mod tests {
             label: label.into(),
         });
 
-        let refused = store.save_context(&Context::new(settings(), ""), Some(&twice));
+        let refused = store.save_context(&Context::new(settings(), ""), Some(&twice), None);
 
         assert!(refused.is_err());
         assert!(store.contexts().unwrap().is_empty());
@@ -4555,5 +5059,640 @@ mod tests {
         assert_ne!(first.id, other.id);
         // no label is what the code was printed as
         assert_eq!(first.id, same.id);
+    }
+
+    // VAT rates
+
+    fn rated(description: &str, rate: Option<&str>, label: Option<&str>) -> Position {
+        Position {
+            tax_rate: rate.map(Into::into),
+            tax_label: label.map(Into::into),
+            ..position(description, None, None)
+        }
+    }
+
+    fn saved_rated(
+        store: &Store,
+        context: Option<i64>,
+        rate: Option<&str>,
+        label: Option<&str>,
+    ) -> PositionTemplate {
+        store
+            .save_template(&PositionTemplate {
+                id: None,
+                context_id: context,
+                position: rated("Leistung", rate, label),
+            })
+            .unwrap()
+    }
+
+    fn draft_with_rate(store: &Store, context: i64, rate: &str, label: &str) -> StoredInvoice {
+        let mut named = draft();
+        named.positions = vec![rated("Leistung", Some(rate), Some(label))];
+        store
+            .save_draft(None, context, Kind::Invoice, &named, None)
+            .unwrap()
+    }
+
+    fn rate_of(store: &Store, context: i64, label: &str) -> Rate {
+        store
+            .rates(context)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.label == label)
+            .unwrap()
+    }
+
+    /// The list of a context as label and rate
+    fn rate_list(store: &Store, context: i64) -> Vec<(String, String)> {
+        store
+            .rates(context)
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.label, r.rate))
+            .collect()
+    }
+
+    fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter()
+            .map(|(label, rate)| ((*label).to_owned(), (*rate).to_owned()))
+            .collect()
+    }
+
+    fn new_rate(context: i64, label: &str, rate: &str) -> Rate {
+        Rate {
+            id: None,
+            context_id: context,
+            label: label.into(),
+            rate: rate.into(),
+        }
+    }
+
+    fn rate_def(label: &str, rate: &str) -> RateDef {
+        RateDef {
+            label: label.into(),
+            rate: rate.into(),
+        }
+    }
+
+    /// The rate the positions of a context take when they pick none
+    fn default_of(store: &Store, context: i64) -> String {
+        store.context(context).unwrap().settings.tax_rate
+    }
+
+    fn context_charging(store: &Store, seller: &str, rate: &str) -> i64 {
+        let mut with_rate = settings();
+        with_rate.seller.name = seller.into();
+        with_rate.tax_rate = rate.into();
+        store
+            .save_context(&Context::new(with_rate, ""), None, None)
+            .unwrap()
+            .id
+            .unwrap()
+    }
+
+    #[test]
+    fn a_version_ten_database_gets_the_default_rates_and_the_one_it_charges_per_context() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch("DROP TABLE rates; PRAGMA user_version = 10;")
+            .unwrap();
+        // what a context charged before there was a list
+        for charged in ["19", "16", "", "5,50", "7,0", "abc"] {
+            let body = serde_json::to_string(&ContextBody {
+                brand: "blue".into(),
+                settings: Settings {
+                    tax_rate: charged.into(),
+                    ..settings()
+                },
+            })
+            .unwrap();
+            conn.execute("INSERT INTO contexts (json) VALUES (?1)", [body])
+                .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO templates (json, context_id) VALUES ('{\"description\":\"Alt\",\"price\":\"1\"}', NULL)",
+            [],
+        )
+        .unwrap();
+
+        let store = Store::init(conn).unwrap();
+
+        let version: i32 = store
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        let defaults = [("Regelsatz", "19"), ("Ermäßigt", "7")];
+        let with = |extra: (&'static str, &'static str)| [&defaults[..], &[extra]].concat();
+        assert_eq!(rate_list(&store, 1), pairs(&defaults));
+        assert_eq!(rate_list(&store, 2), pairs(&with(("Steuersatz", "16"))));
+        // no VAT is no rate, and nothing is made of what is no rate
+        assert_eq!(rate_list(&store, 3), pairs(&defaults));
+        assert_eq!(rate_list(&store, 4), pairs(&with(("Steuersatz", "5.5"))));
+        assert_eq!(rate_list(&store, 5), pairs(&defaults));
+        assert_eq!(rate_list(&store, 6), pairs(&defaults));
+        // no conversion of anything else: the positions are as they were
+        assert_eq!(
+            stored_template(&store, 1),
+            "{\"description\":\"Alt\",\"price\":\"1\"}"
+        );
+        assert_eq!(default_of(&store, 2), "16");
+
+        // stamped back, it migrates again and nothing is added twice
+        store
+            .conn()
+            .execute_batch("PRAGMA user_version = 10;")
+            .unwrap();
+        migrate(&store.conn()).unwrap();
+        assert_eq!(store.rates(2).unwrap().len(), 3);
+        assert_eq!(store.rates(1).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_context_starts_with_the_default_rates() {
+        let store = Store::in_memory().unwrap();
+
+        let first = context(&store, "A");
+
+        assert_eq!(
+            rate_list(&store, first.id.unwrap()),
+            pairs(&[("Regelsatz", "19"), ("Ermäßigt", "7")])
+        );
+    }
+
+    #[test]
+    fn a_new_context_starts_with_the_rates_it_is_given_and_the_one_it_charges() {
+        let store = Store::in_memory().unwrap();
+        let given = [rate_def("Lieferung", "16"), rate_def(" Sonder ", "5,50")];
+        let mut with_settings = settings();
+        with_settings.seller.name = "B".into();
+
+        let own = store
+            .save_context(&Context::new(with_settings.clone(), ""), None, Some(&given))
+            .unwrap();
+        let empty = store
+            .save_context(&Context::new(with_settings.clone(), ""), None, Some(&[]))
+            .unwrap();
+        with_settings.tax_rate.clear();
+        let free = store
+            .save_context(&Context::new(with_settings, ""), None, Some(&given))
+            .unwrap();
+
+        // stored trimmed and canonical, with the default (19) among them
+        assert_eq!(
+            rate_list(&store, own.id.unwrap()),
+            pairs(&[("Lieferung", "16"), ("Sonder", "5.5"), ("Steuersatz", "19")])
+        );
+        assert_eq!(
+            rate_list(&store, empty.id.unwrap()),
+            pairs(&[("Regelsatz", "19"), ("Ermäßigt", "7")])
+        );
+        // no VAT: nothing is added
+        assert_eq!(
+            rate_list(&store, free.id.unwrap()),
+            pairs(&[("Lieferung", "16"), ("Sonder", "5.5")])
+        );
+        // saving an existing context keeps its rates
+        store.save_context(&own, None, Some(&[])).unwrap();
+        assert_eq!(store.rates(own.id.unwrap()).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_name_for_the_default_that_is_taken_is_made_unique() {
+        let store = Store::in_memory().unwrap();
+        let given = [rate_def("steuersatz", "16")];
+
+        let made = store
+            .save_context(&Context::new(settings(), ""), None, Some(&given))
+            .unwrap();
+
+        assert_eq!(
+            rate_list(&store, made.id.unwrap()),
+            pairs(&[("steuersatz", "16"), ("Steuersatz 19 %", "19")])
+        );
+    }
+
+    #[test]
+    fn rates_that_are_handed_to_a_new_context_are_checked_and_nothing_is_made_when_they_fail() {
+        let store = Store::in_memory().unwrap();
+
+        for twice in [
+            [rate_def("Regel", "19"), rate_def("regel", "7")],
+            [rate_def("Regel", "19"), rate_def("Normal", "19,0")],
+            [rate_def("Regel", "19"), rate_def("Null", "0")],
+            [rate_def("Regel", "19"), rate_def(" ", "7")],
+        ] {
+            let refused = store.save_context(&Context::new(settings(), ""), None, Some(&twice));
+
+            assert!(refused.is_err());
+            assert!(store.contexts().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn rates_are_added_changed_and_checked() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let second = context(&store, "B").id.unwrap();
+
+        let added = store
+            .save_rate(&new_rate(first, "  Lieferung ", "16,0"))
+            .unwrap();
+
+        assert_eq!(
+            (added.label.as_str(), added.rate.as_str()),
+            ("Lieferung", "16")
+        );
+        assert_eq!(store.rates(first).unwrap().last(), Some(&added));
+        // the label and the rate are unique per context, the label case aside
+        assert!(store.save_rate(&new_rate(first, "lieferung", "3")).is_err());
+        assert!(store.save_rate(&new_rate(first, "Andere", "16")).is_err());
+        assert!(store
+            .save_rate(&new_rate(first, "Andere", "19,00"))
+            .is_err());
+        assert!(store
+            .save_rate(&new_rate(second, "lieferung", "16"))
+            .is_ok());
+        for bad in ["0", "-1", "100,5", "", "x"] {
+            assert!(
+                store.save_rate(&new_rate(first, "Neu", bad)).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(store.save_rate(&new_rate(first, " ", "3")).is_err());
+        assert!(store.save_rate(&new_rate(9999, "Neu", "3")).is_err());
+
+        // a change keeps the rate in its context and its place
+        let renamed = Rate {
+            label: "Lieferung EU".into(),
+            rate: "16,5".into(),
+            ..added.clone()
+        };
+        let changed = store.save_rate(&renamed).unwrap();
+        assert_eq!(changed.rate, "16.5");
+        assert_eq!(store.rates(first).unwrap().last(), Some(&changed));
+        // unchanged values are not their own duplicates
+        assert!(store.save_rate(&changed).is_ok());
+        let taken = Rate {
+            label: "Regelsatz".into(),
+            ..changed
+        };
+        assert!(store.save_rate(&taken).is_err());
+    }
+
+    #[test]
+    fn rates_are_put_in_the_order_they_are_given() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        let mut ids: Vec<i64> = store
+            .rates(first)
+            .unwrap()
+            .into_iter()
+            .filter_map(|r| r.id)
+            .collect();
+        ids.reverse();
+
+        store.reorder_rates(first, &ids).unwrap();
+
+        assert_eq!(
+            rate_list(&store, first),
+            pairs(&[("Ermäßigt", "7"), ("Regelsatz", "19")])
+        );
+        // every rate of the context, once
+        assert!(store.reorder_rates(first, &ids[1..]).is_err());
+        assert!(store.reorder_rates(first, &[ids[0], ids[0]]).is_err());
+        let foreign = store.rates(other).unwrap()[0].id.unwrap();
+        assert!(store.reorder_rates(first, &[ids[0], foreign]).is_err());
+    }
+
+    #[test]
+    fn a_new_label_reaches_drafts_and_saved_positions_but_the_default_and_created_invoices_stay() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        let regular = rate_of(&store, first, "Regelsatz");
+        let template = saved_rated(&store, Some(first), Some("19"), Some("Regelsatz"));
+        let open = draft_with_rate(&store, first, "19", "Regelsatz");
+        let elsewhere = draft_with_rate(&store, other, "19", "Regelsatz");
+        let issued = {
+            let id = draft_with_rate(&store, first, "19", "Regelsatz").id;
+            store
+                .finalize(
+                    id,
+                    &at("RE-2026-001", 1),
+                    &settings(),
+                    None,
+                    "1.00",
+                    &files(),
+                )
+                .unwrap()
+        };
+        let issued_before = stored_draft(&store, issued.id);
+        let elsewhere_before = stored_draft(&store, elsewhere.id);
+
+        store
+            .save_rate(&Rate {
+                label: "Normalsatz".into(),
+                ..regular
+            })
+            .unwrap();
+
+        let position = &store.invoice(open.id).unwrap().draft.positions[0];
+        assert_eq!(position.tax_rate.as_deref(), Some("19"));
+        assert_eq!(position.tax_label.as_deref(), Some("Normalsatz"));
+        let kept = store
+            .templates(first)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == template.id)
+            .unwrap();
+        assert_eq!(kept.position.tax_label.as_deref(), Some("Normalsatz"));
+        // the default is a rate without a name
+        assert_eq!(default_of(&store, first), "19");
+        assert_eq!(stored_draft(&store, issued.id), issued_before);
+        assert_eq!(stored_draft(&store, elsewhere.id), elsewhere_before);
+    }
+
+    #[test]
+    fn a_new_value_reaches_drafts_saved_positions_and_the_default_of_the_context() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        let regular = rate_of(&store, first, "Regelsatz");
+        let reduced = saved_rated(&store, None, Some("7"), Some("Ermäßigt"));
+        let picked = saved_rated(&store, None, Some("19,0"), Some("Regelsatz"));
+        let by_default = saved_rated(&store, None, None, None);
+        let open = draft_with_rate(&store, first, "19", "Regelsatz");
+        let elsewhere = draft_with_rate(&store, other, "19", "Regelsatz");
+        let elsewhere_before = stored_draft(&store, elsewhere.id);
+
+        store
+            .save_rate(&Rate {
+                rate: "20".into(),
+                ..regular
+            })
+            .unwrap();
+
+        let position = &store.invoice(open.id).unwrap().draft.positions[0];
+        assert_eq!(position.tax_rate.as_deref(), Some("20"));
+        assert_eq!(default_of(&store, first), "20");
+        let templates = store.templates(first).unwrap();
+        let of = |id: Option<i64>| templates.iter().find(|t| t.id == id).unwrap();
+        assert_eq!(of(picked.id).position.tax_rate.as_deref(), Some("20"));
+        // what picked another rate or none stays as it is
+        assert_eq!(of(reduced.id).position.tax_rate.as_deref(), Some("7"));
+        assert_eq!(of(by_default.id).position.tax_rate, None);
+        // another context has its own list and its own default
+        assert_eq!(stored_draft(&store, elsewhere.id), elsewhere_before);
+        assert_eq!(default_of(&store, other), "19");
+    }
+
+    #[test]
+    fn what_a_rate_reaches_is_told_before_a_change() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        let regular = rate_of(&store, first, "Regelsatz");
+        let reduced = rate_of(&store, first, "Ermäßigt");
+        let template = saved_rated(&store, Some(first), Some("19"), Some("Regelsatz"));
+        let open = draft_with_rate(&store, first, "19", "Regelsatz");
+        draft_with_rate(&store, other, "19", "Regelsatz");
+
+        let usage = store.rate_usage(regular.id.unwrap()).unwrap();
+
+        assert_eq!(usage.templates.len(), 1);
+        assert_eq!(usage.templates[0].id, template.id.unwrap());
+        assert_eq!(usage.drafts.len(), 1);
+        assert_eq!(usage.drafts[0].invoice_id, open.id);
+        assert!(usage.default);
+        let unused = store.rate_usage(reduced.id.unwrap()).unwrap();
+        assert!(unused.is_empty() && !unused.default);
+        let counts = store.rate_counts(first).unwrap();
+        assert_eq!(counts[&regular.id.unwrap()], 2);
+        assert_eq!(counts[&reduced.id.unwrap()], 0);
+    }
+
+    #[test]
+    fn a_rate_nothing_uses_is_deleted() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let reduced = rate_of(&store, first, "Ermäßigt").id.unwrap();
+        let regular = rate_of(&store, first, "Regelsatz").id.unwrap();
+
+        store.delete_rate(reduced, None).unwrap();
+
+        assert_eq!(rate_list(&store, first), pairs(&[("Regelsatz", "19")]));
+        // it is the default of the context, so it is in use
+        assert!(store.delete_rate(regular, None).is_err());
+        assert!(store.delete_rate(9999, None).is_err());
+        assert_eq!(store.rates(first).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_context_without_vat_can_have_no_rates_at_all() {
+        let store = Store::in_memory().unwrap();
+        let free = context_charging(&store, "A", "");
+
+        store
+            .rates(free)
+            .unwrap()
+            .into_iter()
+            .for_each(|r| store.delete_rate(r.id.unwrap(), None).unwrap());
+
+        assert!(store.rates(free).unwrap().is_empty());
+        assert_eq!(default_of(&store, free), "");
+    }
+
+    #[test]
+    fn a_rate_in_use_is_deleted_only_with_a_replacement_that_takes_its_place() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        let regular = rate_of(&store, first, "Regelsatz").id.unwrap();
+        let reduced = rate_of(&store, first, "Ermäßigt");
+        let foreign = rate_of(&store, other, "Ermäßigt").id.unwrap();
+        let template = saved_rated(&store, Some(first), Some("19"), Some("Regelsatz"));
+        let open = draft_with_rate(&store, first, "19", "Regelsatz");
+        let issued = {
+            let id = draft_with_rate(&store, first, "19", "Regelsatz").id;
+            store
+                .finalize(
+                    id,
+                    &at("RE-2026-001", 1),
+                    &settings(),
+                    None,
+                    "1.00",
+                    &files(),
+                )
+                .unwrap()
+        };
+        let issued_before = stored_draft(&store, issued.id);
+
+        // used: a replacement is needed, of the same context and another rate
+        assert!(store.delete_rate(regular, None).is_err());
+        assert!(store.delete_rate(regular, Some(regular)).is_err());
+        assert!(store.delete_rate(regular, Some(foreign)).is_err());
+        assert_eq!(store.rates(first).unwrap().len(), 2);
+
+        store
+            .delete_rate(regular, Some(reduced.id.unwrap()))
+            .unwrap();
+
+        assert_eq!(rate_list(&store, first), pairs(&[("Ermäßigt", "7")]));
+        let position = &store.invoice(open.id).unwrap().draft.positions[0];
+        assert_eq!(position.tax_rate.as_deref(), Some("7"));
+        assert_eq!(position.tax_label.as_deref(), Some("Ermäßigt"));
+        let kept = store
+            .templates(first)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == template.id)
+            .unwrap();
+        assert_eq!(kept.position.tax_label.as_deref(), Some("Ermäßigt"));
+        // the default was the deleted rate, the replacement is the default now
+        assert_eq!(default_of(&store, first), "7");
+        assert_eq!(stored_draft(&store, issued.id), issued_before);
+    }
+
+    #[test]
+    fn removing_a_context_removes_its_rates_with_it() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+
+        store.remove_context(first, Disposition::Share).unwrap();
+
+        assert!(store.rates(first).unwrap().is_empty());
+        assert_eq!(store.rates(other).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn saved_positions_with_another_rate_are_different() {
+        let store = Store::in_memory().unwrap();
+        let first = saved_rated(&store, None, Some("7"), Some("Ermäßigt"));
+
+        let other_rate = saved_rated(&store, None, Some("19"), Some("Regelsatz"));
+        let default = saved_rated(&store, None, None, None);
+        let same = saved_rated(&store, None, Some("7,0"), Some("Ermäßigt"));
+        let other_label = saved_rated(&store, None, Some("7"), Some("Essen"));
+
+        assert_ne!(first.id, other_rate.id);
+        assert_ne!(first.id, default.id);
+        assert_ne!(first.id, other_label.id);
+        assert_eq!(first.id, same.id);
+    }
+
+    // the defaults of the lists
+
+    /// The label of the unit new positions of a context start with, as stored
+    fn unit_setting(store: &Store, context: i64) -> Option<String> {
+        store.context(context).unwrap().settings.unit
+    }
+
+    #[test]
+    fn a_context_starts_without_a_default_unit_and_one_is_chosen_from_its_list() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        assert_eq!(unit_setting(&store, first), None);
+
+        store.choose_default_unit(first, Some("Std.")).unwrap();
+
+        assert_eq!(unit_setting(&store, first).as_deref(), Some("Std."));
+        // another context has its own
+        assert_eq!(unit_setting(&store, other), None);
+        // only a unit of the list, none puts the first one back
+        assert!(store.choose_default_unit(first, Some("Meter")).is_err());
+        assert!(store.choose_default_unit(first, Some("std.")).is_err());
+        assert!(store.choose_default_unit(9999, None).is_err());
+        assert_eq!(unit_setting(&store, first).as_deref(), Some("Std."));
+        store.choose_default_unit(first, None).unwrap();
+        assert_eq!(unit_setting(&store, first), None);
+    }
+
+    #[test]
+    fn renaming_the_default_unit_moves_the_setting_with_it() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let hours = unit_of(&store, first, "Std.");
+        let piece = unit_of(&store, first, "Stk.");
+        store.choose_default_unit(first, Some("Std.")).unwrap();
+
+        // another unit changes: the default stays
+        store
+            .save_unit(&Unit {
+                label: "Stück".into(),
+                ..piece
+            })
+            .unwrap();
+        assert_eq!(unit_setting(&store, first).as_deref(), Some("Std."));
+
+        store
+            .save_unit(&Unit {
+                label: " Stunde ".into(),
+                ..hours.clone()
+            })
+            .unwrap();
+        assert_eq!(unit_setting(&store, first).as_deref(), Some("Stunde"));
+
+        // a change of its code only keeps the label, and the setting
+        store
+            .save_unit(&Unit {
+                code: "MIN".into(),
+                label: "Stunde".into(),
+                ..hours
+            })
+            .unwrap();
+        assert_eq!(unit_setting(&store, first).as_deref(), Some("Stunde"));
+    }
+
+    #[test]
+    fn deleting_the_default_unit_puts_the_first_one_back_with_or_without_a_replacement() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let hours = unit_of(&store, first, "Std.").id.unwrap();
+        let flat = unit_of(&store, first, "pauschal");
+        let piece = unit_of(&store, first, "Stk.");
+        let other = context(&store, "B").id.unwrap();
+        store.choose_default_unit(first, Some("Std.")).unwrap();
+        store.choose_default_unit(other, Some("Std.")).unwrap();
+
+        store.delete_unit(hours, None).unwrap();
+
+        assert_eq!(unit_setting(&store, first), None);
+        // the other context has a unit of that label of its own
+        assert_eq!(unit_setting(&store, other).as_deref(), Some("Std."));
+
+        // one that is used by a draft needs a replacement, the default is cleared as well
+        store.choose_default_unit(first, Some("pauschal")).unwrap();
+        draft_with_unit(&store, first, "LS", "pauschal");
+        store.delete_unit(flat.id.unwrap(), piece.id).unwrap();
+        assert_eq!(unit_setting(&store, first), None);
+    }
+
+    #[test]
+    fn the_default_rate_is_chosen_from_the_list_or_no_vat() {
+        let store = Store::in_memory().unwrap();
+        let first = context(&store, "A").id.unwrap();
+        let other = context(&store, "B").id.unwrap();
+        assert_eq!(default_of(&store, first), "19");
+
+        store.choose_default_rate(first, "7,0").unwrap();
+
+        // stored the way the list has it
+        assert_eq!(default_of(&store, first), "7");
+        assert_eq!(default_of(&store, other), "19");
+        store.choose_default_rate(first, " ").unwrap();
+        assert_eq!(default_of(&store, first), "");
+        assert!(store.context(first).unwrap().settings.vat_free());
+        // only a rate of the list
+        assert!(store.choose_default_rate(first, "16").is_err());
+        assert!(store.choose_default_rate(first, "abc").is_err());
+        assert!(store.choose_default_rate(9999, "19").is_err());
+        assert_eq!(default_of(&store, first), "");
+        store.choose_default_rate(first, "19").unwrap();
+        assert_eq!(default_of(&store, first), "19");
     }
 }

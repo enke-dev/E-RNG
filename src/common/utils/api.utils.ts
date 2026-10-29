@@ -66,6 +66,8 @@ export interface Settings {
   /** Blank: no VAT is charged, the invoices show none and `vat_note` says why */
   tax_rate: string;
   vat_note: string;
+  /** The label of the unit new positions start with, null (or one the list lacks): the first unit */
+  unit: string | null;
   /** Blank: no due date and no payment terms */
   payment_days: number | null;
   /** How invoice numbers are made: date tokens like in layouts, N for the counter (NNN: three digits) */
@@ -157,6 +159,10 @@ export interface Position {
   unit: string | null;
   /** The label the unit was picked with: a created invoice keeps it whatever becomes of the unit */
   unit_label: string | null;
+  /** VAT rate in percent as the position picked it, null: the default rate of the context */
+  tax_rate: string | null;
+  /** The label the rate was picked with, a created invoice keeps it whatever becomes of the rate */
+  tax_label: string | null;
   price: string;
 }
 
@@ -171,6 +177,18 @@ export interface Unit {
 /** A unit without a place, what a new context starts with */
 export type UnitDef = Pick<Unit, 'code' | 'label'>;
 
+/** A VAT rate of a context's list, which the positions of its documents pick from */
+export interface Rate {
+  id: number | null;
+  context_id: number;
+  label: string;
+  /** Percent, a dot as the separator and no trailing zeros: `19`, `5.5` */
+  rate: string;
+}
+
+/** A rate without a place, what a new context starts with */
+export type RateDef = Pick<Rate, 'label' | 'rate'>;
+
 /** A rec. 20 / 21 code with its English name, and a German one if the code is common (listed first) */
 export interface CatalogEntry {
   code: string;
@@ -182,6 +200,12 @@ export interface CatalogEntry {
 export interface UnitUsage {
   templates: { id: number; description: string; context_id: number | null }[];
   drafts: { invoice_id: number; kind: Kind; customer: string }[];
+}
+
+/** What changing or deleting a rate reaches: saved positions, drafts and the default of the context */
+export interface RateUsage extends UnitUsage {
+  /** It is the rate that positions without a pick of their own take */
+  default: boolean;
 }
 
 export interface PositionTemplate extends Position {
@@ -564,9 +588,9 @@ export function errorText(error: unknown): string {
 export const api = {
   contextsList: () => invoke<Context[]>('contexts_list'),
   contextBlank: () => invoke<Context>('context_blank'),
-  /** A new context (`id` null) starts with `units` as its list, none: the defaults */
-  contextSave: (context: Context, units?: UnitDef[]) =>
-    invoke<Context>('context_save', { context, units: units ?? null }),
+  /** A new context (`id` null) starts with `units` and `rates` as its lists, none: the defaults */
+  contextSave: (context: Context, units?: UnitDef[], rates?: RateDef[]) =>
+    invoke<Context>('context_save', { context, units: units ?? null, rates: rates ?? null }),
   contextArchive: (id: number) => invoke<Context>('context_archive', { id }),
   contextUsage: (id: number) => invoke<ContextUsage>('context_usage', { id }),
   contextRemove: (id: number, what: Disposition) => invoke<null>('context_remove', { id, what }),
@@ -612,8 +636,25 @@ export const api = {
   /** A unit in use needs the one that takes its place, in the same context */
   unitDelete: (id: number, replacement: number | null) =>
     invoke<null>('unit_delete', { id, replacement }),
+  /** The unit new positions start with, by its label; saved at once, null: the first unit */
+  unitDefault: (contextId: number, label: string | null) =>
+    invoke<null>('unit_default', { contextId, label }),
   unitsReorder: (contextId: number, ids: number[]) =>
     invoke<null>('units_reorder', { contextId, ids }),
+  /** The default rate of the context, a rate of its list; saved at once, blank: no VAT */
+  rateDefault: (contextId: number, rate: string) =>
+    invoke<null>('rate_default', { contextId, rate }),
+  ratesList: (contextId: number) => invoke<Rate[]>('rates_list', { contextId }),
+  /** How many drafts and saved positions use each rate, by rate id */
+  ratesCounts: (contextId: number) => invoke<Record<string, number>>('rates_counts', { contextId }),
+  /** Adds a rate (`id` null); drafts, saved positions and the default follow a changed one */
+  rateSave: (rate: Rate) => invoke<Rate>('rate_save', { rate }),
+  rateUsage: (id: number) => invoke<RateUsage>('rate_usage', { id }),
+  /** A rate in use needs the one that takes its place, in the same context */
+  rateDelete: (id: number, replacement: number | null) =>
+    invoke<null>('rate_delete', { id, replacement }),
+  ratesReorder: (contextId: number, ids: number[]) =>
+    invoke<null>('rates_reorder', { contextId, ids }),
 
   /** The documents of one kind, `null` lists those of all contexts; archived ones only when asked */
   invoicesList: (contextId: number | null, kind: Kind, withArchived = false) =>

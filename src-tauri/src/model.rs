@@ -197,6 +197,9 @@ pub struct Settings {
     pub tax_rate: String,
     /// Why no VAT is charged, on invoices without it (the reason of the exemption, BT-120)
     pub vat_note: String,
+    /// The label of the unit new positions start with. None, or a label the list of units no
+    /// longer has: the first unit of the list.
+    pub unit: Option<String>,
     /// Days until an invoice is due; blank: no due date and no payment terms are shown
     pub payment_days: Option<u32>,
     /// How invoice numbers are made, see `numbering`
@@ -233,6 +236,7 @@ impl Default for Settings {
             seller: Seller::default(),
             tax_rate: "19".into(),
             vat_note: "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.".into(),
+            unit: None,
             payment_days: Some(14),
             number_pattern: crate::numbering::DEFAULT_PATTERN.into(),
             number_reset: crate::numbering::Reset::default(),
@@ -413,6 +417,13 @@ pub struct Position {
     /// empty (older data): what the code was printed as then
     #[serde(default)]
     pub unit_label: Option<String>,
+    /// VAT rate in percent as the position picked it, kept in it like the unit so a created
+    /// invoice never changes with the list of rates; none (or blank): the context's default rate
+    #[serde(default)]
+    pub tax_rate: Option<String>,
+    /// The label the rate was picked with, only for showing it again
+    #[serde(default)]
+    pub tax_label: Option<String>,
     /// Net price per unit
     pub price: String,
 }
@@ -451,9 +462,11 @@ impl Position {
     }
 
     /// The same position as another one: description (case aside), quantity (empty is 1), unit
-    /// (code and label, empty is piece) and price compare as the user means them, `2` is `2,00`.
+    /// (code and label, empty is piece), rate (none is the default, `7` is `7,0`, with its label) and price compare
+    /// as the user means them, `2` is `2,00`.
     pub fn same_as(&self, other: &Position) -> bool {
         use crate::draft::decimal;
+        use crate::rates;
         let quantity = |p: &Position| {
             p.quantity
                 .as_deref()
@@ -462,10 +475,27 @@ impl Position {
                 .map_or(Some(rust_decimal::Decimal::ONE), decimal)
         };
         let price = |p: &Position| decimal(&p.price);
+        let rate = |p: &Position| {
+            p.tax_rate
+                .as_deref()
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .map(|r| {
+                    (
+                        rates::canonical(r).unwrap_or_else(|| r.to_owned()),
+                        p.tax_label
+                            .as_deref()
+                            .map(str::trim)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    )
+                })
+        };
         self.description.trim().to_lowercase() == other.description.trim().to_lowercase()
             && quantity(self) == quantity(other)
             && self.unit_code() == other.unit_code()
             && self.unit_label() == other.unit_label()
+            && rate(self) == rate(other)
             && price(self) == price(other)
     }
 }
@@ -658,6 +688,13 @@ mod tests {
         assert_eq!(settings.layout, "standard");
         assert_eq!(settings.intro, None);
         assert_eq!(settings.number_reset, crate::numbering::Reset::FiscalYear);
+    }
+
+    #[test]
+    fn settings_from_before_the_default_unit_have_none() {
+        let settings: Settings = serde_json::from_str(r#"{"tax_rate":"19"}"#).unwrap();
+
+        assert_eq!(settings.unit, None);
     }
 
     #[test]
