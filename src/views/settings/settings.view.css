@@ -17,6 +17,14 @@ erng-list-item.add {
   gap: var(--wa-space-xs);
 }
 
+.hint {
+  display: inline-block;
+  margin-block-start: 0.5em;
+
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-smaller);
+}
+
 /* a quiet, compact table inside the explanation */
 .numbering .examples {
   margin-block-start: var(--wa-space-s);

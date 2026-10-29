@@ -1362,19 +1362,23 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         .address="${settings.seller.address}"
         @change="${() => this.edit(() => undefined)}"
       ></erng-address-fields>
-      <div class="grid">
-        ${this.optional('vat_id', 'USt-IdNr.')} ${this.optional('tax_number', 'Steuernummer')}
-      </div>
-      <span class="muted">
-        Eine von beiden ist Pflicht: ohne sie ist eine Rechnung nicht gültig.
-      </span>
-      <div class="grid">
-        ${this.seller('contact_name', 'Ansprechpartner')} ${this.seller('phone', 'Telefon', 'tel')}
-        ${this.seller('email', 'E-Mail', 'email')}
-      </div>
-      <span class="muted">
-        Name, Telefon und E-Mail sind für XRechnung Pflicht, bei ZUGFeRD freiwillig.
-      </span>
+      <section>
+        <div class="grid">
+          ${this.optional('vat_id', 'USt-IdNr.')} ${this.optional('tax_number', 'Steuernummer')}
+        </div>
+        <span class="hint">
+          Eine von beiden ist Pflicht: ohne sie ist eine Rechnung nicht gültig.
+        </span>
+      </section>
+      <section>
+        <div class="grid">
+          ${this.seller('contact_name', 'Ansprechpartner')}
+          ${this.seller('phone', 'Telefon', 'tel')} ${this.seller('email', 'E-Mail', 'email')}
+        </div>
+        <span class="hint">
+          Name, Telefon und E-Mail sind für XRechnung Pflicht, bei ZUGFeRD freiwillig.
+        </span>
+      </section>
       <wa-textarea
         label="Rechtliche Angaben"
         hint="Für Geschäftsbriefe, auch Rechnungen, je nach Rechtsform: z. B. bei einer GmbH Registergericht, HRB-Nummer und alle Geschäftsführer, bei einem e. K. Registergericht und HRA-Nummer. Leer lassen, wenn nichts eingetragen ist. Steht im Fuß der Rechnung und in der XML-Datei; im eingebauten Layout ist Platz für ${LEGAL_LINES} Zeilen."
@@ -1838,7 +1842,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           <h2 slot="form">Standard</h2>
           <div slot="form" class="stack">
             <span>${this.layouts.find(l => l.id === 'standard')?.description}</span>
-            <span class="muted">
+            <span class="hint">
               Das integrierte Layout lässt sich nicht ändern. Individuelle Layouts mit Rand,
               Elementen (Texte, Bilder, Briefkopf als Bild) und Schrift legst du mit „Neu“ an. Die
               Vorschau zeigt dieselben Beispieldaten wie bei jedem Layout.
