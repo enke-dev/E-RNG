@@ -2,7 +2,8 @@
  * Fetches the tools the app ships next to its binary into `src-tauri/sidecars/`:
  *
  * - `typst`        renders the invoice PDF (PDF/A-3b)
- * - `mustang.jar`  attaches the XML (Factur-X) and validates PDF/A, XMP and the XML rules
+ * - `mustang.jar`  attaches the XML (Factur-X) and validates PDF/A, XMP and the XML rules; what the
+ *                  app never runs (rendering with FOP and Batik, test libraries) is taken out
  * - `jre/`         a minimal Java runtime for Mustang, linked from a Temurin JDK
  *
  * Versions and checksums are pinned in `sidecars.json`, a download that does not match is refused.
@@ -15,6 +16,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -31,7 +33,8 @@ interface Download {
 }
 interface Pins {
   typst: Download;
-  mustang: Download;
+  /** `drop`: packages the app never runs (only `combine` and `validate`), as paths in the jar */
+  mustang: Download & { drop: string[] };
   jdk: Download & { modules: string };
 }
 
@@ -74,6 +77,34 @@ async function download({ url, sha256 }: Download, name: string): Promise<string
   return target;
 }
 
+/**
+ * The jar without the packages in `drop`. Service registrations that name a class that is gone
+ * are taken out too, the service loader would fail on them. Whether the rest still works shows the
+ * validator: the reports of both jars are the same for valid and broken files.
+ */
+function slim(jar: string, target: string, drop: string[]) {
+  const dir = join(cache, 'mustang');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  run('unzip', ['-q', jar, '-d', dir]);
+  drop.forEach(path => rmSync(join(dir, path), { recursive: true, force: true }));
+  const services = join(dir, 'META-INF', 'services');
+  const present = (line: string) => {
+    const name = line.split('#')[0]?.trim() ?? '';
+    return name === '' || existsSync(join(dir, `${name.replaceAll('.', '/')}.class`));
+  };
+  readdirSync(services).forEach(name => {
+    const file = join(services, name);
+    const lines = readFileSync(file, 'utf8').split('\n').filter(present);
+    if (lines.some(line => line.split('#')[0]?.trim())) {
+      writeFileSync(file, lines.join('\n'));
+    } else {
+      rmSync(file);
+    }
+  });
+  run('zip', ['-q', '-r', '-9', '-X', target, '.'], dir);
+}
+
 function stub() {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(join(out, 'jre'), { recursive: true });
@@ -111,7 +142,7 @@ async function fetchAll() {
   chmodSync(join(out, 'typst'), 0o755);
 
   // mustang
-  cpSync(mustangJar, join(out, 'mustang.jar'));
+  slim(mustangJar, join(out, 'mustang.jar'), pins.mustang.drop);
 
   // jre, linked to the modules mustang needs (verified by running the validator against it)
   const jdkDir = join(cache, 'jdk');

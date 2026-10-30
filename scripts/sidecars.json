@@ -7,7 +7,16 @@
   "mustang": {
     "version": "2.26.0",
     "url": "https://github.com/ZUGFeRD/mustangproject/releases/download/core-2.26.0/Mustang-CLI-2.26.0.jar",
-    "sha256": "42d7868cb68264874a7b8cab4c3587b03b23ccc7cd72373da917f66758bb9736"
+    "sha256": "42d7868cb68264874a7b8cab4c3587b03b23ccc7cd72373da917f66758bb9736",
+    "drop": [
+      "org/apache/fop",
+      "org/apache/batik",
+      "org/apache/xmlgraphics",
+      "org/assertj",
+      "net/bytebuddy",
+      "org/codehaus/janino",
+      "org/codehaus/commons"
+    ]
   },
   "jdk": {
     "version": "21.0.12.1+1",
