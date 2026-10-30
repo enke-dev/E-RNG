@@ -109,8 +109,9 @@ export class PageSetupFormComponent extends ErngElement.withStyles(reorderStyles
   /** The part to mark, because the pointer is over it in the sample */
   @property({ type: Number }) hover: number | null = null;
 
-  /** Opens a part, the token tells a repeated request from the same one */
-  @property({ attribute: false }) reveal: { index: number; token: number } | undefined;
+  /** Opens or closes a part, the token tells a repeated request from the same one */
+  @property({ attribute: false }) reveal:
+    { index: number; open: boolean; token: number } | undefined;
 
   /** The font families of the layout, a text can be set in them */
   @property({ attribute: false })
@@ -136,7 +137,9 @@ export class PageSetupFormComponent extends ErngElement.withStyles(reorderStyles
     if (changed.has('reveal') && this.reveal) {
       // opens the part, the others close
       const target = this.renderRoot.querySelectorAll('wa-details')[this.reveal.index];
-      if (target) {
+      if (target && !this.reveal.open) {
+        target.open = false;
+      } else if (target) {
         const show = () =>
           // after the tab and the part are visible, else there is nothing to scroll to
           requestAnimationFrame(() =>

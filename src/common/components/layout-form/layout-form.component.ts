@@ -92,9 +92,9 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) implemen
   /** The part to mark in the form, because the pointer is over it in the sample */
   @property({ attribute: false }) hover: { first: boolean; index: number } | null = null;
 
-  /** Opens a part of a page setup, the token tells a repeated request from the same one */
+  /** Opens or closes a part of a page setup, the token tells a repeated request from the same one */
   @property({ attribute: false }) reveal:
-    { first: boolean; index: number; token: number } | undefined;
+    { first: boolean; index: number; open: boolean; token: number } | undefined;
 
   /** The setup that is in front, when the first page has its own: kept in step with the sample */
   @property() tab: 'first' | 'page' | undefined;

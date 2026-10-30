@@ -246,7 +246,8 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   /** A part to bring into view in the sample, because it was opened in the form */
   @state() private showInSample: { key: string; token: number } | undefined;
   /** A part to open in the form, asked for by a click in the sample */
-  @state() private reveal: { first: boolean; index: number; token: number } | undefined;
+  @state() private reveal:
+    { first: boolean; index: number; open: boolean; token: number } | undefined;
 
   /** The context as it is stored, what "unchanged" is compared against */
   #saved = '';
@@ -1937,10 +1938,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
           this.overSample = e.detail ? parseKey(e.detail) : null;
         }}"
         @region-click="${(e: CustomEvent<string>) => {
+          // the open one closes again, as its row in the form does
           const part = parseKey(e.detail);
+          const open = !this.openPart || regionKey(this.openPart) !== e.detail;
           this.pointed = { ...part };
-          this.openPart = { ...part };
-          this.reveal = { ...part, token: (this.reveal?.token ?? 0) + 1 };
+          this.openPart = open ? { ...part } : null;
+          this.reveal = { ...part, open, token: (this.reveal?.token ?? 0) + 1 };
         }}"
         hint="${this.sampleError ? `Vorschau nicht verfügbar: ${this.sampleError}` : (this.sample?.problems.map(p => p.message).join(', ') ?? 'Die Vorschau wird erzeugt…')}"
       ></erng-sheet>
