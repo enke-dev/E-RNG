@@ -32,7 +32,8 @@ import { ifDefined } from 'lit/directives/if-defined.js';
 
 import { ask } from '../../common/components/ask/ask.component.js';
 import { BRANDS } from '../../common/components/brand-select/brand-select.component.js';
-import { regionKey } from '../../common/components/sheet/sheet.component.js';
+import { parseKey, regionKey } from '../../common/components/sheet/sheet.component.js';
+import type { Link } from '../../common/layouts/editor/editor.layout.js';
 import type {
   Context,
   ContextUsage,
@@ -187,12 +188,6 @@ const LEGAL_LINES = 4;
 
 /** The ending of a layout file */
 const LAYOUT_EXTENSION = 'erng-layout';
-
-/** The setup and the place of a part in it, from what `regionKey` made */
-const parseKey = (key: string): { first: boolean; index: number } => {
-  const [setup, index] = key.split(':');
-  return { first: setup === 'first', index: Number(index) };
-};
 
 /**
  * Settings: on the left the contexts (the open one shows its pages: company, bank, offers, invoices) and
@@ -1911,6 +1906,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     return same ? null : over;
   }
 
+  /** The lines from the form to the sample: the selected part, and the one pointed at above it */
+  private get links(): Link[] {
+    const { openPart, hovered } = this;
+    return [
+      ...(openPart ? [{ key: regionKey(openPart), kind: 'active' as const }] : []),
+      ...(hovered ? [{ key: regionKey(hovered), kind: 'hover' as const }] : []),
+    ];
+  }
+
   /** The sample invoice, rendered by the real template; its parts are for pointing at when there is a form for them */
   private sampleSheet(interactive = true) {
     // the first page shows what is set up for it, the second what the others look like
@@ -2076,7 +2080,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     const isNew = layout.id === null;
     return html`
       <erng-page frameless slot="detail">
-        <erng-editor position-key="editor:layout">
+        <erng-editor position-key="editor:layout" .links="${this.links}">
           ${
             layout.archived
               ? html`

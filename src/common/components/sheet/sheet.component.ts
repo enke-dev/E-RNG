@@ -5,6 +5,7 @@ import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
+import type { Anchoring } from '../../layouts/editor/editor.layout.js';
 import type { PartBox } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import styles from './sheet.component.css';
@@ -12,6 +13,12 @@ import styles from './sheet.component.css';
 /** What a region is called: the setup it is on and its place in the list of parts */
 export const regionKey = (region: Pick<PartBox, 'first' | 'index'>) =>
   `${region.first ? 'first' : 'page'}:${region.index}`;
+
+/** The setup and the place of a part in it, from what `regionKey` made */
+export const parseKey = (key: string): { first: boolean; index: number } => {
+  const [setup, index] = key.split(':');
+  return { first: setup === 'first', index: Number(index) };
+};
 
 /**
  * The pages of a rendered document (SVG strings) as a sheet of paper, one page at a time with a
@@ -24,7 +31,7 @@ export const regionKey = (region: Pick<PartBox, 'first' | 'index'>) =>
  * @fires region-click - `detail` is the key of the region that was clicked
  */
 @customElement('erng-sheet')
-export class SheetComponent extends ErngElement.withStyles(styles) {
+export class SheetComponent extends ErngElement.withStyles(styles) implements Anchoring {
   /** One SVG document per page */
   @property({ attribute: false }) pages: string[] = [];
 
@@ -48,6 +55,11 @@ export class SheetComponent extends ErngElement.withStyles(styles) {
 
   /** Marks a document with more than one page, the styles leave room for the pager */
   @property({ type: Boolean, reflect: true }) paged = false;
+
+  /** The region of a key, while its page is shown */
+  anchor(key: string): Element | null {
+    return this.renderRoot.querySelector(`.region[data-key="${key}"]`);
+  }
 
   protected override updated(changed: PropertyValues<this>) {
     if (changed.has('reveal') && this.reveal) {

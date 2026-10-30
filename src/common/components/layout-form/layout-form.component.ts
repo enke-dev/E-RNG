@@ -12,16 +12,30 @@ import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
+import type { Anchoring } from '../../layouts/editor/editor.layout.js';
 import type { CustomLayout, PageSetup } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { text } from '../../utils/form.utils.js';
+import { parseKey } from '../sheet/sheet.component.js';
 import styles from './layout-form.component.css';
 
 /** The fields of an own layout, edits the given object and fires `change` */
 @customElement('erng-layout-form')
-export class LayoutFormComponent extends ErngElement.withStyles(styles) {
+export class LayoutFormComponent extends ErngElement.withStyles(styles) implements Anchoring {
   @property({ attribute: false })
   layout!: CustomLayout;
+
+  /** The row of a part in the form of its setup, as `regionKey` names it */
+  anchor(key: string): Element | null {
+    const { first, index } = parseKey(key);
+    return (
+      this.renderRoot
+        .querySelector<HTMLElementTagNameMap['erng-page-setup-form']>(
+          `wa-tab-panel[name="${first ? 'first' : 'page'}"] erng-page-setup-form`
+        )
+        ?.partRow(index) ?? null
+    );
+  }
 
   private changed() {
     this.requestUpdate();

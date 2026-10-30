@@ -7,6 +7,36 @@
   flex-direction: column;
 }
 
+/* the links between form and preview lie over both panes, only as tall as what is seen of them (the
+   height of the pane, `cqb` of its size container) and staying there while it scrolls; a layer of its
+   own, as it is drawn anew on every frame of a scroll: painted into the scrolling content (as tall as
+   the whole form) WebKit missed parts of what changed and left pieces of old curves. Above the
+   divider of the split panel (1), sticky footers of the page stay above. */
+svg {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex: none;
+  width: 100%;
+  height: 100cqb;
+  margin-bottom: -100cqb;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* drawn like the rings around a part on both sides: blue for what the pointer is over, orange for
+   the selected one */
+path {
+  fill: none;
+  stroke: var(--erng-hover);
+  stroke-width: 2px;
+  stroke-linecap: round;
+}
+
+.active {
+  stroke: var(--erng-highlight);
+}
+
 wa-split-panel {
   flex: 1 1 auto;
   /* the form never gets narrower than it needs, the page keeps its minimum */

@@ -127,6 +127,11 @@ export class PageSetupFormComponent extends ErngElement.withStyles(reorderStyles
   @state() private hovered: number | null = null;
   @state() private opened: number | null = null;
 
+  /** The row of a part, what the sample links to */
+  partRow(index: number): Element | null {
+    return this.renderRoot.querySelectorAll('.part > wa-details')[index] ?? null;
+  }
+
   protected override updated(changed: PropertyValues<this>) {
     if (changed.has('reveal') && this.reveal) {
       // opens the part, the others close
