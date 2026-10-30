@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -121,17 +121,24 @@ impl Parsed {
     }
 }
 
+/// What a file that is no layout file at all is told, also one that cannot be read as text
+pub const NOT_A_LAYOUT: &str = "Die Datei ist kein E-RNG-Layout oder ist beschädigt.";
+
 /// Checks the text of a file, without keeping anything of it.
 pub fn parse(text: &str) -> Result<Parsed> {
-    let mut bundle: Bundle = serde_json::from_str(text).context("this is not a layout file")?;
-    ensure!(bundle.format == FORMAT, "this is not a layout file");
+    // what serde found wrong (a missing field, a line and column) says nothing to the user
+    let mut bundle: Bundle = serde_json::from_str(text).map_err(|_| anyhow!(NOT_A_LAYOUT))?;
+    ensure!(bundle.format == FORMAT, NOT_A_LAYOUT);
     if bundle.version > VERSION {
-        bail!("the layout file is from a newer version of the app");
+        bail!("Das Layout stammt aus einer neueren Version von E-RNG, nach einem Update lässt es sich importieren.");
     }
     bundle.layout.name = bundle.layout.name.trim().to_string();
-    ensure!(!bundle.layout.name.is_empty(), "the layout has no name");
+    ensure!(
+        !bundle.layout.name.is_empty(),
+        "Das Layout in der Datei hat keinen Namen."
+    );
     if let Some(color) = bundle.layout.invalid_color() {
-        bail!("the layout has the color {color}, expected #rrggbb");
+        bail!("Das Layout hat die Farbe {color}, erwartet ist eine wie #rrggbb.");
     }
     Ok(Parsed(bundle))
 }
@@ -153,15 +160,15 @@ pub fn install(parsed: Parsed, name: Option<&str>, own: &Path) -> Result<Importe
         ensure!(
             key.components().count() == 1
                 && matches!(key.components().next(), Some(Component::Normal(_))),
-            "the layout file refers to {name}"
+            "Die Layoutdatei ist beschädigt: sie verweist auf {name}."
         );
         let encoded = bundle
             .files
             .get(name.as_ref())
-            .with_context(|| format!("the layout file lacks {name}"))?;
-        STANDARD
-            .decode(encoded)
-            .with_context(|| format!("{name} is damaged"))
+            .with_context(|| format!("Die Layoutdatei ist beschädigt: {name} fehlt."))?;
+        STANDARD.decode(encoded).with_context(|| {
+            format!("Die Layoutdatei ist beschädigt: {name} lässt sich nicht lesen.")
+        })
     };
 
     // a font of the file is one face, but one that is a collection is taken in as all its faces
@@ -174,7 +181,7 @@ pub fn install(parsed: Parsed, name: Option<&str>, own: &Path) -> Result<Importe
                 &data(&font.path)?,
                 &own.join("fonts"),
             )
-            .context("a font of the layout file is not usable")
+            .context("Eine Schrift der Layoutdatei ist nicht verwendbar")
         })
         .collect::<Result<Vec<_>>>()?
         .into_iter()
@@ -183,7 +190,7 @@ pub fn install(parsed: Parsed, name: Option<&str>, own: &Path) -> Result<Importe
     for image in images_mut(&mut layout) {
         let name = image.name.clone();
         *image = store_image(&image.path.to_string_lossy(), &data(&image.path)?, own)
-            .context("a picture of the layout file is not usable")?;
+            .context("Ein Bild der Layoutdatei ist nicht verwendbar")?;
         image.name = name;
     }
 
@@ -338,6 +345,9 @@ mod tests {
         // reading is two steps: the first needs no folder, the second copies the files
         let load = |text: &str| parse(text).and_then(|parsed| install(parsed, None, own.path()));
         assert!(load("no json").is_err());
+        // what serde says about it is no help to the user
+        assert_eq!(parse("{}").unwrap_err().to_string(), NOT_A_LAYOUT);
+        assert_eq!(parse("no json").unwrap_err().to_string(), NOT_A_LAYOUT);
         assert!(load(&with(&|v| v["format"] = "other".into())).is_err());
         assert!(load(&with(&|v| v["version"] = 99.into())).is_err());
         assert!(load(&with(&|v| v["layout"]["name"] = "  ".into())).is_err());

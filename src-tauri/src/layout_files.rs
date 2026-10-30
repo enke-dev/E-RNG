@@ -30,7 +30,7 @@ fn fingerprint(bytes: &[u8]) -> String {
 /// Copies a picture for a part and reads how many pixels it has.
 pub fn import_image(source: &Path, dir: &Path) -> Result<ImageFile> {
     let size = std::fs::metadata(source)
-        .with_context(|| format!("cannot read the file {}", source.display()))?
+        .with_context(|| format!("Die Datei {} lässt sich nicht lesen.", source.display()))?
         .len();
     // refuse before reading it all
     if size > MAX_IMAGE_BYTES {
@@ -44,7 +44,7 @@ pub fn import_image(source: &Path, dir: &Path) -> Result<ImageFile> {
 
 fn too_big(size: u64) -> String {
     format!(
-        "the image has {} MB, up to {} MB are accepted",
+        "Das Bild hat {} MB, erlaubt sind bis zu {} MB.",
         size / (1024 * 1024) + 1,
         MAX_IMAGE_BYTES / (1024 * 1024)
     )
@@ -57,7 +57,7 @@ pub fn store_image(name: &str, bytes: &[u8], dir: &Path) -> Result<ImageFile> {
         .and_then(|e| e.to_str())
         .map(str::to_lowercase)
         .filter(|e| IMAGE_EXTENSIONS.contains(&e.as_str()))
-        .context("an image must be a png, jpg or svg file")?;
+        .context("Ein Bild muss eine PNG-, JPG- oder SVG-Datei sein.")?;
     if bytes.len() as u64 > MAX_IMAGE_BYTES {
         bail!(too_big(bytes.len() as u64));
     }
@@ -65,7 +65,8 @@ pub fn store_image(name: &str, bytes: &[u8], dir: &Path) -> Result<ImageFile> {
     let (width_px, height_px) = if vector {
         (0, 0)
     } else {
-        let dimensions = imagesize::blob_size(bytes).context("this file is not a usable image")?;
+        let dimensions =
+            imagesize::blob_size(bytes).context("Die Datei ist kein verwendbares Bild.")?;
         (
             u32::try_from(dimensions.width).unwrap_or(u32::MAX),
             u32::try_from(dimensions.height).unwrap_or(u32::MAX),
@@ -88,7 +89,7 @@ pub fn store_image(name: &str, bytes: &[u8], dir: &Path) -> Result<ImageFile> {
 /// gives one font per face.
 pub fn import_font(source: &Path, dir: &Path) -> Result<Vec<FontFile>> {
     let bytes = std::fs::read(source)
-        .with_context(|| format!("cannot read the file {}", source.display()))?;
+        .with_context(|| format!("Die Datei {} lässt sich nicht lesen.", source.display()))?;
     store_font(&source.to_string_lossy(), &bytes, dir)
 }
 
@@ -104,14 +105,17 @@ pub fn store_font(name: &str, bytes: &[u8], dir: &Path) -> Result<Vec<FontFile>>
         .and_then(|e| e.to_str())
         .map(str::to_lowercase)
         .filter(|e| FONT_EXTENSIONS.contains(&e.as_str()))
-        .context("a font must be a ttf, otf, ttc or otc file")?;
+        .context("Eine Schrift muss eine TTF-, OTF-, TTC- oder OTC-Datei sein.")?;
     let faces: Vec<(Cow<[u8]>, String)> = match ttf_parser::fonts_in_collection(bytes) {
         Some(count) => {
-            ensure!(count <= MAX_FACES, "the collection has too many fonts");
+            ensure!(
+                count <= MAX_FACES,
+                "Die Sammlung enthält zu viele Schriften."
+            );
             (0..count)
                 .map(|index| split_face(bytes, index))
                 .collect::<Option<Vec<_>>>()
-                .context("this file is not a usable font collection")?
+                .context("Die Datei ist keine verwendbare Schriftsammlung.")?
                 .into_iter()
                 .map(|(face, extension)| (Cow::Owned(face), extension))
                 .collect()
@@ -132,7 +136,10 @@ pub fn store_font(name: &str, bytes: &[u8], dir: &Path) -> Result<Vec<FontFile>>
             ))
         })
         .collect::<Vec<_>>();
-    ensure!(!fonts.is_empty(), "this file is not a usable font");
+    ensure!(
+        !fonts.is_empty(),
+        "Die Datei ist keine verwendbare Schrift."
+    );
 
     std::fs::create_dir_all(dir)?;
     fonts

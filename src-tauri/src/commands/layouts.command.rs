@@ -224,7 +224,9 @@ pub fn layout_import(
     if size > layout_bundle::MAX_BUNDLE_BYTES {
         return Err("Die Datei ist zu groß für ein Layout.".into());
     }
-    let parsed = layout_bundle::parse(&std::fs::read_to_string(&path)?)?;
+    // not text at all (a picture, a backup): no layout either
+    let text = std::fs::read_to_string(&path).map_err(|_| layout_bundle::NOT_A_LAYOUT)?;
+    let parsed = layout_bundle::parse(&text)?;
     let layouts = store.all_custom_layouts()?;
     let find = |id: i64| layouts.iter().find(|l| l.id == Some(id));
 
