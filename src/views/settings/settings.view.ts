@@ -476,12 +476,13 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   private async loadLayouts() {
     const context = this.listContextId;
-    if (context === undefined) {
-      this.layouts = [];
-      this.customs = [];
-      return;
-    }
     try {
+      // before the first company there is no context, the built-in layout is listed all the same
+      if (context === undefined) {
+        this.customs = [];
+        this.layouts = await api.layoutsList();
+        return;
+      }
       [this.layouts, this.customs] = await Promise.all([
         api.layoutsList(context),
         api.layoutsCustom(context),

@@ -23,9 +23,17 @@ fn files_dir(app: &AppHandle) -> CommandResult<PathBuf> {
 }
 
 /// The invoice layouts a context and its invoice form can choose from: built in, shared and its own.
+/// Without a context (before the first company is saved) only the built-in one.
 #[tauri::command]
-pub fn layouts_list(store: State<'_, Store>, context_id: i64) -> CommandResult<Vec<LayoutInfo>> {
-    Ok(layouts(&store.custom_layouts(context_id)?))
+pub fn layouts_list(
+    store: State<'_, Store>,
+    context_id: Option<i64>,
+) -> CommandResult<Vec<LayoutInfo>> {
+    let customs = match context_id {
+        Some(id) => store.custom_layouts(id)?,
+        None => Vec::new(),
+    };
+    Ok(layouts(&customs))
 }
 
 /// The own layouts of a context, for the layout settings: shared ones and those only it can use

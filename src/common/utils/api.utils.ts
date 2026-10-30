@@ -654,7 +654,7 @@ export const api = {
   customerSave: (customer: Customer) => invoke<Customer>('customer_save', { customer }),
   customerDelete: (id: number) => invoke<null>('customer_delete', { id }),
 
-  layoutsList: (contextId: number) => invoke<LayoutInfo[]>('layouts_list', { contextId }),
+  layoutsList: (contextId?: number) => invoke<LayoutInfo[]>('layouts_list', { contextId }),
   layoutsCustom: (contextId: number) => invoke<CustomLayout[]>('layouts_custom', { contextId }),
   layoutSave: (layout: CustomLayout) => invoke<CustomLayout>('layout_save', { layout }),
   layoutPreview: (layout: CustomLayout | null, guides: boolean, contextId: number | null) =>
