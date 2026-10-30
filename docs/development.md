@@ -48,16 +48,22 @@ A **context** is one issuer (`context.rs`: a company today, maybe a Verein or a 
 
 ## Requirements
 
-- macOS on Apple silicon (the pinned sidecars are arm64 only)
+- macOS on Apple silicon, Windows x64 (with the Visual Studio Build Tools) or Linux x64 to build on; the targets
+  are macOS arm64 and Windows x64
 - [Bun](https://bun.sh) (version in `.bun-version`), Rust stable, Node (version in `.node-version`)
-- No Java needed: the build links its own runtime
+- No Java needed: the build links its own runtime. `scripts/sidecars.ts` builds for `--target`, else for the target
+  Tauri builds (`TAURI_ENV_TARGET_TRIPLE`), else for the host; the runtime is linked by the host's `jlink` from the
+  target's modules, both JDKs pinned at the same version in `sidecars.json` (jlink requires it). So Windows builds
+  on macOS or Linux too: `bunx tauri build --target x86_64-pc-windows-msvc --runner cargo-xwin` with
+  [cargo-xwin](https://github.com/rust-cross/cargo-xwin), LLVM (`clang-cl`, `lld-link`) and NSIS (`makensis`, on
+  Linux linked as `makensis.exe`)
 
 ## Develop
 
 ```sh
 bun install
 bun run generate     # app icons (from the Icon Composer export src/assets/icon-default.png) and sidecars: downloads Mustang
-                     # and a JDK (checksum-pinned), links the JRE
+                     # and the JDKs (checksum-pinned), links the JRE
 bun run dev          # tauri dev
 ```
 
@@ -104,7 +110,7 @@ src-tauri/src/
   creation.rs, originals.rs  create an invoice or offer (check, number, freeze, lock, keep the files) and hand the kept originals out
   sidecar.rs               running the bundled tools (Mustang, Java) with a deadline
   commands/                one tauri command per file
-scripts/                   sidecars.ts and its pins (sidecars.json), icons.ts
+scripts/                   sidecars.ts and its pins (sidecars.json), icons.ts, updater-manifest.ts
 src-tauri/test-fixtures/   a font file for the layout tests (Open Sans, OFL)
 ```
 
@@ -204,7 +210,7 @@ How numbers, money and dates are written is the layout's `Format` (`render/forma
 
 A layout is exported to one JSON file (`layout_bundle.rs`, the form's state, not a stored one) with fonts and pictures as base64 under made-up names, so no path of the user leaks. Fonts go along only if the user says so (they have licences); without them the importer is told which families are missing. Every stored layout has a `uid` (made when it is first stored, kept through renaming, export and import) and an `updated_at` (UTC, set on each save). An import (`layout_import`, `plan` in `layouts.command.rs`) reads the file first and copies nothing until the questions are answered: the same `uid` as a stored layout is the same layout, and replacing it needs a yes (the dialog shows both times and what uses it; the row and its `id` stay, so the default and drafts keep pointing at it); a name another layout has (any case, archived too) is never taken, the user names the import instead (suggested: `Name (Import <date>)`, which does not look like a successor); anything else is stored right away, so it takes an explicit delete to remove it. The file is untrusted, fonts and pictures pass the same intake as picked ones (`store_font`, `store_image`), and a damaged or foreign file is refused as a whole. The built-in layout can be exported too, as a starting point.
 
-`.erng-layout` and `.erng-backup` are file associations of the app (`bundle.fileAssociations`, with exported types `dev.enke.e-rng.layout` and `dev.enke.e-rng.backup` so Finder knows their kind; the backup conforms to `public.data`, not `public.zip-archive`, so it is not taken for an archive to unpack). macOS hands a double-clicked file to the running app, or to a starting one, as `RunEvent::Opened`; `opened-files.command.rs` keeps the paths of both kinds until the window asks (`opened_files`, also on the `file-opened` event), and `opened.utils.ts` hands them on by their ending: for a layout the root view asks the user to confirm, goes to the settings, and the settings import it like a picked file, with the same replace and name questions; a backup goes to `Datensicherung`, which restores it like a picked one, with the same question before anything is replaced. It only works in a built app, not in `tauri dev`; Windows and Linux (the path comes as an argument) are not wired.
+`.erng-layout` and `.erng-backup` are file associations of the app (`bundle.fileAssociations`, with exported types `dev.enke.e-rng.layout` and `dev.enke.e-rng.backup` so Finder knows their kind; the backup conforms to `public.data`, not `public.zip-archive`, so it is not taken for an archive to unpack). macOS hands a double-clicked file to the running app, or to a starting one, as `RunEvent::Opened`; `opened-files.command.rs` keeps the paths of both kinds until the window asks (`opened_files`, also on the `file-opened` event), and `opened.utils.ts` hands them on by their ending: for a layout the root view asks the user to confirm, goes to the settings, and the settings import it like a picked file, with the same replace and name questions; a backup goes to `Datensicherung`, which restores it like a picked one, with the same question before anything is replaced. It only works in a built app, not in `tauri dev`. Windows and Linux hand the file to a new process as an argument: the app reads its own at the start (`opened_files_command::from_args`), and a second start passes them to the running one and ends (`tauri-plugin-single-instance`, the first plugin), whose window comes to the front.
 
 The sample hands out the box of every part (`<part-box>` metadata, queried from the compiled document, `render_sample`), so the editor can tell what is under the pointer: pointing at a part in the form or in the sample marks it blue on both sides, the open part is orange, and a click in the sample opens it in the form, or closes it when it is the open one. A curve in the same colours joins the row in the form and the box in the sample (`erng-editor` `links`, the ends come from the slotted elements' `anchor(key)`, here `erng-layout-form` and `erng-sheet`): one SVG over both panes in client coordinates, as tall as the pane and sticky in it on a layer of its own (painted into the scrolling content, WebKit left pieces of old curves), drawn again once per frame when a pane around either end scrolls, the window or the divider moves, or something in the form changes, and on every frame while something in it opens or closes; an end that is hidden or on another page gets no curve, a partly seen one is met in the middle of what is seen, one scrolled away at its edge nearest the view, so the curve leaves the panes there and moves with the scroll. With the guides on, the texts a layout prints from its own (text parts and page numbers, not the data of the invoice) also show what cannot be seen (`render/invisible.rs`, codes from `invisible.rs`): a pilcrow at the end of every line, an arrow where a tab ended a column, a dot on every normal space (all in violet, hanging in the text so widths and line breaks stay), and a violet badge with a short code in front of each character a paste brings along that cannot be seen or behaves unlike it looks: `NBSP`, `NNBSP`, the other spaces of U+2000 to U+200A, U+205F and U+3000 (`NQSP` … `HSP`, `MMSP`, `IDSP`), `MVS`, `ZWSP`, `ZWNJ`, `ZWJ`, `WJ`, `CGJ`, `BOM`, `OBJ` (an attachment left behind by Notes or Pages), `SHY`, `NBHY`, `LS`, `PS`, `LRM`, `RLM`, `ALM`, the bidi controls (`LRE` … `PDI`) and control characters by their names (`NUL`, `CR`, `DEL`, `NEL`, `C1`). The characters stay in the text, only the badge adds its width, so shaping, breaking and direction are those of the document. The marks are runs of the text with a `mark` (`Run.mark`, `PartViewContent::PageNumber::marked`) that `stage` makes only for `Branding.guides`, `render_pdf` switches guides off whatever the branding says, so a document and the preview without guides carry none (`marks_of_invisible_characters_are_made_for_the_guides_only`). The text part form lists such characters under the field (`invisible.utils.ts`) with a button that turns the spaces into normal ones, the non-breaking hyphen into a normal one, line separators into line breaks and drops the rest. Both read one table, `src-tauri/data/invisible-chars.json` (code point, code, replacement); control characters are known by rule. Seller and customers are cleaned the same way when they are saved (`Seller::cleaned`, `Customer::cleaned`, `invisible::clean`), silently, as they go into the XML as well: every field becomes one line (line breaks and tabs turn into spaces), only the legal information of the seller keeps its lines. Visible look-alikes such as the en dash, em dash or minus sign are typography and get no badge. The settings show the same 30-position sample in every layout (`layout_preview`), with optional guides: red for the
 frame, cyan for the aids of a letter (address window, fold and punch marks, middle) and dotted outlines of the parts
@@ -236,9 +242,18 @@ Not built yet, nothing here is promised. Bigger features have a plan in `.claude
 
 ## Release
 
-Pushing to `main` runs `check`, then bumps the version (conventional commits, `release-it`), builds the app
-on macOS into a draft release, commits the bump, publishes the release and writes `latest.json` for the
-in-app updater to the `gh-e-rng-latest` branch. Needs the repo secret `TAURI_SIGNING_PRIVATE_KEY`.
+Pushing to `main` runs `check`, then bumps the version (conventional commits, `release-it`), creates one draft
+release, builds the app into it for macOS arm64 (on macOS) and Windows x64 (cross-built on Linux with
+`cargo-xwin`; clippy and the tests with the real tools on Windows
+are a job commented out at the end of `check.yml`: about 15 minutes, too slow to hold up every release), writes
+`latest.json` from the uploaded bundles and their signatures (`scripts/updater-manifest.ts`, keys
+`darwin-aarch64[-app]` and `windows-x86_64[-nsis]`; tauri-action's own merge has no lock), commits the bump,
+publishes the release and copies `latest.json` for the in-app updater to the `gh-e-rng-latest` branch. All or
+nothing: a failed platform drops the draft. A push to a `release-try/…` branch runs the same up to the manifest
+and then drops the draft, a dry run that spends no version. Needs the repo secret `TAURI_SIGNING_PRIVATE_KEY`.
+Windows: an NSIS installer for the current user (no admin), German only, WebView2 by its download bootstrapper,
+not signed (SmartScreen warns on every download). The uninstaller's "delete app data" checkbox is overruled by
+`src-tauri/windows/hooks.nsh`: the database and the kept originals in `%APPDATA%\dev.enke.e-rng` stay.
 The app checks on start and from the menu (`updater.component.ts`): its button first only loads the update while
 the user goes on working, then reads `Jetzt 0.7.0 installieren`, so the restart happens when the user says so
 (after asking about unsaved changes). The loaded package lives in memory: a restart forgets it and the check on

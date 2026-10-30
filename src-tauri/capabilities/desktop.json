@@ -1,6 +1,6 @@
 {
   "identifier": "desktop-capability",
-  "platforms": ["macOS"],
+  "platforms": ["macOS", "windows"],
   "windows": ["main"],
   "permissions": ["updater:default", "process:default"]
 }

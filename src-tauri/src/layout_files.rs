@@ -902,6 +902,7 @@ mod tests {
     /// The Futura of macOS: five faces in a collection, the family only as a Mac Roman record and
     /// styles in several languages. Read only, never kept in the repository.
     /// `FONTS_OUT=/some/dir` keeps the faces to look at.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "needs the Futura of macOS"]
     fn the_futura_collection_of_macos_comes_in_with_all_its_faces() {

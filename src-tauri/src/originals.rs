@@ -33,7 +33,12 @@ fn keep(data: &Path, relative: PathBuf, from: &Path) -> Result<StoredFile> {
     }
     std::fs::copy(from, &target).with_context(|| format!("cannot keep {}", from.display()))?;
     Ok(StoredFile {
-        path: relative.to_string_lossy().into_owned(),
+        // with `/` on every system, a database or backup moves between them
+        path: relative
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
         sha256: sha256(&target)?,
     })
 }
@@ -170,12 +175,7 @@ mod tests {
 
         let files = store(data.path(), 3, "RE 2026/001", &produced(work.path()), false).unwrap();
 
-        assert_eq!(
-            files.pdf.path,
-            PathBuf::from("invoices/3/RE_2026-001.pdf")
-                .to_string_lossy()
-                .as_ref()
-        );
+        assert_eq!(files.pdf.path, "invoices/3/RE_2026-001.pdf");
         assert!(data.path().join(&xml_of(&files).path).is_file());
         assert_eq!(files.pdf.sha256.len(), 64);
         assert!(!files.regenerated);
@@ -266,12 +266,7 @@ mod tests {
 
         let files = store_pdf(data.path(), Kind::Offer, 3, "AN 2026/001", &pdf).unwrap();
 
-        assert_eq!(
-            files.pdf.path,
-            PathBuf::from("offers/3/AN_2026-001.pdf")
-                .to_string_lossy()
-                .as_ref()
-        );
+        assert_eq!(files.pdf.path, "offers/3/AN_2026-001.pdf");
         assert_eq!(files.xml, None);
         assert_eq!(files.pdf.sha256.len(), 64);
         assert!(!data.path().join("invoices").exists());

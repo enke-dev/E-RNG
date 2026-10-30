@@ -1,0 +1,5 @@
+# LF everywhere, also in Windows checkouts: the release applies a patch made on Linux, and
+# embedded files are the same on every target
+* text=auto eol=lf
+# test fixtures stay byte for byte as they came
+src-tauri/test-fixtures/** -text

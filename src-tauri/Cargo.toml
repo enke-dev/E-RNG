@@ -30,6 +30,8 @@ tempfile = "3"
 roxmltree = "0.21"
 rust_decimal = "1"
 anyhow = "1"
+# Windows hands out resource paths as `\\?\C:\…`, which the Java launcher cannot take
+dunce = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ttf-parser = "0.25.1"
@@ -44,6 +46,10 @@ typst-layout = "=0.15.1"
 typst-kit = { version = "=0.15.1", features = ["datetime", "embedded-fonts"] }
 typst-pdf = "=0.15.1"
 typst-svg = "=0.15.1"
+
+# a file opened with the app starts a second process there, it hands its arguments to the first
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

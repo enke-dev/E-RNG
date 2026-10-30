@@ -83,7 +83,24 @@ fn add_entries_to_menu(app: &tauri::App) -> tauri::Result<()> {
 // the list of commands is most of it
 #[allow(clippy::too_many_lines)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // first of all plugins: a second start with a file hands it to the running app and ends
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+        commands::opened_files_command::offer(
+            app,
+            commands::opened_files_command::from_args(
+                args.into_iter().map(Into::into),
+                std::path::Path::new(&cwd),
+            ),
+        );
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+    builder
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
@@ -108,6 +125,15 @@ pub fn run() {
             }
             app.manage(store);
             add_entries_to_menu(app)?;
+            // a file the app was started with (double click while it was closed)
+            #[cfg(any(windows, target_os = "linux"))]
+            commands::opened_files_command::offer(
+                app.handle(),
+                commands::opened_files_command::from_args(
+                    std::env::args_os(),
+                    &std::env::current_dir()?,
+                ),
+            );
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -197,7 +223,10 @@ pub fn run() {
             // a layout or backup file was opened with the app (macOS says so with an event)
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             if let tauri::RunEvent::Opened { urls } = event {
-                commands::opened_files_command::offer(app, &urls);
+                commands::opened_files_command::offer(
+                    app,
+                    urls.iter().filter_map(|url| url.to_file_path().ok()),
+                );
             }
             #[cfg(not(any(target_os = "macos", target_os = "ios")))]
             let _ = (app, event);

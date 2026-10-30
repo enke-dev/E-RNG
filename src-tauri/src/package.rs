@@ -105,7 +105,14 @@ pub fn combine(
         ],
     )?;
     if result.code != Some(0) || !dir.join(out).exists() {
-        bail!("combining failed: {}", result.stdout.trim());
+        // Mustang says what went wrong on stdout, Java on stderr (only its end, it can be long)
+        let stderr: Vec<_> = result.stderr.trim().lines().collect();
+        bail!(
+            "combining failed (exit {:?}): {} {}",
+            result.code,
+            result.stdout.trim(),
+            stderr[stderr.len().saturating_sub(5)..].join(" ")
+        );
     }
     Ok(())
 }

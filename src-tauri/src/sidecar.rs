@@ -23,11 +23,9 @@ impl Sidecars {
 
     /// The bundled resources, in dev (no bundle yet) the folder the fetch script fills.
     pub fn locate(app: &AppHandle) -> Result<Self> {
-        let bundled = app
-            .path()
-            .resource_dir()
-            .context("no resource directory")?
-            .join("sidecars");
+        let resources = app.path().resource_dir().context("no resource directory")?;
+        // without the `\\?\` Windows puts in front: Java crashes on a jar given that way
+        let bundled = dunce::simplified(&resources).join("sidecars");
         let dir = if bundled.join("mustang.jar").exists() {
             bundled
         } else {
@@ -50,7 +48,10 @@ impl Sidecars {
     }
 
     pub fn java(&self) -> PathBuf {
-        self.dir.join("jre").join("bin").join("java")
+        self.dir
+            .join("jre")
+            .join("bin")
+            .join(format!("java{}", std::env::consts::EXE_SUFFIX))
     }
 
     pub fn mustang(&self) -> PathBuf {
@@ -68,7 +69,11 @@ pub struct Output {
 
 /// Runs a program to its end, or kills it after `timeout`.
 pub fn run(program: &Path, args: &[OsString], cwd: &Path, timeout: Duration) -> Result<Output> {
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    // the app has no console, without this every run would open one (CREATE_NO_WINDOW)
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
+    let mut child = command
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
@@ -118,6 +123,7 @@ pub fn run(program: &Path, args: &[OsString], cwd: &Path, timeout: Duration) -> 
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn captures_output_and_exit_code() {
         let out = run(
@@ -133,12 +139,42 @@ mod tests {
         assert_eq!(out.stderr.trim(), "oops");
     }
 
+    #[cfg(unix)]
     #[test]
     fn kills_what_runs_too_long() {
         let result = run(
             Path::new("/bin/sleep"),
             &["5".into()],
             Path::new("/"),
+            Duration::from_millis(100),
+        );
+
+        assert!(result.unwrap_err().to_string().contains("did not finish"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn captures_output_and_exit_code() {
+        let out = run(
+            Path::new(r"C:\Windows\System32\cmd.exe"),
+            &["/C".into(), "echo hi& echo oops 1>&2& exit /b 3".into()],
+            Path::new(r"C:\"),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+
+        assert_eq!(out.code, Some(3));
+        assert_eq!(out.stdout.trim(), "hi");
+        assert_eq!(out.stderr.trim(), "oops");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn kills_what_runs_too_long() {
+        let result = run(
+            Path::new(r"C:\Windows\System32\PING.EXE"),
+            &["-n".into(), "6".into(), "127.0.0.1".into()],
+            Path::new(r"C:\"),
             Duration::from_millis(100),
         );
 

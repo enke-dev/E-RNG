@@ -4,13 +4,21 @@
 
 # E-RNG
 
-macOS app for e-invoices: fill in an invoice, get a **ZUGFeRD / Factur-X PDF** (or an **XRechnung**
-XML) that was checked before it can be saved.
+App for macOS and Windows for e-invoices: fill in an invoice, get a **ZUGFeRD / Factur-X PDF** (or
+an **XRechnung** XML) that was checked before it can be saved.
 
 ## Usage
 
-Download the disc image from the [latest release](https://github.com/enke-dev/e-rng/releases/latest)
-(Apple silicon; not signed yet, so open it via right click).
+Download from the [latest release](https://github.com/enke-dev/e-rng/releases/latest):
+
+- **macOS** (Apple silicon): `E-RNG_<version>_aarch64.dmg`. Not signed yet: if macOS refuses to open
+  it, allow it under System Settings → Privacy & Security → "Open Anyway".
+- **Windows 10/11** (64-bit): `E-RNG_<version>_x64-setup.exe`, installs for the current user without
+  admin rights. Not signed yet: SmartScreen warns, "Weitere Informationen" → "Trotzdem ausführen".
+  Where Smart App Control is on, Windows blocks unsigned apps without a way past it.
+
+Uninstalling keeps the data (invoices must be kept for years); it stays in
+`~/Library/Application Support/dev.enke.e-rng` or `%APPDATA%\dev.enke.e-rng`.
 
 ## Development
 
