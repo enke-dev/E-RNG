@@ -64,3 +64,9 @@ struct_excessive_bools = "allow"
 needless_for_each = "allow"
 # `assert!(!x.is_empty())` has nothing more to show when it fails
 assert_is_empty = "allow"
+
+# one codegen unit and no symbols: 78 → 51 MB at about the same build time; LTO was measured and
+# saves little more (49 MB, 16.0 instead of 16.2 MB packed) for twice the build time
+[profile.release]
+codegen-units = 1
+strip = true
