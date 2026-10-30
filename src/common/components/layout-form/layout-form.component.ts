@@ -192,7 +192,9 @@ export class LayoutFormComponent extends ErngElement.withStyles(styles) implemen
             <wa-tab-group
               class="${l.first ? '' : 'single'}"
               @wa-tab-show="${(e: CustomEvent<{ name: string }>) =>
+                // the group shows its tab only once it is first seen: the one in front is no change
                 e.target === e.currentTarget &&
+                e.detail.name !== this.tab &&
                 this.pointAt(e.detail.name === 'first', { hovered: null, opened: null })}"
             >
               <wa-tab slot="nav" panel="first">Erste Seite</wa-tab>
