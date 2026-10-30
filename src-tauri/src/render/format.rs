@@ -2,8 +2,9 @@
 //! The defaults are the German way: `1.234,56 €`, `19 %`, `18.10.2026`.
 
 use en16931::Date;
+use phonenumber::{country, Mode};
 
-use crate::layout::Format;
+use crate::layout::{Format, PhoneFormat};
 
 const NBSP: char = '\u{a0}';
 
@@ -122,6 +123,30 @@ impl Formatter {
             .map(|chunk| chunk.iter().collect::<String>())
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    /// A phone number as the layout wants it; `country` is the one of its owner, for numbers typed
+    /// without a country code. What is no valid number stays as typed.
+    pub fn phone(&self, number: &str, country: Option<&str>) -> String {
+        let mode = match self.0.phone {
+            PhoneFormat::AsTyped => return number.to_owned(),
+            PhoneFormat::International => Mode::International,
+            PhoneFormat::National => Mode::National,
+        };
+        let home = country.and_then(|c| c.parse::<country::Id>().ok());
+        let Some(parsed) = phonenumber::parse(home, number)
+            .ok()
+            .filter(phonenumber::PhoneNumber::is_valid)
+        else {
+            return number.to_owned();
+        };
+        // a foreign number written nationally could not be dialled from here
+        let mode = if parsed.country().id() == home {
+            mode
+        } else {
+            Mode::International
+        };
+        parsed.format().mode(mode).to_string()
     }
 
     pub fn date(&self, date: Date) -> String {
@@ -276,6 +301,43 @@ mod tests {
             grouped.iban("DE02120300000000202051"),
             "DE02 1203 0000 0000 2020 51"
         );
+    }
+
+    #[test]
+    fn phone_numbers_are_written_the_way_the_layout_says() {
+        let style = |phone| {
+            Formatter::new(&Format {
+                phone,
+                ..Format::default()
+            })
+        };
+        let typed = style(PhoneFormat::AsTyped);
+        let international = style(PhoneFormat::International);
+        let national = style(PhoneFormat::National);
+
+        assert_eq!(typed.phone("0221/1234567", Some("DE")), "0221/1234567");
+        assert_eq!(
+            international.phone("0221/1234567", Some("DE")),
+            "+49 221 1234567"
+        );
+        assert_eq!(
+            national.phone("+49 (0)221 1234567", Some("DE")),
+            "0221 1234567"
+        );
+        assert_eq!(
+            national.phone("+49 171 1234567", Some("DE")),
+            "0171 1234567"
+        );
+        // another country's number stays international, a national one needs the seller's country
+        assert_eq!(national.phone("+43 1 5321234", Some("DE")), "+43 1 5321234");
+        assert_eq!(
+            international.phone("01 5321234", Some("AT")),
+            "+43 1 5321234"
+        );
+        assert_eq!(international.phone("0221 1234567", None), "0221 1234567");
+        // no phone number: as typed
+        assert_eq!(international.phone("Zentrale", Some("DE")), "Zentrale");
+        assert_eq!(international.phone("0221", Some("DE")), "0221");
     }
 
     #[test]

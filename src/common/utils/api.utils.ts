@@ -477,6 +477,8 @@ export interface PageSetup {
   parts: Part[];
 }
 
+export type PhoneFormat = 'as-typed' | 'international' | 'national';
+
 /** How numbers, money and dates are written */
 export interface Format {
   /** Between the whole and the fractional part */
@@ -495,6 +497,8 @@ export interface Format {
   true_minus: boolean;
   /** `DE02 1203 …` instead of `DE021203…` */
   iban_groups: boolean;
+  /** Phone, mobile and fax of the seller: as typed, `+49 221 1234567` or `0221 1234567` */
+  phone: PhoneFormat;
   /** A pattern like dayjs has them: `DD.MM.YYYY` */
   date: string;
   /** The same for the written out date: `D. MMMM YYYY` */

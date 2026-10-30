@@ -2,7 +2,7 @@
 //! presentation rules (address lines, which totals to show). Money is never computed
 //! here, every figure comes from the reconciled invoice.
 
-use en16931::invoice::{DocumentKind, PaymentMeans, PostalAddress};
+use en16931::invoice::{Code, DocumentKind, PaymentMeans, PostalAddress};
 use en16931::{Date, Invoice};
 use serde::{Deserialize, Serialize};
 
@@ -326,19 +326,29 @@ fn address_lines(address: &PostalAddress) -> Vec<String> {
         .collect()
 }
 
+/// The country of an address as its code, to read phone numbers typed without one
+fn country(address: &PostalAddress) -> Option<&str> {
+    address.country.as_ref().map(Code::as_str)
+}
+
 /// `details` are the seller's fields beyond the invoice data, none for the buyer
-fn party_view(party: &en16931::invoice::Party, details: Option<&SellerDetails>) -> PartyView {
+fn party_view(
+    party: &en16931::invoice::Party,
+    details: Option<&SellerDetails>,
+    fmt: &Formatter,
+) -> PartyView {
     let seller = details.is_some();
     let contact = &party.contact;
+    let phone = |number: &String| fmt.phone(number, country(&party.address));
     let contact_lines = [
         contact.name.clone(),
-        contact.phone.as_ref().map(|p| format!("Tel. {p}")),
+        contact.phone.as_ref().map(|p| format!("Tel. {}", phone(p))),
         details
             .and_then(|d| d.mobile.as_ref())
-            .map(|m| format!("Mobil {m}")),
+            .map(|m| format!("Mobil {}", phone(m))),
         details
             .and_then(|d| d.fax.as_ref())
-            .map(|f| format!("Fax {f}")),
+            .map(|f| format!("Fax {}", phone(f))),
         contact.email.clone(),
         details.and_then(|d| d.website.clone()),
     ];
@@ -395,6 +405,12 @@ fn seller_fields(invoice: &Invoice, details: &SellerDetails, fmt: &Formatter) ->
         _ => None,
     };
     let own = |value: &Option<String>| value.clone().unwrap_or_default();
+    let phone = |number: &Option<String>| {
+        number
+            .as_deref()
+            .map(|n| fmt.phone(n, country(address)))
+            .unwrap_or_default()
+    };
     SellerFields {
         street: [&address.line1, &address.line2, &address.line3]
             .into_iter()
@@ -403,9 +419,9 @@ fn seller_fields(invoice: &Invoice, details: &SellerDetails, fmt: &Formatter) ->
             .collect::<Vec<_>>()
             .join("\n"),
         postcode_city: postcode_city(address),
-        phone: own(&contact.phone),
-        mobile: own(&details.mobile),
-        fax: own(&details.fax),
+        phone: phone(&contact.phone),
+        mobile: phone(&details.mobile),
+        fax: phone(&details.fax),
         email: own(&contact.email),
         website: own(&details.website),
         contact_name: own(&contact.name),
@@ -735,9 +751,9 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
             month: issue.month(),
             day: issue.day(),
         },
-        seller: party_view(&invoice.seller, Some(&branding.seller)),
+        seller: party_view(&invoice.seller, Some(&branding.seller), fmt),
         seller_fields: seller_fields(invoice, &branding.seller, fmt),
-        buyer: party_view(&invoice.buyer, None),
+        buyer: party_view(&invoice.buyer, None, fmt),
         infos,
         intro: invoice
             .notes

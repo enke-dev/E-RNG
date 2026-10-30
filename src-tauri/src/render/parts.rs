@@ -613,6 +613,32 @@ mod tests {
         assert_eq!(iban(false), "DE02120300000000202051");
     }
 
+    #[test]
+    fn the_phone_placeholders_follow_the_layout() {
+        use crate::draft::fixtures;
+        use crate::layout::PhoneFormat;
+
+        let mut settings = fixtures::settings();
+        settings.seller.phone = "0221/1234567".into();
+        settings.seller.fax = Some("0221 1234568".into());
+        let view = seller_view(
+            &settings,
+            &crate::model::Format {
+                phone: PhoneFormat::International,
+                ..crate::model::Format::default()
+            },
+        );
+
+        assert_eq!(
+            placeholder(&view, "seller_phone").as_deref(),
+            Some("+49 221 1234567")
+        );
+        assert_eq!(
+            placeholder(&view, "seller_fax").as_deref(),
+            Some("+49 221 1234568")
+        );
+    }
+
     fn values(name: &str) -> Option<String> {
         match name {
             "set" => Some("x".into()),

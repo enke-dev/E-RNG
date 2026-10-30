@@ -7,7 +7,7 @@ import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.
 import { html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { Format } from '../../utils/api.utils.js';
+import type { Format, PhoneFormat } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { text } from '../../utils/form.utils.js';
 import styles from './format-form.component.css';
@@ -23,6 +23,12 @@ const THOUSANDS: [string, string][] = [
   [' ', 'Leerzeichen (1 234)'],
   ['’', 'Apostroph (1’234)'],
   ['none', 'keiner (1234)'],
+];
+
+const PHONES: [PhoneFormat, string][] = [
+  ['as-typed', 'wie eingegeben'],
+  ['international', 'international (+49 221 1234567)'],
+  ['national', 'national (0221 1234567)'],
 ];
 
 /** Patterns as dayjs has them, with how they look; anything else is the user's own */
@@ -165,6 +171,7 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
             ],
             v => (f.currency_after = v === 'after')
           )}
+          ${this.select('Telefonnummern', f.phone, PHONES, v => (f.phone = v as PhoneFormat))}
         </div>
         <div class="checks">
           ${this.check(

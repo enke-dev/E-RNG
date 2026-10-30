@@ -46,6 +46,7 @@ typst-layout = "=0.15.1"
 typst-kit = { version = "=0.15.1", features = ["datetime", "embedded-fonts"] }
 typst-pdf = "=0.15.1"
 typst-svg = "=0.15.1"
+phonenumber = "0.3"
 
 # a file opened with the app starts a second process there, it hands its arguments to the first
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]

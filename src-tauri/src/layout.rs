@@ -201,6 +201,18 @@ pub struct PageSetup {
     pub parts: Vec<Part>,
 }
 
+/// How the seller's phone numbers are written. What cannot be read as a phone number stays as typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PhoneFormat {
+    #[default]
+    AsTyped,
+    /// `+49 221 1234567`
+    International,
+    /// `0221 1234567`; numbers of another country than the seller's stay international
+    National,
+}
+
 /// How numbers, money and dates are written, the German way unless the layout says otherwise.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -221,6 +233,8 @@ pub struct Format {
     pub true_minus: bool,
     /// `DE02 1203 …` instead of `DE021203…`
     pub iban_groups: bool,
+    /// Phone, mobile and fax of the seller
+    pub phone: PhoneFormat,
     /// A pattern like dayjs has them: `DD.MM.YYYY`
     pub date: String,
     /// The same for the written out date (infos part): `D. MMMM YYYY`
@@ -238,6 +252,7 @@ impl Default for Format {
             percent_space: false,
             true_minus: false,
             iban_groups: false,
+            phone: PhoneFormat::AsTyped,
             date: "DD.MM.YYYY".into(),
             date_long: "D. MMMM YYYY".into(),
         }

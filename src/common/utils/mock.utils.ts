@@ -410,6 +410,7 @@ const builtinLayout = (): CustomLayout => ({
     percent_space: true,
     true_minus: false,
     iban_groups: false,
+    phone: 'as-typed',
     date: 'DD.MM.YYYY',
     date_long: 'D. MMMM YYYY',
   },
