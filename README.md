@@ -13,8 +13,8 @@ Download from the [latest release](https://github.com/enke-dev/e-rng/releases/la
 
 - **macOS** (Apple silicon): `E-RNG_<version>_aarch64.dmg`. Not signed yet: if macOS refuses to open
   it, allow it under System Settings → Privacy & Security → "Open Anyway".
-- **Windows 10/11** (64-bit): `E-RNG_<version>_x64-setup.exe`, installs for the current user without
-  admin rights. Not signed yet: SmartScreen warns, "Weitere Informationen" → "Trotzdem ausführen".
+- **Windows 10/11** (64-bit): `E-RNG_<version>_x64-setup.exe`, installs for the current user (no admin
+  rights) or, with an admin prompt, for all users. Not signed yet: SmartScreen warns, "Weitere Informationen" → "Trotzdem ausführen".
   Where Smart App Control is on, Windows blocks unsigned apps without a way past it.
 
 Uninstalling keeps the data (invoices must be kept for years); it stays in

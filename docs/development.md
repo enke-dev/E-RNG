@@ -251,7 +251,9 @@ are a job commented out at the end of `check.yml`: about 15 minutes, too slow to
 publishes the release and copies `latest.json` for the in-app updater to the `gh-e-rng-latest` branch. All or
 nothing: a failed platform drops the draft. A push to a `release-try/…` branch runs the same up to the manifest
 and then drops the draft, a dry run that spends no version. Needs the repo secret `TAURI_SIGNING_PRIVATE_KEY`.
-Windows: an NSIS installer for the current user (no admin), German only, WebView2 by its download bootstrapper,
+Windows: an NSIS installer that asks whether to install for the current user (`%LOCALAPPDATA%`, preselected) or
+for all users (Program Files, admin prompt; updates then ask again); `src-tauri/windows/hooks.nsh` makes updates
+keep the mode, also of v0.8.0 per-user installs, which predate the mode choice, German only, WebView2 by its download bootstrapper,
 not signed (SmartScreen warns on every download). The uninstaller's "delete app data" checkbox is overruled by
 `src-tauri/windows/hooks.nsh`: the database and the kept originals in `%APPDATA%\dev.enke.e-rng` stay.
 The app checks on start and from the menu (`updater.component.ts`): its button first only loads the update while
