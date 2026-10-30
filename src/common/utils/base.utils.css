@@ -54,6 +54,15 @@
   color: var(--wa-color-text-quiet);
 }
 
+/* a field validity() found wrong, its hint says why (Web Awesome leaves the look to the app) */
+wa-input[data-invalid] {
+  --wa-form-control-border-color: var(--wa-color-danger-border-loud);
+
+  &::part(hint) {
+    color: var(--wa-color-danger-on-quiet);
+  }
+}
+
 h2 {
   margin: 0;
   font-size: var(--wa-font-size-l);

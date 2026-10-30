@@ -76,6 +76,17 @@ import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { takeOpened } from '../../common/utils/opened.utils.js';
 import { indexAfterMove } from '../../common/utils/reorder.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
+import type { Check } from '../../common/utils/validation.utils.js';
+import {
+  bic,
+  email,
+  iban,
+  phone,
+  taxNumber,
+  vatId,
+  website,
+} from '../../common/utils/validation.utils.js';
+import { validity } from '../../common/utils/validity.utils.js';
 import styles from './settings.view.css';
 
 /** The pages of a context: all but the rates and units are saved together, those save themselves */
@@ -133,6 +144,16 @@ const FIELD_LABELS: Record<string, string> = {
   'seller.phone': 'Telefon',
   'seller.email': 'E-Mail',
 };
+
+/** How a seller field is typed and checked; `hint` shows how its value looks */
+interface Field {
+  type?: WaInput['type'];
+  required?: boolean;
+  check?: Check;
+  hint?: string;
+}
+
+const PHONE_HINT = 'z. B. 0221 1234567 oder +49 221 1234567';
 
 const fieldNames = (fields: string[]) => fields.map(f => FIELD_LABELS[f] ?? f).join(', ');
 
@@ -593,19 +614,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   private seller(
     key: 'name' | 'contact_name' | 'phone' | 'email' | 'iban',
     caption: string,
-    type = 'text',
-    required = false
+    field: Field = {}
   ) {
     const settings = (this.context as Context).settings;
-    return html`
-      <wa-input
-        label="${caption}"
-        type="${type as WaInput['type']}"
-        ?required="${required}"
-        .value="${settings.seller[key]}"
-        @input="${(e: Event) => this.edit(s => (s.seller[key] = text(e)))}"
-      ></wa-input>
-    `;
+    return this.field(caption, settings.seller[key], field, value =>
+      this.edit(s => (s.seller[key] = value))
+    );
   }
 
   private optional(
@@ -619,15 +633,29 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       | 'fax'
       | 'website',
     caption: string,
-    type = 'text'
+    field: Field = {}
   ) {
     const settings = (this.context as Context).settings;
+    return this.field(caption, settings.seller[key] ?? '', field, value =>
+      this.edit(s => (s.seller[key] = nullable(value)))
+    );
+  }
+
+  private field(
+    caption: string,
+    value: string,
+    { type = 'text', required = false, check, hint }: Field,
+    apply: (value: string) => void
+  ) {
     return html`
       <wa-input
         label="${caption}"
-        type="${type as WaInput['type']}"
-        .value="${settings.seller[key] ?? ''}"
-        @input="${(e: Event) => this.edit(s => (s.seller[key] = nullable(text(e))))}"
+        type="${type}"
+        ?required="${required}"
+        hint="${ifDefined(check ? undefined : hint)}"
+        .value="${value}"
+        @input="${(e: Event) => apply(text(e))}"
+        ${check ? validity(check, value, hint) : nothing}
       ></wa-input>
     `;
   }
@@ -1425,9 +1453,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   private companyPage(settings: Settings) {
     const context = this.context as Context;
+    // numbers without a country code belong to the seller's country
+    const country = settings.seller.address.country;
     return html`
       <div class="name-row">
-        ${this.seller('name', 'Name des Unternehmens', 'text', true)}
+        ${this.seller('name', 'Name des Unternehmens', { required: true })}
         <erng-brand-select
           .value="${context.brand}"
           @brand-change="${(e: CustomEvent<string>) => {
@@ -1443,7 +1473,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       ></erng-address-fields>
       <section>
         <div class="grid">
-          ${this.optional('vat_id', 'USt-IdNr.')} ${this.optional('tax_number', 'Steuernummer')}
+          ${this.optional('vat_id', 'USt-IdNr.', { check: vatId, hint: 'z. B. DE123456789' })}
+          ${this.optional('tax_number', 'Steuernummer', {
+            check: taxNumber(country),
+            hint: 'z. B. 21/815/08150',
+          })}
         </div>
         <span class="hint">
           Eine von beiden ist Pflicht: ohne sie ist eine Rechnung nicht gültig.
@@ -1452,9 +1486,15 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       <section>
         <div class="grid">
           ${this.seller('contact_name', 'Ansprechpartner')}
-          ${this.seller('phone', 'Telefon', 'tel')} ${this.optional('mobile', 'Mobil', 'tel')}
-          ${this.optional('fax', 'Fax', 'tel')} ${this.seller('email', 'E-Mail', 'email')}
-          ${this.optional('website', 'Website', 'url')}
+          ${this.seller('phone', 'Telefon', { type: 'tel', check: phone(country), hint: PHONE_HINT })}
+          ${this.optional('mobile', 'Mobil', { type: 'tel', check: phone(country), hint: PHONE_HINT })}
+          ${this.optional('fax', 'Fax', { type: 'tel', check: phone(country), hint: PHONE_HINT })}
+          ${this.seller('email', 'E-Mail', {
+            type: 'email',
+            check: email,
+            hint: 'z. B. rechnung@firma.de',
+          })}
+          ${this.optional('website', 'Website', { check: website, hint: 'z. B. www.firma.de' })}
         </div>
         <span class="hint">
           Name, Telefon und E-Mail sind für XRechnung Pflicht, bei ZUGFeRD freiwillig. Mobil, Fax
@@ -1515,7 +1555,12 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     return html`
       <section>
         <div class="grid">
-          ${this.seller('iban', 'IBAN', 'text', true)} ${this.optional('bic', 'BIC')}
+          ${this.seller('iban', 'IBAN', {
+            required: true,
+            check: iban,
+            hint: 'z. B. DE02 1203 0000 0000 2020 51',
+          })}
+          ${this.optional('bic', 'BIC', { check: bic, hint: 'z. B. BYLADEM1001' })}
           ${this.optional('account_holder', 'Kontoinhaber')}
           ${this.optional('bank_name', 'Name der Bank')}
         </div>

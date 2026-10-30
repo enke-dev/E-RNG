@@ -7,6 +7,8 @@ import { customElement, property } from 'lit/decorators.js';
 import type { Customer } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { nullable, text } from '../../utils/form.utils.js';
+import { email, vatId } from '../../utils/validation.utils.js';
+import { validity } from '../../utils/validity.utils.js';
 
 /** The fields of a customer, edits the given object and fires `change` */
 @customElement('erng-customer-form')
@@ -43,6 +45,7 @@ export class CustomerFormComponent extends ErngElement {
               c.vat_id = nullable(text(e));
               this.changed();
             }}"
+            ${validity(vatId, c.vat_id, 'z. B. DE123456789')}
           ></wa-input>
           <wa-input
             label="E-Mail für Rechnungen"
@@ -52,6 +55,7 @@ export class CustomerFormComponent extends ErngElement {
               c.email = nullable(text(e));
               this.changed();
             }}"
+            ${validity(email, c.email, 'z. B. rechnung@kunde.de')}
           ></wa-input>
           <wa-input
             label="Leitweg-ID (öffentliche Auftraggeber)"

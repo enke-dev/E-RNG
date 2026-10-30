@@ -45,7 +45,7 @@ const settings: Settings = {
   seller: {
     name: 'Muster Software GmbH',
     address: { street: 'Hauptstraße 5', post_code: '50667', city: 'Köln', country: 'DE' },
-    vat_id: 'DE123456789',
+    vat_id: 'DE123456788',
     tax_number: null,
     contact_name: 'Max Muster',
     phone: '+49 221 123456',
