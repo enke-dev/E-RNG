@@ -50,6 +50,18 @@
           "conformsTo": ["public.json"]
         },
         "rank": "Owner"
+      },
+      {
+        "ext": ["erng-backup"],
+        "name": "E-RNG-Datensicherung",
+        "description": "E-RNG-Datensicherung",
+        "mimeType": "application/zip",
+        "role": "Editor",
+        "exportedType": {
+          "identifier": "dev.enke.e-rng.backup",
+          "conformsTo": ["public.data"]
+        },
+        "rank": "Owner"
       }
     ],
     "resources": {

@@ -73,7 +73,7 @@ import { parseDays } from '../../common/utils/kind.utils.js';
 import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
 import { recall, remember } from '../../common/utils/memory.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
-import { takeOpenedLayouts } from '../../common/utils/opened.utils.js';
+import { takeOpened } from '../../common/utils/opened.utils.js';
 import { indexAfterMove } from '../../common/utils/reorder.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
 import styles from './settings.view.css';
@@ -336,7 +336,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     super.connectedCallback();
     this.#stopLeaveCheck = registerLeaveCheck(this.#losesEdits);
     // files the system opened with the app come here, to be imported like picked ones
-    this.#stopOpened = takeOpenedLayouts(path =>
+    this.#stopOpened = takeOpened('layout', path =>
       this.layoutAction(async () => this.importFrom(path, {}))
     );
     ensureContexts().then(

@@ -15,6 +15,7 @@ import { ErngElement } from '../../utils/base.utils.js';
 import { text, today } from '../../utils/form.utils.js';
 import { formatMoment, megabytes } from '../../utils/format.utils.js';
 import { notify, notifyError } from '../../utils/notify.utils.js';
+import { fileName, takeOpened } from '../../utils/opened.utils.js';
 import { ask } from '../ask/ask.component.js';
 import { reloadReplaced, revealLink } from '../replaced/replaced.component.js';
 import styles from './backup.component.css';
@@ -49,9 +50,22 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
   /** The question of removing everything: what is typed so far */
   @state() private removing: { word: string } | undefined;
 
+  #stopOpened: (() => void) | undefined;
+
   override connectedCallback() {
     super.connectedCallback();
     void this.load();
+    // a backup file opened with the app (double click) is restored like a picked one
+    this.#stopOpened = takeOpened('backup', path => {
+      if (!this.busy) {
+        void this.restore(path);
+      }
+    });
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.#stopOpened?.();
   }
 
   private async load() {
@@ -131,15 +145,16 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
     }
   }
 
-  private async restore() {
+  /** Restores a backup, the one given (opened with the app) or one the user picks */
+  private async restore(opened?: string) {
     this.busy = 'restore';
     try {
-      const path = await open({ multiple: false, directory: false, filters: FILTERS });
+      const path = opened ?? (await open({ multiple: false, directory: false, filters: FILTERS }));
       if (!path) {
         return;
       }
       const sure = await ask(
-        `Alle jetzigen Daten werden durch die der Sicherung ersetzt. Vorher legt e-rng eine Kopie der jetzigen Daten an: ${this.status?.safety_dir ?? 'im Ordner „backups“ der App-Daten'}. Fortfahren?`,
+        `Alle jetzigen Daten werden durch die der Sicherung „${fileName(path)}“ ersetzt. Vorher legt e-rng eine Kopie der jetzigen Daten an: ${this.status?.safety_dir ?? 'im Ordner „backups“ der App-Daten'}. Fortfahren?`,
         {
           title: 'Datensicherung einspielen',
           danger: true,
@@ -275,7 +290,7 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
               appearance="outlined"
               ?loading="${this.busy === 'restore'}"
               ?disabled="${busy}"
-              @click="${this.restore}"
+              @click="${() => this.restore()}"
             >
               Datensicherung einspielen
             </wa-button>

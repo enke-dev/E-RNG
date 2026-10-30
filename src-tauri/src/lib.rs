@@ -194,7 +194,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // a layout file was opened with the app (macOS says so with an event)
+            // a layout or backup file was opened with the app (macOS says so with an event)
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             if let tauri::RunEvent::Opened { urls } = event {
                 commands::opened_files_command::offer(app, &urls);
