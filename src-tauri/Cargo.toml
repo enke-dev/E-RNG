@@ -38,6 +38,12 @@ base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 # exact: the backup format depends on it; deflate only, no encryption or other codecs
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2"] }
+# exact: the version of the Typst CLI the output was verified against
+typst = "=0.15.1"
+typst-layout = "=0.15.1"
+typst-kit = { version = "=0.15.1", features = ["datetime", "embedded-fonts"] }
+typst-pdf = "=0.15.1"
+typst-svg = "=0.15.1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
@@ -46,6 +52,7 @@ tauri-plugin-window-state = "2"
 [dev-dependencies]
 rust_decimal = "1"
 rust_decimal_macros = "1"
+typst-render = "=0.15.1"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

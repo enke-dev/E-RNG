@@ -1,7 +1,6 @@
 /**
  * Fetches the tools the app ships next to its binary into `src-tauri/sidecars/`:
  *
- * - `typst`        renders the invoice PDF (PDF/A-3b)
  * - `mustang.jar`  attaches the XML (Factur-X) and validates PDF/A, XMP and the XML rules; what the
  *                  app never runs (rendering with FOP and Batik, test libraries) is taken out
  * - `jre/`         a minimal Java runtime for Mustang, linked from a Temurin JDK
@@ -11,16 +10,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  chmodSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { arch, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { argv, stdout } from 'node:process';
@@ -32,7 +22,6 @@ interface Download {
   sha256: string;
 }
 interface Pins {
-  typst: Download;
   /** `drop`: packages the app never runs (only `combine` and `validate`), as paths in the jar */
   mustang: Download & { drop: string[] };
   jdk: Download & { modules: string };
@@ -108,7 +97,6 @@ function slim(jar: string, target: string, drop: string[]) {
 function stub() {
   rmSync(out, { recursive: true, force: true });
   mkdirSync(join(out, 'jre'), { recursive: true });
-  writeFileSync(join(out, 'typst'), '');
   writeFileSync(join(out, 'mustang.jar'), '');
   writeFileSync(join(out, 'jre', 'release'), '');
   writeFileSync(stamp, 'stub');
@@ -124,22 +112,13 @@ async function fetchAll() {
     return;
   }
 
-  const [typstArchive, mustangJar, jdkArchive] = await Promise.all([
-    download(pins.typst, 'typst.tar.xz'),
+  const [mustangJar, jdkArchive] = await Promise.all([
     download(pins.mustang, 'mustang.jar'),
     download(pins.jdk, 'jdk.tar.gz'),
   ]);
 
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
-
-  // typst
-  const typstDir = join(cache, 'typst');
-  rmSync(typstDir, { recursive: true, force: true });
-  mkdirSync(typstDir, { recursive: true });
-  run('tar', ['xf', typstArchive, '--strip-components=1', '-C', typstDir]);
-  cpSync(join(typstDir, 'typst'), join(out, 'typst'));
-  chmodSync(join(out, 'typst'), 0o755);
 
   // mustang
   slim(mustangJar, join(out, 'mustang.jar'), pins.mustang.drop);

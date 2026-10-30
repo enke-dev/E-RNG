@@ -1,21 +1,19 @@
 //! Renders the invoice with Typst: a PDF/A-3b for the document, SVG pages for the live preview. The `ZUGFeRD` parts (XML attachment, Factur-X XMP)
 //! are not added here, that is what the packaging step does with the result.
 
+mod compiler;
 pub(crate) mod format;
 mod invisible;
 mod layouts;
 mod parts;
 mod view;
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::invoice::Invoice;
-use crate::sidecar::{self, Sidecars};
 
 use crate::layout::{self, CustomLayout, ImageFile};
 pub use layouts::{all as layouts, LayoutInfo};
@@ -23,6 +21,9 @@ pub use view::Branding;
 
 /// Where the fonts of an own layout are put next to the template
 const FONTS_DIR: &str = "fonts";
+
+/// The file Typst compiles
+const MAIN: &str = "invoice.typ";
 
 /// Writes template, data, fonts and pictures into `dir`, everything Typst needs to
 /// compile `invoice.typ`.
@@ -47,72 +48,31 @@ fn stage(dir: &Path, invoice: &Invoice, branding: &Branding) -> Result<()> {
     }
     data.page = page;
 
-    std::fs::write(dir.join("invoice.typ"), layouts::STANDARD_SOURCE)?;
+    std::fs::write(dir.join(MAIN), layouts::STANDARD_SOURCE)?;
     std::fs::write(dir.join("prelude.typ"), layouts::PRELUDE)?;
     std::fs::write(dir.join("data.json"), serde_json::to_vec_pretty(&data)?)?;
     Ok(())
 }
 
-/// What every Typst command needs to see the same world: the folder as root, the fonts. System
-/// fonts are ignored so the output does not depend on the machine it was made on.
-fn world_args(dir: &Path) -> Vec<OsString> {
-    let mut args: Vec<OsString> = ["--root", ".", "--ignore-system-fonts"]
-        .iter()
-        .map(Into::into)
-        .collect();
-    // the fonts of the user's own layout, besides those Typst brings itself
-    if dir.join(FONTS_DIR).is_dir() {
-        args.push("--font-path".into());
-        args.push(dir.join(FONTS_DIR).into());
-    }
-    args
-}
-
-fn typst(sidecars: &Sidecars, dir: &Path, args: &[OsString]) -> Result<String> {
-    let out = sidecar::run(&sidecars.typst(), args, dir, Duration::from_secs(60))?;
-    if out.code != Some(0) {
-        bail!("typst failed: {}", out.stderr.trim());
-    }
-    Ok(out.stdout)
-}
-
-fn compile(sidecars: &Sidecars, dir: &Path, options: &[&str], output: &str) -> Result<()> {
-    let mut args: Vec<OsString> = vec!["compile".into()];
-    args.extend(world_args(dir));
-    args.extend(options.iter().map(Into::into));
-    args.extend(["invoice.typ", output].iter().map(Into::into));
-    typst(sidecars, dir, &args).map(drop)
-}
-
 /// Writes template, data and logo into `dir` and compiles `invoice.pdf` there. A document has
 /// neither guides nor marks, whatever the branding asks for.
-pub fn render_pdf(
-    sidecars: &Sidecars,
-    dir: &Path,
-    invoice: &Invoice,
-    branding: &Branding,
-) -> Result<PathBuf> {
+pub fn render_pdf(dir: &Path, invoice: &Invoice, branding: &Branding) -> Result<PathBuf> {
     let branding = Branding {
         guides: false,
         marks: false,
         ..branding.clone()
     };
     stage(dir, invoice, &branding)?;
-    compile(sidecars, dir, &["--pdf-standard", "a-3b"], "invoice.pdf")?;
-    Ok(dir.join("invoice.pdf"))
+    let pdf = dir.join("invoice.pdf");
+    std::fs::write(&pdf, compiler::pdf(&compiler::compile(dir, MAIN)?)?)?;
+    Ok(pdf)
 }
 
 /// The pages of the invoice as the template lays them out, one SVG each, for the live preview.
 /// Same template and data as the PDF, only the output format differs (and no PDF/A).
-pub fn render_preview(
-    sidecars: &Sidecars,
-    dir: &Path,
-    invoice: &Invoice,
-    branding: &Branding,
-) -> Result<Vec<String>> {
+pub fn render_preview(dir: &Path, invoice: &Invoice, branding: &Branding) -> Result<Vec<String>> {
     stage(dir, invoice, branding)?;
-    compile(sidecars, dir, &["--format", "svg"], "page-{0p}.svg")?;
-    read_pages(dir)
+    Ok(compiler::svg(&compiler::compile(dir, MAIN)?))
 }
 
 /// Where a part of the layout is on a page, in millimetres from its top left corner.
@@ -131,10 +91,9 @@ pub struct PartBox {
 }
 
 /// The preview with the boxes of the parts, for the editor of a layout: what is under the pointer
-/// in the sample is the part to edit. The template hands the boxes out, an evaluation in its
-/// context reads them.
+/// in the sample is the part to edit. The template hands the boxes out as metadata, the compiled
+/// document is asked for them.
 pub fn render_sample(
-    sidecars: &Sidecars,
     dir: &Path,
     invoice: &Invoice,
     branding: &Branding,
@@ -144,46 +103,13 @@ pub fn render_sample(
         ..branding.clone()
     };
     stage(dir, invoice, &branding)?;
-    compile(sidecars, dir, &["--format", "svg"], "page-{0p}.svg")?;
-    let pages = read_pages(dir)?;
-
-    // `typst query` is deprecated, `eval` in the context of the document replaces it
-    let mut args: Vec<OsString> = vec!["eval".into()];
-    args.extend(world_args(dir));
-    args.extend(
-        [
-            "--in",
-            "invoice.typ",
-            "query(<part-box>).map(box => box.value)",
-        ]
-        .map(OsString::from),
-    );
-    let boxes = serde_json::from_str(&typst(sidecars, dir, &args)?)
+    let document = compiler::compile(dir, MAIN)?;
+    let boxes = compiler::metadata(&document, "part-box")?
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<PartBox>, _>>()
         .context("the part boxes are not readable")?;
-    Ok((pages, boxes))
-}
-
-fn has_svg_extension(name: &str) -> bool {
-    Path::new(name)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
-}
-
-fn read_pages(dir: &Path) -> Result<Vec<String>> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| {
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("page-") && has_svg_extension(n))
-        })
-        .collect();
-    // `{0p}` pads the number, so the names sort like the pages
-    files.sort();
-    files
-        .iter()
-        .map(|file| std::fs::read_to_string(file).map_err(Into::into))
-        .collect()
+    Ok((compiler::svg(&document), boxes))
 }
 
 fn stage_fonts(custom: &CustomLayout, dir: &Path) -> Result<()> {
@@ -214,6 +140,21 @@ fn stage_image(image: &ImageFile, number: usize, dir: &Path) -> Result<String> {
     std::fs::copy(&image.path, dir.join(&name))
         .with_context(|| format!("cannot read the image {}", image.path.display()))?;
     Ok(name)
+}
+
+/// The first page of the Typst file `main` in `dir` as SVG, for the tests that make letterheads
+#[cfg(test)]
+pub(crate) fn svg_of(dir: &Path, main: &str) -> Result<String> {
+    compiler::svg(&compiler::compile(dir, main)?)
+        .into_iter()
+        .next()
+        .context("a document without pages")
+}
+
+/// The first page of the Typst file `main` in `dir` as PNG, to look at the SVG of a test
+#[cfg(test)]
+pub(crate) fn png_of(dir: &Path, main: &str, ppi: f64) -> Result<Vec<u8>> {
+    compiler::png(&compiler::compile(dir, main)?, ppi)
 }
 
 #[cfg(test)]

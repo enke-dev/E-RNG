@@ -34,7 +34,7 @@ impl Sidecars {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecars")
         };
         let found = Self::new(dir);
-        if !found.java().exists() || !found.typst().exists() || !found.mustang().exists() {
+        if !found.java().exists() || !found.mustang().exists() {
             bail!(
                 "sidecars missing in {}, run `bun run generate:sidecars`",
                 found.dir.display()
@@ -47,10 +47,6 @@ impl Sidecars {
     #[cfg(test)]
     pub fn in_repo() -> Self {
         Self::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecars"))
-    }
-
-    pub fn typst(&self) -> PathBuf {
-        self.dir.join("typst")
     }
 
     pub fn java(&self) -> PathBuf {

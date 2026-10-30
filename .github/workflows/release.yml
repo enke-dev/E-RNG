@@ -117,7 +117,7 @@ jobs:
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
 
-      # typst, mustang and the JRE are fetched (and checksum-verified) by `bun run generate`
+      # mustang and the JRE are fetched (and checksum-verified) by `bun run generate`
       - name: Cache sidecar downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

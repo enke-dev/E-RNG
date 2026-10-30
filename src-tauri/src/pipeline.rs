@@ -84,7 +84,7 @@ pub fn produce(
         .map_err(|findings| ProduceError::Invalid { findings })?;
     std::fs::write(dir.join(xml_name), xml).map_err(anyhow::Error::from)?;
 
-    render::render_pdf(sidecars, dir, invoice, branding)?;
+    render::render_pdf(dir, invoice, branding)?;
     package::combine(sidecars, dir, "invoice.pdf", xml_name, profile, &pdf_name)?;
     let report = package::validate(sidecars, dir, &pdf_name)?;
 
@@ -345,15 +345,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs the sidecars: bun run generate:sidecars"]
     fn the_preview_renders_one_svg_per_page() {
-        let sidecars = Sidecars::in_repo();
         let cases = crate::invoice::golden::cases();
         let layout = "standard";
         let pages = |name: &str| {
             let (_, invoice, _) = cases.iter().find(|(n, ..)| *n == name).unwrap();
             let dir = tempfile::tempdir().unwrap();
-            render::render_preview(&sidecars, dir.path(), invoice, &with_letter()).unwrap()
+            render::render_preview(dir.path(), invoice, &with_letter()).unwrap()
         };
 
         let short = pages("standard");
@@ -383,7 +381,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sidecars = Sidecars::in_repo();
         let invoice = standard_invoice(ProfileKind::En16931);
-        render::render_pdf(&sidecars, dir.path(), &invoice, &branding()).unwrap();
+        render::render_pdf(dir.path(), &invoice, &branding()).unwrap();
 
         // a PDF/A validator alone would pass this file, the ZUGFeRD check must not
         let report = package::validate(&sidecars, dir.path(), "invoice.pdf").unwrap();
@@ -401,7 +399,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sidecars = Sidecars::in_repo();
         let invoice = standard_invoice(ProfileKind::En16931);
-        render::render_pdf(&sidecars, dir.path(), &invoice, &branding()).unwrap();
+        render::render_pdf(dir.path(), &invoice, &branding()).unwrap();
         let xml = invoice::to_cii(invoice, ProfileKind::En16931).unwrap();
         let tampered = regex_free_replace(&xml, "GrandTotalAmount", "1.00");
         std::fs::write(dir.path().join("tampered.xml"), tampered).unwrap();
@@ -493,20 +491,8 @@ mod tests {
                 format!("#set page(paper: \"a4\", margin: 0pt)\n{content}"),
             )
             .unwrap();
-            let out = crate::sidecar::run(
-                &sidecars.typst(),
-                &[
-                    "compile".into(),
-                    "--format".into(),
-                    "svg".into(),
-                    format!("{name}.typ").into(),
-                    format!("{name}.svg").into(),
-                ],
-                work.path(),
-                std::time::Duration::from_secs(60),
-            )
-            .unwrap();
-            assert_eq!(out.code, Some(0), "{}", out.stderr);
+            let svg = render::svg_of(work.path(), &format!("{name}.typ")).unwrap();
+            std::fs::write(work.path().join(format!("{name}.svg")), svg).unwrap();
             crate::layout_files::import_image(
                 &work.path().join(format!("{name}.svg")),
                 files.path(),
@@ -548,8 +534,7 @@ mod tests {
                         guides: true,
                         ..branding.clone()
                     };
-                    let pages =
-                        render::render_preview(&sidecars, dir.path(), &invoice, &guided).unwrap();
+                    let pages = render::render_preview(dir.path(), &invoice, &guided).unwrap();
                     pages.iter().enumerate().for_each(|(i, svg)| {
                         std::fs::write(format!("{keep}/own-{base}-{name}-{}.svg", i + 1), svg)
                             .unwrap();
@@ -610,8 +595,7 @@ mod tests {
             marks: true,
             ..branding
         };
-        let (pages, boxes) =
-            render::render_sample(&sidecars, dir.path(), &invoice, &sample).unwrap();
+        let (pages, boxes) = render::render_sample(dir.path(), &invoice, &sample).unwrap();
         // every part of the first page is somewhere on page 1, the infos end at the right margin
         let first_page: Vec<_> = boxes.iter().filter(|b| b.page == 1 && b.first).collect();
         assert!(first_page.len() >= 8, "{boxes:#?}");
@@ -628,10 +612,8 @@ mod tests {
     /// A color on a rule, a text and the page number reaches the page; a layout without colors is
     /// drawn with the grey of the rule as before.
     #[test]
-    #[ignore = "needs the sidecars: bun run generate:sidecars"]
     fn colored_parts_are_drawn_in_their_color_and_others_as_before() {
         use crate::layout::{builtin, Anchor, Part, PartContent};
-        let sidecars = Sidecars::in_repo();
         let (_, invoice, _) = crate::invoice::golden::cases().remove(0);
         let render = |color: Option<&str>| {
             let mut layout = builtin();
@@ -661,7 +643,7 @@ mod tests {
                 ..with_letter()
             };
             let dir = tempfile::tempdir().unwrap();
-            render::render_preview(&sidecars, dir.path(), &invoice, &branding).unwrap()
+            render::render_preview(dir.path(), &invoice, &branding).unwrap()
         };
 
         let plain = render(None).remove(0);
@@ -712,7 +694,7 @@ mod tests {
         };
         let dir = tempfile::tempdir().unwrap();
 
-        let (_, boxes) = render::render_sample(&sidecars, dir.path(), &invoice, &branding).unwrap();
+        let (_, boxes) = render::render_sample(dir.path(), &invoice, &branding).unwrap();
 
         // the footer of the first page: columns (name, contact, registration) over the legal text
         let on_first = |index: usize| {
@@ -758,11 +740,9 @@ mod tests {
     /// A text part with tabs is one grid: a row whose values are empty is gone, so the rows below
     /// move up inside their columns. `RENDER_OUT` keeps a PDF of both.
     #[test]
-    #[ignore = "needs the sidecars: bun run generate:sidecars"]
     fn a_tabbed_footer_part_lines_up_and_loses_the_rows_without_a_value() {
         use crate::draft::{build_invoice, fixtures};
         use crate::layout::{builtin, Align, Anchor, Part, PartContent};
-        let sidecars = Sidecars::in_repo();
         let draft = fixtures::draft();
         let render = |name: &str, mobile: Option<&str>| {
             let mut settings = full_seller();
@@ -792,11 +772,10 @@ mod tests {
                 ..Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[])
             };
             let dir = tempfile::tempdir().unwrap();
-            let (_, boxes) =
-                render::render_sample(&sidecars, dir.path(), &invoice, &branding).unwrap();
+            let (_, boxes) = render::render_sample(dir.path(), &invoice, &branding).unwrap();
             if let Ok(keep) = std::env::var("RENDER_OUT") {
                 std::fs::create_dir_all(&keep).unwrap();
-                let pdf = render::render_pdf(&sidecars, dir.path(), &invoice, &branding).unwrap();
+                let pdf = render::render_pdf(dir.path(), &invoice, &branding).unwrap();
                 std::fs::copy(pdf, format!("{keep}/tabbed-footer-{name}.pdf")).unwrap();
             }
             boxes.into_iter().find(|b| b.page == 1).unwrap()
@@ -814,11 +793,9 @@ mod tests {
     /// two pages, gone from one of a single page, and as before when the layout does not ask.
     /// `RENDER_OUT` keeps the PDFs.
     #[test]
-    #[ignore = "needs the sidecars: bun run generate:sidecars"]
     fn a_page_number_that_asks_for_several_pages_stays_away_from_a_single_page() {
         use crate::draft::{build_invoice, fixtures};
         use crate::layout::{builtin, Align, Anchor, Part, PartContent};
-        let sidecars = Sidecars::in_repo();
         let settings = fixtures::settings();
         let render = |name: &str, several_pages_only: bool, positions: usize| {
             let mut draft = fixtures::draft();
@@ -847,11 +824,10 @@ mod tests {
                 ..Branding::for_document(crate::model::Kind::Invoice, &draft, &settings, &[])
             };
             let dir = tempfile::tempdir().unwrap();
-            let (pages, boxes) =
-                render::render_sample(&sidecars, dir.path(), &invoice, &branding).unwrap();
+            let (pages, boxes) = render::render_sample(dir.path(), &invoice, &branding).unwrap();
             if let Ok(keep) = std::env::var("RENDER_OUT") {
                 std::fs::create_dir_all(&keep).unwrap();
-                let pdf = render::render_pdf(&sidecars, dir.path(), &invoice, &branding).unwrap();
+                let pdf = render::render_pdf(dir.path(), &invoice, &branding).unwrap();
                 std::fs::copy(pdf, format!("{keep}/page-number-{name}.pdf")).unwrap();
             }
             // the box of the number on each page: no height when there is nothing in it

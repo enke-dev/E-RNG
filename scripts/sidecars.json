@@ -1,9 +1,4 @@
 {
-  "typst": {
-    "version": "0.15.1",
-    "url": "https://github.com/typst/typst/releases/download/v0.15.1/typst-aarch64-apple-darwin.tar.xz",
-    "sha256": "48f62ed034aa3a7978309579ac6ca00045e2ef0da73114e8af27cfd8e74dc05a"
-  },
   "mustang": {
     "version": "2.26.0",
     "url": "https://github.com/ZUGFeRD/mustangproject/releases/download/core-2.26.0/Mustang-CLI-2.26.0.jar",

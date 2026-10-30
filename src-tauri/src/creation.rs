@@ -154,7 +154,6 @@ struct MadeOffer {
 /// Builds and renders an offer: the input is checked and the totals are made like an invoice's, the
 /// PDF is the only thing that comes out.
 fn make_offer(
-    sidecars: &Sidecars,
     store: &Store,
     stored: &StoredInvoice,
     settings: &Settings,
@@ -177,7 +176,7 @@ fn make_offer(
             .map_err(failed)?
             .keep(),
     );
-    let pdf = crate::render::render_pdf(sidecars, &work.0, &invoice, &branding).map_err(failed)?;
+    let pdf = crate::render::render_pdf(&work.0, &invoice, &branding).map_err(failed)?;
     Ok(MadeOffer {
         _work: work,
         pdf,
@@ -242,7 +241,7 @@ pub fn create(
     let number = sequence.next_number.clone();
     let (files, total, layout, warnings) = match stored.kind {
         Kind::Offer => {
-            let made = make_offer(sidecars, store, &stored, &settings, &number)?;
+            let made = make_offer(store, &stored, &settings, &number)?;
             let files =
                 originals::store_pdf(data, stored.kind, stored.context_id, &number, &made.pdf)
                     .map_err(failed)?;

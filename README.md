@@ -18,7 +18,7 @@ Needs [Bun](https://bun.sh/docs/installation) and [Rust](https://rust-lang.org/t
 
 ```sh
 bun install
-bun run generate   # icons and the bundled tools (Typst, Mustang, a Java runtime)
+bun run generate   # icons and the bundled tools (Mustang, a Java runtime)
 bun run dev
 ```
 

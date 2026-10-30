@@ -9,9 +9,12 @@ carry a statement to this effect. Copyright in the standard remains with CEN.
 
 ## Bundled tools
 
+[Typst](https://github.com/typst/typst) (Apache-2.0) renders the invoice PDF; its compiler is linked into the app as a
+library, with the fonts it brings itself (Libertinus Serif, New Computer Modern, DejaVu Sans Mono; their licences are in
+the NOTICE of the `typst-assets` crate).
+
 The app ships these programs next to its binary and runs them as separate processes:
 
-- [Typst](https://github.com/typst/typst) (Apache-2.0) renders the invoice PDF.
 - [Mustang](https://github.com/ZUGFeRD/mustangproject) (Apache-2.0) attaches the XML and validates the result. Its jar includes
   [veraPDF](https://verapdf.org) (GPL-3.0+ or MPL-2.0, used under the MPL), Saxon and PDFBox with their own licences.
 - A Java runtime linked from [Eclipse Temurin](https://adoptium.net) 21 (GPL-2.0 with Classpath Exception), its licence

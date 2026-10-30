@@ -1,14 +1,13 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::State;
 
 use crate::draft::{build_invoice, for_preview, InputProblem};
 use crate::invoice::Invoice;
 use crate::model::{InvoiceDraft, Kind};
 use crate::numbering::Pattern;
 use crate::render::{self, Branding};
-use crate::sidecar::Sidecars;
 use crate::store::Store;
 use crate::utils::{issue_day, CommandError, CommandResult};
 
@@ -72,7 +71,6 @@ pub(crate) fn shown(
 /// Nothing is stored, a half filled form is shown with stand-ins for what is missing.
 #[tauri::command]
 pub async fn preview_invoice(
-    app: AppHandle,
     store: State<'_, Store>,
     draft: InvoiceDraft,
     id: Option<i64>,
@@ -89,11 +87,10 @@ pub async fn preview_invoice(
             })
         }
     };
-    let sidecars = Sidecars::locate(&app)?;
 
     let pages = tauri::async_runtime::spawn_blocking(move || {
         let dir = tempfile::tempdir()?;
-        render::render_preview(&sidecars, dir.path(), &invoice, &branding)
+        render::render_preview(dir.path(), &invoice, &branding)
     })
     .await??;
     Ok(Preview {
@@ -107,7 +104,6 @@ pub async fn preview_invoice(
 /// says it is a draft, carries no number and no XML, and is not checked.
 #[tauri::command]
 pub async fn invoice_draft_pdf(
-    app: AppHandle,
     store: State<'_, Store>,
     draft: InvoiceDraft,
     id: Option<i64>,
@@ -122,11 +118,10 @@ pub async fn invoice_draft_pdf(
     if !branding.draft {
         return Err("Eine erstellte Rechnung wird über „Exportieren als“ gespeichert.".into());
     }
-    let sidecars = Sidecars::locate(&app)?;
 
     tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let pdf = render::render_pdf(&sidecars, dir.path(), &invoice, &branding)?;
+        let pdf = render::render_pdf(dir.path(), &invoice, &branding)?;
         std::fs::copy(pdf, &target)?;
         Ok(())
     })

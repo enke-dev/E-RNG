@@ -99,28 +99,22 @@ fn seller(variant: &str) -> Settings {
     settings
 }
 
-fn write_pages(out: &Path, name: &str, sidecars: &Sidecars, pages: &[String]) {
+fn write_pages(out: &Path, name: &str, pages: &[String]) {
     pages.iter().enumerate().for_each(|(i, svg)| {
         let stem = format!("{name}-page-{}", i + 1);
         std::fs::write(out.join(format!("{stem}.svg")), svg).unwrap();
-        to_png(sidecars, out, &stem);
+        to_png(out, &stem);
     });
 }
 
 /// A PNG of an SVG page (the Typst of the app reads SVG, there is no other converter at hand)
-fn to_png(sidecars: &Sidecars, out: &Path, stem: &str) {
+fn to_png(out: &Path, stem: &str) {
     let source = format!(
         "#set page(width: 210mm, height: 297mm, margin: 0pt)\n#image(\"{stem}.svg\", width: 100%)\n"
     );
     std::fs::write(out.join(format!("{stem}.typ")), source).unwrap();
-    let done = std::process::Command::new(sidecars.typst())
-        .current_dir(out)
-        .args(["compile", "--format", "png", "--ppi", "160"])
-        .arg(format!("{stem}.typ"))
-        .arg(format!("{stem}.png"))
-        .status()
-        .unwrap();
-    assert!(done.success());
+    let png = render::png_of(out, &format!("{stem}.typ"), 160.0).unwrap();
+    std::fs::write(out.join(format!("{stem}.png")), png).unwrap();
     std::fs::remove_file(out.join(format!("{stem}.typ"))).unwrap();
 }
 
@@ -194,16 +188,11 @@ fn tab_columns_go_all_the_way() {
         assert!(saved.id.is_some() && !saved.uid.is_empty());
 
         // the layout sample, guides off and on
-        let plain = render_sample(&sidecars, &settings, Some(&saved), false).unwrap();
-        let guided = render_sample(&sidecars, &settings, Some(&saved), true).unwrap();
+        let plain = render_sample(&settings, Some(&saved), false).unwrap();
+        let guided = render_sample(&settings, Some(&saved), true).unwrap();
         assert!(plain.problems.is_empty() && guided.problems.is_empty());
-        write_pages(&out, &format!("{variant}-sample"), &sidecars, &plain.pages);
-        write_pages(
-            &out,
-            &format!("{variant}-sample-guides"),
-            &sidecars,
-            &guided.pages,
-        );
+        write_pages(&out, &format!("{variant}-sample"), &plain.pages);
+        write_pages(&out, &format!("{variant}-sample-guides"), &guided.pages);
         assert!(!plain.pages.iter().any(|page| page.contains(MARKS)));
         assert!(guided.pages.iter().any(|page| page.contains(MARKS)));
         heights.insert(
@@ -217,10 +206,10 @@ fn tab_columns_go_all_the_way() {
         let (invoice, branding) = shown(&store, &draft, None, context, Kind::Invoice)
             .unwrap()
             .expect("the draft can be built");
-        let pages = render::render_preview(&sidecars, data.path(), &invoice, &branding).unwrap();
+        let pages = render::render_preview(data.path(), &invoice, &branding).unwrap();
         assert!(!pages.iter().any(|page| page.contains(MARKS)));
-        write_pages(&out, &format!("{variant}-draft-preview"), &sidecars, &pages);
-        let pdf = render::render_pdf(&sidecars, data.path(), &invoice, &branding).unwrap();
+        write_pages(&out, &format!("{variant}-draft-preview"), &pages);
+        let pdf = render::render_pdf(data.path(), &invoice, &branding).unwrap();
         std::fs::copy(&pdf, out.join(format!("{variant}-draft.pdf"))).unwrap();
 
         // a document never gets the marks, whatever the branding asks for
@@ -228,7 +217,7 @@ fn tab_columns_go_all_the_way() {
             guides: true,
             ..branding.clone()
         };
-        let again = render::render_pdf(&sidecars, data.path(), &invoice, &guided_branding).unwrap();
+        let again = render::render_pdf(data.path(), &invoice, &guided_branding).unwrap();
         assert_eq!(
             std::fs::read(&pdf).unwrap(),
             std::fs::read(&again).unwrap(),
@@ -256,7 +245,7 @@ fn tab_columns_go_all_the_way() {
         let (other, other_context, imported) = reimport(&saved, &settings, &out, variant);
 
         // and rendered again: the same sample, a created invoice that holds as well
-        let again = render_sample(&sidecars, &settings, Some(&imported), false).unwrap();
+        let again = render_sample(&settings, Some(&imported), false).unwrap();
         assert_eq!(
             again.pages, plain.pages,
             "{variant}: the imported layout looks different"
