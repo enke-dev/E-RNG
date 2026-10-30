@@ -1,15 +1,23 @@
 {
-  "version": "0.7.0",
+  "version": "0.8.0",
   "notes": "See the assets to download this version and install.",
-  "pub_date": "2026-10-30T15:08:25.410Z",
+  "pub_date": "2026-10-30T23:05:24.143Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Z3hXdmkzbUM0WG5ROEV4Z3crcUFxbVUxRWZWTWVFVGtrNmtkamlxV052WmJGeWlXTXZxSGI2aDhvZmgyaG9POHJEK1JOV0FqWUtIbTRTWU85MnplY0FVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzcyODg5CWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuNy4wCnpXNEVPRjk2S3llVytRa25KbVJNdGtTOUpUVUFJcnp0Zk4waHFObnVKNUVvV3poWlVwTkpYcE0rNUpWTlFCZDV0UTNnZW9XTXR6TXZrb1liVy9wQUJRPT0K",
-      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/692475436"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Zzc2MDVkOS8xR0V2bVU2eldVTVhKaStZdGhvKytVMkJ2MjBwSnlxNHRJcEp3RkhFc01kMXpyNzg4NitnSzYwZERzMHNMUVdnMHhpdExWNldzb3Mrd3dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDAxMjMzCWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuOC4wCnJVaVpQWUlIMklPRnQ5SUFBTk95Um5BZ0lQUTUwNlhiajdxbDJGcjJqU2FNanlLbjJ2dnVSczdtRG9BRnZSN3EvWE5CamlzU2VsTEpDaUJyU2dSK0FnPT0K",
+      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/693682721"
     },
     "darwin-aarch64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Z3hXdmkzbUM0WG5ROEV4Z3crcUFxbVUxRWZWTWVFVGtrNmtkamlxV052WmJGeWlXTXZxSGI2aDhvZmgyaG9POHJEK1JOV0FqWUtIbTRTWU85MnplY0FVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzcyODg5CWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuNy4wCnpXNEVPRjk2S3llVytRa25KbVJNdGtTOUpUVUFJcnp0Zk4waHFObnVKNUVvV3poWlVwTkpYcE0rNUpWTlFCZDV0UTNnZW9XTXR6TXZrb1liVy9wQUJRPT0K",
-      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/692475436"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Zzc2MDVkOS8xR0V2bVU2eldVTVhKaStZdGhvKytVMkJ2MjBwSnlxNHRJcEp3RkhFc01kMXpyNzg4NitnSzYwZERzMHNMUVdnMHhpdExWNldzb3Mrd3dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDAxMjMzCWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuOC4wCnJVaVpQWUlIMklPRnQ5SUFBTk95Um5BZ0lQUTUwNlhiajdxbDJGcjJqU2FNanlLbjJ2dnVSczdtRG9BRnZSN3EvWE5CamlzU2VsTEpDaUJyU2dSK0FnPT0K",
+      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/693682721"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzN4YzNPd0Vwc2lueHIxVVprWHdaMWZ1WlprSGhRWmpzNVpHNkV4aTl3UlA0d0xxdnl5bEZVOHo0d3g2cFhZUW9TZzFJT1MxdGxWSThtNGJhZXQ3TVF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDAxNDg1CWZpbGU6RS1STkdfMC44LjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuOC4wCi9qQXNTa3ptaG1hYVJoUk9qTlBsejVoNi9JOTFRK0tEM2ZJR1AzZll3QWxLWFVhSDljcnRxWnlRNkJmaUpMckxNNTI2NFI3ajVQZkN0UU5OWi9oN0JRPT0K",
+      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/693691803"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzN4YzNPd0Vwc2lueHIxVVprWHdaMWZ1WlprSGhRWmpzNVpHNkV4aTl3UlA0d0xxdnl5bEZVOHo0d3g2cFhZUW9TZzFJT1MxdGxWSThtNGJhZXQ3TVF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDAxNDg1CWZpbGU6RS1STkdfMC44LjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuOC4wCi9qQXNTa3ptaG1hYVJoUk9qTlBsejVoNi9JOTFRK0tEM2ZJR1AzZll3QWxLWFVhSDljcnRxWnlRNkJmaUpMckxNNTI2NFI3ajVQZkN0UU5OWi9oN0JRPT0K",
+      "url": "https://api.github.com/repos/enke-dev/E-RNG/releases/assets/693691803"
     }
   }
 }
