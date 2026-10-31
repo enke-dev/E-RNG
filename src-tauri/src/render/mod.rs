@@ -2,6 +2,7 @@
 //! are not added here, that is what the packaging step does with the result.
 
 mod compiler;
+mod countries;
 pub(crate) mod format;
 mod invisible;
 mod layouts;

@@ -411,6 +411,8 @@ const builtinLayout = (): CustomLayout => ({
     true_minus: false,
     iban_groups: false,
     phone: 'as-typed',
+    country: 'code',
+    website_bare: false,
     date: 'DD.MM.YYYY',
     date_long: 'D. MMMM YYYY',
   },

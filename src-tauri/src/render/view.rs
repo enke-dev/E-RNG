@@ -310,13 +310,11 @@ fn postcode_city(address: &PostalAddress) -> String {
         .join(" ")
 }
 
-fn address_lines(address: &PostalAddress) -> Vec<String> {
+fn address_lines(address: &PostalAddress, fmt: &Formatter) -> Vec<String> {
     let town = postcode_city(address);
-    let country = address
-        .country
-        .as_ref()
-        .map(|c| c.as_str().to_owned())
-        .filter(|c| c != "DE");
+    let country = country(address)
+        .filter(|c| *c != "DE")
+        .map(|c| fmt.country(c));
     [&address.line1, &address.line2, &address.line3]
         .into_iter()
         .flatten()
@@ -350,7 +348,9 @@ fn party_view(
             .and_then(|d| d.fax.as_ref())
             .map(|f| format!("Fax {}", phone(f))),
         contact.email.clone(),
-        details.and_then(|d| d.website.clone()),
+        details
+            .and_then(|d| d.website.as_deref())
+            .map(|w| fmt.website(w)),
     ];
     let registration = [
         party
@@ -365,7 +365,7 @@ fn party_view(
     ];
     PartyView {
         name: party.name.clone().unwrap_or_default(),
-        address: address_lines(&party.address),
+        address: address_lines(&party.address, fmt),
         contact: contact_lines.into_iter().flatten().collect(),
         registration: registration.into_iter().flatten().collect(),
     }
@@ -423,7 +423,11 @@ fn seller_fields(invoice: &Invoice, details: &SellerDetails, fmt: &Formatter) ->
         mobile: phone(&details.mobile),
         fax: phone(&details.fax),
         email: own(&contact.email),
-        website: own(&details.website),
+        website: details
+            .website
+            .as_deref()
+            .map(|w| fmt.website(w))
+            .unwrap_or_default(),
         contact_name: own(&contact.name),
         tax_number: own(&seller.tax_registration),
         vat_id: own(&seller.vat_identifier),

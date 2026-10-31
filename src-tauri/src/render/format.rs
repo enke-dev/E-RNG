@@ -4,7 +4,8 @@
 use en16931::Date;
 use phonenumber::{country, Mode};
 
-use crate::layout::{Format, PhoneFormat};
+use super::countries;
+use crate::layout::{CountryFormat, Format, PhoneFormat};
 
 const NBSP: char = '\u{a0}';
 
@@ -147,6 +148,29 @@ impl Formatter {
             Mode::International
         };
         parsed.format().mode(mode).to_string()
+    }
+
+    /// A country code as the layout wants it; a code that is no country stays as it is.
+    pub fn country(&self, code: &str) -> String {
+        let name = countries::name(code);
+        match (self.0.country, name) {
+            (CountryFormat::Name, Some(name)) => name.to_owned(),
+            (CountryFormat::Capitals, Some(name)) => name.to_uppercase(),
+            _ => code.to_owned(),
+        }
+    }
+
+    /// A website as typed, or without `https://` and a trailing slash.
+    pub fn website(&self, url: &str) -> String {
+        if !self.0.website_bare {
+            return url.to_owned();
+        }
+        let lower = url.to_ascii_lowercase();
+        let bare = ["https://", "http://"]
+            .iter()
+            .find(|scheme| lower.starts_with(*scheme))
+            .map_or(url, |scheme| &url[scheme.len()..]);
+        bare.strip_suffix('/').unwrap_or(bare).to_owned()
     }
 
     pub fn date(&self, date: Date) -> String {
@@ -338,6 +362,44 @@ mod tests {
         // no phone number: as typed
         assert_eq!(international.phone("Zentrale", Some("DE")), "Zentrale");
         assert_eq!(international.phone("0221", Some("DE")), "0221");
+    }
+
+    #[test]
+    fn a_country_is_written_as_code_name_or_in_capitals() {
+        let style = |country| {
+            Formatter::new(&Format {
+                country,
+                ..Format::default()
+            })
+        };
+        assert_eq!(style(CountryFormat::Code).country("AT"), "AT");
+        assert_eq!(style(CountryFormat::Name).country("AT"), "Österreich");
+        assert_eq!(
+            style(CountryFormat::Name).country("GB"),
+            "Vereinigtes Königreich"
+        );
+        assert_eq!(style(CountryFormat::Capitals).country("CH"), "SCHWEIZ");
+        // no country: as it is
+        assert_eq!(style(CountryFormat::Name).country("ZZ"), "ZZ");
+        assert_eq!(style(CountryFormat::Name).country("Austria"), "Austria");
+    }
+
+    #[test]
+    fn a_website_loses_its_scheme_if_asked() {
+        assert_eq!(
+            german().website("https://muster.example/"),
+            "https://muster.example/"
+        );
+        let bare = Formatter::new(&Format {
+            website_bare: true,
+            ..Format::default()
+        });
+        assert_eq!(bare.website("https://muster.example/"), "muster.example");
+        assert_eq!(
+            bare.website("HTTP://www.muster.example/impressum"),
+            "www.muster.example/impressum"
+        );
+        assert_eq!(bare.website("muster.example"), "muster.example");
     }
 
     #[test]

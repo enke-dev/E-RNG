@@ -7,7 +7,7 @@ import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.
 import { html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import type { Format, PhoneFormat } from '../../utils/api.utils.js';
+import type { CountryFormat, Format, PhoneFormat } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { text } from '../../utils/form.utils.js';
 import styles from './format-form.component.css';
@@ -29,6 +29,12 @@ const PHONES: [PhoneFormat, string][] = [
   ['as-typed', 'wie eingegeben'],
   ['international', 'international (+49 221 1234567)'],
   ['national', 'national (0221 1234567)'],
+];
+
+const COUNTRIES: [CountryFormat, string][] = [
+  ['code', 'Code (AT)'],
+  ['name', 'Name (Österreich)'],
+  ['capitals', 'Großbuchstaben (ÖSTERREICH)'],
 ];
 
 /** Patterns as dayjs has them, with how they look; anything else is the user's own */
@@ -172,6 +178,12 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
             v => (f.currency_after = v === 'after')
           )}
           ${this.select('Telefonnummern', f.phone, PHONES, v => (f.phone = v as PhoneFormat))}
+          ${this.select(
+            'Land ausländischer Anschriften',
+            f.country,
+            COUNTRIES,
+            v => (f.country = v as CountryFormat)
+          )}
         </div>
         <div class="checks">
           ${this.check(
@@ -182,6 +194,7 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
           ${this.check('Leerzeichen vor dem Prozentzeichen des Steuersatzes', f.percent_space, v => (f.percent_space = v))}
           ${this.check('Echtes Minuszeichen (−) bei Abzügen', f.true_minus, v => (f.true_minus = v))}
           ${this.check('IBAN in Vierergruppen', f.iban_groups, v => (f.iban_groups = v))}
+          ${this.check('Website ohne https://', f.website_bare, v => (f.website_bare = v))}
         </div>
         <div class="fields">
           ${this.pattern('Datum', f.date, DATES, v => (f.date = v))}

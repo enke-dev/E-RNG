@@ -479,6 +479,9 @@ export interface PageSetup {
 
 export type PhoneFormat = 'as-typed' | 'international' | 'national';
 
+/** How the country of a foreign address is written: `AT`, `Österreich` or `ÖSTERREICH` */
+export type CountryFormat = 'code' | 'name' | 'capitals';
+
 /** How numbers, money and dates are written */
 export interface Format {
   /** Between the whole and the fractional part */
@@ -499,6 +502,10 @@ export interface Format {
   iban_groups: boolean;
   /** Phone, mobile and fax of the seller: as typed, `+49 221 1234567` or `0221 1234567` */
   phone: PhoneFormat;
+  /** The country of foreign addresses */
+  country: CountryFormat;
+  /** `muster.example` instead of `https://muster.example` */
+  website_bare: boolean;
   /** A pattern like dayjs has them: `DD.MM.YYYY` */
   date: string;
   /** The same for the written out date: `D. MMMM YYYY` */

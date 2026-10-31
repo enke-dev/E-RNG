@@ -213,6 +213,19 @@ pub enum PhoneFormat {
     National,
 }
 
+/// How the country of a foreign address is written; a German address has none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CountryFormat {
+    /// `AT`
+    #[default]
+    Code,
+    /// `Österreich`
+    Name,
+    /// `ÖSTERREICH`, as DIN 5008 asks for letters abroad
+    Capitals,
+}
+
 /// How numbers, money and dates are written, the German way unless the layout says otherwise.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -235,6 +248,10 @@ pub struct Format {
     pub iban_groups: bool,
     /// Phone, mobile and fax of the seller
     pub phone: PhoneFormat,
+    /// The country of foreign addresses
+    pub country: CountryFormat,
+    /// `muster.example` instead of `https://muster.example`
+    pub website_bare: bool,
     /// A pattern like dayjs has them: `DD.MM.YYYY`
     pub date: String,
     /// The same for the written out date (infos part): `D. MMMM YYYY`
@@ -253,6 +270,8 @@ impl Default for Format {
             true_minus: false,
             iban_groups: false,
             phone: PhoneFormat::AsTyped,
+            country: CountryFormat::Code,
+            website_bare: false,
             date: "DD.MM.YYYY".into(),
             date_long: "D. MMMM YYYY".into(),
         }
