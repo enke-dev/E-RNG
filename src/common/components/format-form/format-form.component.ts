@@ -155,7 +155,7 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
       <wa-input
         label="${label}"
         placeholder="${placeholder}"
-        hint="{title} und {draft_title} sind die Bezeichnungen der Belegart, {number} die Nummer, {version} wie oft der Entwurf exportiert wurde"
+        hint="{title} und {draft_title} sind die Bezeichnungen der Belegart, {number} die Nummer, {version} wie oft der Entwurf exportiert wurde, {vorgang_number} die Nummer des Vorgangs"
         .value="${value}"
         @input="${(e: Event) => {
           apply(text(e));

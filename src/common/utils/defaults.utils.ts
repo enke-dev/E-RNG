@@ -15,6 +15,7 @@ export type Defaults = Pick<
   | 'invoice_wording'
   | 'offer_reference'
   | 'offer'
+  | 'cases'
 >;
 
 /** What a new context takes over from the one in use: a better start than the app's defaults */
@@ -33,6 +34,7 @@ export function inheritedDefaults(from: Defaults): Defaults {
     invoice_wording: from.invoice_wording,
     offer_reference: from.offer_reference,
     offer: from.offer,
+    cases: from.cases,
   });
 }
 

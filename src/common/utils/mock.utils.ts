@@ -9,6 +9,8 @@ import unitNames from '../../../src-tauri/data/unit-names.json' with { type: 'js
 import type {
   Address,
   Answer,
+  Case,
+  CaseStage,
   CatalogEntry,
   Context,
   Customer,
@@ -87,6 +89,7 @@ const settings: Settings = {
     layout: null,
     wording: { title: 'Angebot', draft_title: 'Angebotsentwurf', number_label: 'Angebotsnummer' },
   },
+  cases: { number_pattern: '[VG-]YYYY-NNN', number_reset: 'fiscal_year' },
 };
 
 const second: Settings = {
@@ -671,6 +674,7 @@ const invoices: StoredInvoice[] = [
     number: 'RE-2026-001',
     status: 'exported',
     draft: { ...draftOf(customers[0] as Customer), frozen: settings },
+    case_id: 1,
     total: '1130.50',
     exported_at: '2026-10-02 08:00:00',
     paid_at: null,
@@ -688,6 +692,7 @@ const invoices: StoredInvoice[] = [
     number: null,
     status: 'draft',
     draft: draftOf(customers[1] as Customer),
+    case_id: 2,
     total: '1130.50',
     exported_at: null,
     paid_at: null,
@@ -700,15 +705,16 @@ const invoices: StoredInvoice[] = [
   },
   // an offer that has run out, one still valid and a draft
   ...[
-    { id: 3, number: 'AN-2026-001', issued: '2026-09-01', days: 30, customer: 0 },
-    { id: 4, number: 'AN-2026-002', issued: '2026-10-20', days: 30, customer: 1 },
-    { id: 5, number: null, issued: '2026-10-27', days: 30, customer: 0 },
+    { id: 3, number: 'AN-2026-001', issued: '2026-09-01', days: 30, customer: 0, case: 1 },
+    { id: 4, number: 'AN-2026-002', issued: '2026-10-20', days: 30, customer: 1, case: 3 },
+    { id: 5, number: null, issued: '2026-10-27', days: 30, customer: 0, case: 4 },
   ].map((o): StoredInvoice => ({
     id: o.id,
     context_id: 1,
     kind: 'offer',
     number: o.number,
     status: o.number ? 'exported' : 'draft',
+    case_id: o.case,
     draft: {
       ...draftOf(customers[o.customer] as Customer),
       issue_date: o.issued,
@@ -784,6 +790,110 @@ function settle(stored: StoredInvoice) {
       stored.paid_at = payment.paid_on;
     }
   }
+}
+
+/** A Vorgang as the mock keeps it, the rest is read from its documents */
+interface CaseRow {
+  id: number;
+  context_id: number;
+  number: string;
+  customer_id: number | null;
+  title: string | null;
+  created_at: string;
+  /** Started for its customer (`Neuer Vorgang`): the customer is locked from the start */
+  started: boolean;
+}
+
+const caseNumber = (counter: number) => `VG-2026-${String(counter).padStart(3, '0')}`;
+
+let mockCases: CaseRow[] = [1, 2, 3, 4].map(id => ({
+  id,
+  context_id: 1,
+  number: caseNumber(id),
+  customer_id: (invoices.find(i => i.case_id === id)?.draft.customer.id as number | null) ?? null,
+  title: id === 1 ? 'Website-Relaunch' : null,
+  created_at: `2026-09-0${id} 08:00:00`,
+  started: false,
+}));
+
+const caseRow = (id: number) => mockCases.find(c => c.id === id) as CaseRow;
+
+function newCase(
+  contextId: number,
+  customerId: number | null,
+  title: string | null = null,
+  started = false
+) {
+  const id = Math.max(0, ...mockCases.map(c => c.id)) + 1;
+  mockCases.push({
+    id,
+    context_id: contextId,
+    number: caseNumber(id),
+    customer_id: customerId,
+    title,
+    created_at: new Date().toISOString(),
+    started,
+  });
+  return id;
+}
+
+/** As `cases::follow_customer`: a lone draft takes the Vorgang's customer along, a locked one refuses */
+function followCustomer(caseId: number, customerId: number | null | undefined, isNew: boolean) {
+  const row = caseRow(caseId);
+  const documents = invoices.filter(i => i.case_id === caseId);
+  const locked =
+    row.started ||
+    documents.length + (isNew ? 1 : 0) > 1 ||
+    documents.some(i => i.status === 'exported');
+  if ((customerId ?? null) === row.customer_id) {
+    return;
+  }
+  if (row.customer_id !== null && locked) {
+    throw 'Der Kunde des Vorgangs ist festgelegt, alle seine Dokumente gehen an ihn.';
+  }
+  row.customer_id = customerId ?? null;
+}
+
+/** What the store reads from a Vorgang's documents */
+function caseView(row: CaseRow): Case {
+  const documents = invoices.filter(i => i.case_id === row.id);
+  const created = documents.filter(i => i.status === 'exported');
+  const total = (list: StoredInvoice[]) => list.reduce((s, i) => s + Number(i.total ?? 0), 0);
+  const offers = created.filter(i => i.kind === 'offer');
+  const bills = created.filter(i => i.kind === 'invoice');
+  const invoiced = total(bills);
+  const paid = bills.reduce((s, i) => s + i.payments.reduce((t, p) => t + Number(p.amount), 0), 0);
+  const open = Math.max(0, invoiced - paid);
+  const stage: CaseStage =
+    bills.length > 0
+      ? open === 0
+        ? 'paid'
+        : paid === 0
+          ? 'invoiced'
+          : 'partly-paid'
+      : offers.length === 0
+        ? 'draft'
+        : offers.some(o => o.answer === 'accepted')
+          ? 'accepted'
+          : offers.every(o => o.answer === 'declined')
+            ? 'declined'
+            : 'offered';
+  return {
+    ...row,
+    customer_name:
+      documents[0]?.draft.customer.name ??
+      customers.find(c => c.id === row.customer_id)?.name ??
+      '',
+    locked: row.started || documents.length > 1 || created.length > 0,
+    documents: documents.length,
+    stage,
+    offered: total(offers.filter(o => o.answer !== 'declined')).toFixed(2),
+    accepted: total(offers.filter(o => o.answer === 'accepted')).toFixed(2),
+    invoiced: invoiced.toFixed(2),
+    paid: paid.toFixed(2),
+    open: open.toFixed(2),
+    archived: documents.length > 0 && documents.every(i => i.archived_at !== null),
+  };
 }
 
 /** Offer id and invoice id, the first offer was billed with the first invoice */
@@ -1377,6 +1487,7 @@ export function installMocks() {
               updated_at: i.updated_at,
               archived_at: i.archived_at,
               linked: links.filter(l => l.includes(i.id)).length,
+              case_id: i.case_id,
             }));
         case 'invoice_archive':
           find(args['id']).archived_at = new Date().toISOString();
@@ -1463,9 +1574,13 @@ export function installMocks() {
         case 'invoice_save': {
           const draft = args['draft'] as InvoiceDraft;
           const existing = args['id'] === null ? undefined : find(args['id']);
+          const into = (args['caseId'] as number | null | undefined) ?? null;
+          const context =
+            into === null ? ((args['contextId'] as number | null) ?? 1) : caseRow(into).context_id;
           const stored: StoredInvoice = existing ?? {
             id: nextId(),
-            context_id: (args['contextId'] as number | null) ?? 1,
+            case_id: into ?? newCase(context, draft.customer.id),
+            context_id: context,
             kind: args['kind'] as Kind,
             number: null,
             status: 'draft',
@@ -1480,6 +1595,7 @@ export function installMocks() {
             archived_at: null,
             files: null,
           };
+          followCustomer(stored.case_id, draft.customer.id, existing === undefined);
           stored.draft = draft;
           stored.total = check(draft).totals?.gross ?? null;
           if (!existing) {
@@ -1492,6 +1608,9 @@ export function installMocks() {
           const copy: StoredInvoice = {
             ...structuredClone(find(args['id'])),
             id: nextId(),
+            case_id: args['sameCase']
+              ? find(args['id']).case_id
+              : newCase(find(args['id']).context_id, find(args['id']).draft.customer.id),
             number: null,
             status: 'draft',
             exported_at: null,
@@ -1509,13 +1628,64 @@ export function installMocks() {
           event(copy.id, 'created', null, { from: args['id'] as number });
           return copy;
         }
-        case 'invoice_delete':
+        case 'invoice_delete': {
+          const gone = find(args['id']).case_id;
           invoices.splice(
             invoices.findIndex(i => i.id === args['id']),
             1
           );
+          if (!invoices.some(i => i.case_id === gone)) {
+            mockCases = mockCases.filter(c => c.id !== gone);
+          }
           links = links.filter(l => !l.includes(args['id']));
           return null;
+        }
+        case 'cases_list':
+          return mockCases
+            .filter(c => args['contextId'] == null || c.context_id === args['contextId'])
+            .map(caseView)
+            .filter(c => Boolean(args['withArchived']) || !c.archived)
+            .reverse();
+        case 'case_get':
+          return caseView(caseRow(args['id'] as number));
+        case 'case_create':
+          return caseView(
+            caseRow(
+              newCase(
+                args['contextId'] as number,
+                (args['customerId'] as number | null) ?? null,
+                (args['title'] as string | null) ?? null,
+                args['customerId'] != null
+              )
+            )
+          );
+        case 'case_set_title': {
+          const row = caseRow(args['id'] as number);
+          row.title = ((args['title'] as string | null) ?? '').trim() || null;
+          return caseView(row);
+        }
+        case 'case_delete':
+          if (invoices.some(i => i.case_id === args['id'])) {
+            throw new Error('only a Vorgang without documents can be removed');
+          }
+          mockCases = mockCases.filter(c => c.id !== args['id']);
+          return null;
+        case 'case_events': {
+          const ids = invoices.filter(i => i.case_id === args['id']).map(i => i.id);
+          return events
+            .filter(e => ids.includes(e.invoice_id))
+            .sort((a, b) => a.at.localeCompare(b.at));
+        }
+        case 'case_sequence':
+        case 'case_sequence_set': {
+          const counter = Math.max(mockCases.length + 1, Number(args['next'] ?? 0));
+          return {
+            next_number: caseNumber(counter),
+            counter,
+            highest: caseNumber(mockCases.length),
+            floor: args['next'] ? counter : null,
+          };
+        }
         case 'offer_to_invoice': {
           // mirrors `Store::invoice_from_offer`
           const offer = find(args['offerId']);
@@ -1538,6 +1708,7 @@ export function installMocks() {
           };
           const invoice: StoredInvoice = {
             id: nextId(),
+            case_id: offer.case_id,
             context_id: offer.context_id,
             kind: 'invoice',
             number: null,

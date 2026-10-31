@@ -122,6 +122,7 @@ fn make(
     let customs = store.all_custom_layouts().map_err(failed)?;
     let branding = Branding {
         version: store.draft_exports(stored.id).map_err(failed)?,
+        case_number: store.case_number_of(stored.id).map_err(failed)?,
         ..Branding::for_document(Kind::Invoice, &stored.draft, settings, &customs)
     };
     let layout = branding.custom.clone();
@@ -172,6 +173,7 @@ fn make_offer(
     let customs = store.all_custom_layouts().map_err(failed)?;
     let branding = Branding {
         version: store.draft_exports(stored.id).map_err(failed)?,
+        case_number: store.case_number_of(stored.id).map_err(failed)?,
         ..Branding::for_document(Kind::Offer, &draft, settings, &customs)
     };
     let layout = branding.custom.clone();

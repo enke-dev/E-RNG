@@ -16,13 +16,33 @@ header {
   font-size: var(--wa-font-size-s);
   text-transform: uppercase;
 
-  span {
+  span,
+  .heading {
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+/* a heading that opens what the group stands for */
+.heading {
+  all: unset;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--wa-color-text-normal);
+  }
+
+  &:focus-visible {
+    outline: var(--wa-focus-ring);
+  }
+}
+
+:host([selected]) header {
+  background: var(--wa-color-brand-fill-normal);
+  color: var(--wa-color-text-on-brand-fill);
 }
 
 /* a new group that does not exist yet: the form next to the list is for it */

@@ -25,10 +25,11 @@ const defaults = (): Defaults => ({
     layout: 'custom-3',
     wording: { title: 'Offerte', draft_title: 'Offertenentwurf', number_label: 'Offertennummer' },
   },
+  cases: { number_pattern: '[V-]NNNN', number_reset: 'never' },
 });
 
 describe('inheritedDefaults', () => {
-  it('takes the invoice defaults, the counter resets, the fiscal year, the offer reference and the offer settings along', () => {
+  it('takes the invoice defaults, the counter resets, the fiscal year, the offer reference, the offer settings and the numbering of the Vorgänge along', () => {
     expect(inheritedDefaults(defaults())).toEqual(defaults());
   });
 

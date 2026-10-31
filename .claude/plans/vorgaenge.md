@@ -1,8 +1,8 @@
 # Vorgänge – Plan
 
-**Status: sharpened (2026-10-31), nothing built.** Phases 1–3 are built unsupervised, then a review
-before phase 4. A living plan: decisions are edited in place, what is dropped is removed, not kept as
-history.
+**Status (2026-10-31): phases 1–3 done and reviewed in rounds, not pushed yet; phase 4 next.**
+Details of what is built are in `docs/development.md`. A living plan: decisions are edited in place,
+what is dropped is removed, not kept as history.
 
 ## Idea
 
@@ -15,7 +15,7 @@ from the history of its documents. Users who only want offers and invoices never
 - **Every document is in exactly one Vorgang.** Creating a plain offer or invoice creates its Vorgang
   with it, unseen. So there is one model, no "document without Vorgang" case, and any document's
   Vorgang can be picked up later to add more to it.
-- **A Vorgang has**: context, number, customer, an optional title (`Badsanierung Müller`), created at.
+- **A Vorgang has**: context, number, customer, an optional internal title (`Badsanierung`), created at.
   Its status is not stored, it is derived from its documents (offered, accepted, invoiced, open
   amount, paid completely), archived when all its documents are.
 - **Starting one**: `Neuer Vorgang` asks for the customer and makes an empty Vorgang; documents are
@@ -26,13 +26,14 @@ from the history of its documents. Users who only want offers and invoices never
   - While the Vorgang holds a single document that is not baked, the customer can be changed (as today
     on a draft), which changes the Vorgang's customer.
   - Once a second document is added or the first is baked, the customer is locked for the Vorgang and
-    all documents that follow. The lock is derived from the data, not a flag.
+    all documents that follow. A Vorgang started with `Neuer Vorgang` is locked for its customer from
+    the start. The lock is derived from the data (how it was started, its documents), not a flag.
   - A document with another customer than its Vorgang (a parent company paying) is not possible for
     now, the model leaves room for it later.
 - **Numbering**: every Vorgang gets a number at once, unseen ones too; whether it is ever used is not
   known when it is made. Own pattern and reset in a settings section per context, the same machinery
-  as document numbers (`numbering.rs`), default `[VG-]YYYY-NNN` with the fiscal-year reset. Vorgang
-  numbers need not be gapless. On a document's layout the number is a placeholder
+  as document numbers (`numbering.rs`), default `[VG-]YYYY-NNN` with the fiscal-year reset, the same
+  examples and counter (`Zähler ändern…`) as the documents. Vorgang numbers need not be gapless. On a document's layout the number is a placeholder
   (`{vorgang_number}`), opt-in by the user; not in the XML for now (BT-11 Projektreferenz would fit).
 - **Contexts**: a Vorgang belongs to one, like its documents. Backup and restore and deleting a
   context cover the new tables.
@@ -47,6 +48,12 @@ from the history of its documents. Users who only want offers and invoices never
   `Wording`), `{number}`, `{version}`, `{vorgang_number}`. Defaults give today's titles (`{title}`,
   `{draft_title}`); `Angebotsentwurf · Version {version}` or `Ihre {title} {number}` are a setting
   away. `{version}` and `{vorgang_number}` work in text parts too.
+- **Placeholders everywhere they make sense**: text parts, the page number part, the headline
+  patterns and the letter texts (intro and closing of every kind, settings and document; they take
+  what text parts take, plus `{number}`, `{date}`, `{due_date}`, `{customer_name}`). Each such field
+  has a round outlined button that lists its placeholders, grouped, searchable, with meaning and
+  example, and inserts the one picked at the cursor. Not in the note (it goes into the XML as it is)
+  or in positions.
 - **Baking** is the final export: it assigns the document number (as today) and happens once. After it
   the document is fixed (GoBD for invoices).
 - Each draft export keeps a **snapshot of the document's data** (not the PDF), so versions can be
@@ -54,15 +61,19 @@ from the history of its documents. Users who only want offers and invoices never
 
 ## History
 
-- **Events**, append-only, per document: created, draft exported (version n), baked, payment
-  received, accepted, declined, archived, added to a Vorgang. No event for edits (autosave); what
-  changed shows in the diff of two versions. Undoing a mark (a payment, accepted) is an event of its
+- **Events**, append-only, per document: created (from what, for copies and invoices from offers),
+  draft exported (version n), baked, payment received and taken back, accepted, declined, answer
+  taken back, archived, restored. Documents never move between Vorgänge, so there is no event for
+  it. No event for edits (autosave); what changed shows in the diff of two versions. Undoing a mark (a payment, accepted) is an event of its
   own. Each event keeps the time it was recorded and, where it has one, the date it is about (paid on
-  a day in the past, a backdated invoice); the timeline is in the order recorded and shows that date
-  with the event. The backbone of every history view.
+  a day in the past, a backdated invoice); the timeline is in the order recorded, shown latest first
+  with a dashed line above that runs on to now, and shows that date with each event. In a Vorgang an
+  entry names the kind (`Angebot angelegt`) and shows the document's number as a tag. The backbone of
+  every history view.
 - **Payments**: an invoice gets payments (amount, date) instead of its single paid date. Paid
   completely when they add up to its gross total; the open amount is the rest. Each payment is an
-  event. A new payment proposes the open amount and today. The Schlussrechnung later deducts what was
+  event. `Zahlung erfassen` proposes the open amount and today and takes no more than is open (the
+  store refuses it too); less is a part payment. No paid switch. The Schlussrechnung later deducts what was
   paid on the Abschläge.
 - **Snapshots** only at draft exports and baking, never on autosave. A diff compares two snapshots.
 - The Vorgang's timeline is the merged history of its documents; a document's own history (detail
@@ -75,8 +86,9 @@ Reuse what exists, the looks are not decided yet.
 - **Navigation**: while this plan is built, "Vorgänge" is a new main entry before "Angebote" and
   "Rechnungen". When it is done, both may be dropped in favour of "Vorgänge" alone.
 - **Vorgänge list**: the sidebar list with inset items, as in the settings. Every Vorgang is a group,
-  the single-document ones too (to be revisited with the UI follow-ups): its title or customer and its
-  number as the header, its documents inset below by issue date (from phase 6 offers before the
+  the single-document ones too (to be revisited with the UI follow-ups): number, customer and the
+  internal title last as the header, which opens the Vorgang page; its documents inset below by issue
+  date (from phase 6 offers before the
   invoices billing them), an action to add an offer or invoice. Filterable by kind, status and
   customer.
 - **Document history**: a vertical timeline as the last card of the document view (after the
@@ -93,13 +105,13 @@ bills follows from its positions, there is no link table. Only what has no posit
 
 ### Offer → offer (document)
 
-| Case | Meaning | Vorgang |
-| --- | --- | --- |
-| Angebotsversion | the drafts traded before baking, see versions; no relation | same document |
-| Nachtragsangebot (Nachtrag) | more work in the same case, refers to the main offer | same |
-| Alternativangebot | a variant of another offer, one of them is taken, the others lapse | same |
-| Ersatzangebot | replaces a baked offer (rare, agreeing happens in drafts) | same |
-| Folgeangebot | a follow-up deal based on an earlier one (next year's maintenance) | new, a Folgevorgang |
+| Case                        | Meaning                                                            | Vorgang             |
+| --------------------------- | ------------------------------------------------------------------ | ------------------- |
+| Angebotsversion             | the drafts traded before baking, see versions; no relation         | same document       |
+| Nachtragsangebot (Nachtrag) | more work in the same case, refers to the main offer               | same                |
+| Alternativangebot           | a variant of another offer, one of them is taken, the others lapse | same                |
+| Ersatzangebot               | replaces a baked offer (rare, agreeing happens in drafts)          | same                |
+| Folgeangebot                | a follow-up deal based on an earlier one (next year's maintenance) | new, a Folgevorgang |
 
 **Offer states**: a baked offer is marked **accepted** or **declined** with a date, as an invoice is
 marked paid; each is a history event. The rest is derived, never stored: an Alternativangebot lapses
@@ -110,14 +122,14 @@ confirm an order, but here the accepted date covers it; a printable one could co
 
 ### Offer → invoice (positions)
 
-| Case | Refers to | Final? |
-| --- | --- | --- |
-| Rechnung | all positions of an offer, in full | yes |
-| Teilrechnung | some positions or quantities, a finished part of the work | yes, for those |
-| Abschlagsrechnung | progress so far: a percentage of the offer or of positions | no, deducted later |
-| Anzahlungsrechnung | before any work, mostly a percentage | no, deducted later |
-| Schlussrechnung | the whole offer, minus the Abschläge and Anzahlungen paid | yes |
-| Sammelrechnung | positions of several offers in one invoice | yes |
+| Case               | Refers to                                                  | Final?             |
+| ------------------ | ---------------------------------------------------------- | ------------------ |
+| Rechnung           | all positions of an offer, in full                         | yes                |
+| Teilrechnung       | some positions or quantities, a finished part of the work  | yes, for those     |
+| Abschlagsrechnung  | progress so far: a percentage of the offer or of positions | no, deducted later |
+| Anzahlungsrechnung | before any work, mostly a percentage                       | no, deducted later |
+| Schlussrechnung    | the whole offer, minus the Abschläge and Anzahlungen paid  | yes                |
+| Sammelrechnung     | positions of several offers in one invoice                 | yes                |
 
 **Anzahlung and Abschlag are told apart by the work, deterministically**:
 
@@ -140,11 +152,11 @@ provisional versus final.
 
 ### Invoice → invoice (document)
 
-| Case | Meaning |
-| --- | --- |
+| Case                                              | Meaning                                            |
+| ------------------------------------------------- | -------------------------------------------------- |
 | Schlussrechnung → Abschlags-/Anzahlungsrechnungen | deducts them, each with its VAT (§ 14 Abs. 5 UStG) |
-| Rechnungskorrektur / Stornorechnung → invoice | corrects or cancels it (BT-25) |
-| Ersatzrechnung → stornierte Rechnung | the invoice that replaces a cancelled one |
+| Rechnungskorrektur / Stornorechnung → invoice     | corrects or cancels it (BT-25)                     |
+| Ersatzrechnung → stornierte Rechnung              | the invoice that replaces a cancelled one          |
 
 ### Vorgang → Vorgang
 
@@ -167,27 +179,25 @@ others.
 
 ## Phases (each ships on its own, in this order)
 
-1. **Vorgänge list** as a main entry: for now each document is its own group, with filters. No new
+1. **Done. Vorgänge list** as a main entry: for now each document is its own group, with filters. No new
    data.
-2. **History**: events and draft-export snapshots per document, the timeline card on the document.
+2. **Done. History**: events and draft-export snapshots per document, the timeline card on the document.
    Payments instead of the paid date. Offers marked accepted or declined with a date. Title patterns
    and `{version}`. Migration: events made up from the stored dates (exported, archived), a paid date
    becomes one payment of the gross total; no snapshots for the past.
-3. **Vorgang**: table, numbering settings, the customer rules, unseen Vorgänge for plain documents,
+3. **Done. Vorgang**: table, numbering settings, the customer rules, unseen Vorgänge for plain documents,
    `Neuer Vorgang`, creating a document inside one, the groups in the list, the timeline,
    `{vorgang_number}`, duplicating with its question. The derived status
    (offered, accepted, invoiced, open, paid) through one function. Migration: one Vorgang per group of
    linked documents (union over the links, split where the customers differ), numbered per context in
    the order of the issue dates.
-
-**Review before phase 4.**
-4. **Versions compared**: diff of two snapshots.
+4. **Next. Versions compared**: diff of two snapshots.
 5. **Offer → offer**: Nachtrag, Alternativangebot (lapsing), Ersatzangebot.
 6. **Position references, final**: Rechnung (today's "invoice from offer"), Teilrechnung,
    Sammelrechnung within a Vorgang; the open amount per offer and position. The offer ↔ invoice
    links go (their grouping lives on in the Vorgang since phase 3, the printed offer numbers in
-   `frozen_offers`).
+   `frozen_offers`). An invoice that bills an offer can say so in its texts, a placeholder like
+   `{offer_number}` for "Laut Angebot AN-2026-003", by its kind or relation.
 7. **On account**: Anzahlungs- and Abschlagsrechnung, the Schlussrechnung deducting them.
 8. **Vorgang → Vorgang**: Folgeangebot and Folgevorgang, Sammelrechnung across Vorgänge.
 9. **Corrections**: Rechnungskorrektur, Stornorechnung, Ersatzrechnung (`to_credit_note` exists).
-

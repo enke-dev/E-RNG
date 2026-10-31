@@ -89,6 +89,42 @@ export interface Settings {
   /** New invoices name the offers they are linked to, each invoice may choose otherwise */
   offer_reference: boolean;
   offer: OfferSettings;
+  /** How the Vorgänge are numbered */
+  cases: CaseSettings;
+}
+
+/** How the Vorgänge of a context are numbered */
+export interface CaseSettings {
+  number_pattern: string;
+  number_reset: NumberReset;
+}
+
+/** Where a Vorgang stands, read from its documents */
+export type CaseStage =
+  'draft' | 'offered' | 'accepted' | 'declined' | 'invoiced' | 'partly-paid' | 'paid';
+
+/** The documents of one business case for one customer */
+export interface Case {
+  id: number;
+  context_id: number;
+  number: string;
+  customer_id: number | null;
+  /** As its newest document has it, else as the customer is stored */
+  customer_name: string;
+  title: string | null;
+  created_at: string;
+  /** The customer cannot change any more: a second document or a created one */
+  locked: boolean;
+  documents: number;
+  stage: CaseStage;
+  /** Gross sums of its created documents */
+  offered: string;
+  accepted: string;
+  invoiced: string;
+  paid: string;
+  open: string;
+  /** Every document archived */
+  archived: boolean;
 }
 
 /**
@@ -287,6 +323,8 @@ export interface DocumentEvent {
 
 export interface StoredInvoice {
   id: number;
+  /** The Vorgang it is in, for good */
+  case_id: number;
   /** The context (issuer) it was made under, for good */
   context_id: number;
   /** What it is, for good */
@@ -355,6 +393,8 @@ export interface ListEntry {
   archived_at: string | null;
   /** How many documents of the other kind it is linked to */
   linked: number;
+  /** The Vorgang it is in */
+  case_id: number;
 }
 
 /** The other end of a link between an offer and an invoice */
@@ -783,8 +823,14 @@ export const api = {
   invoiceBlank: (contextId: number, kind: Kind) =>
     invoke<InvoiceDraft>('invoice_blank', { contextId, kind }),
   /** A new document (`id` null) is made under `contextId` and of `kind`, a stored one stays as it is */
-  invoiceSave: (id: number | null, contextId: number | null, kind: Kind, draft: InvoiceDraft) =>
-    invoke<StoredInvoice>('invoice_save', { id, contextId, kind, draft }),
+  /** A new document goes into `caseId` when given, else into a Vorgang of its own */
+  invoiceSave: (
+    id: number | null,
+    contextId: number | null,
+    kind: Kind,
+    draft: InvoiceDraft,
+    caseId: number | null = null
+  ) => invoke<StoredInvoice>('invoice_save', { id, contextId, kind, draft, caseId }),
   invoiceArchive: (id: number) => invoke<null>('invoice_archive', { id }),
   invoiceUnarchive: (id: number) => invoke<StoredInvoice>('invoice_unarchive', { id }),
   /** Pays what is open on a day, or takes all payments back (`null`) */
@@ -799,7 +845,24 @@ export const api = {
     invoke<StoredInvoice>('offer_set_answer', { id, answer, on }),
   invoiceEvents: (id: number) => invoke<DocumentEvent[]>('invoice_events', { id }),
   invoiceSnapshot: (eventId: number) => invoke<InvoiceDraft>('invoice_snapshot', { eventId }),
-  invoiceDuplicate: (id: number) => invoke<StoredInvoice>('invoice_duplicate', { id }),
+  /** A copy in a Vorgang of its own, or in the original's (`sameCase`) */
+  invoiceDuplicate: (id: number, sameCase = false) =>
+    invoke<StoredInvoice>('invoice_duplicate', { id, sameCase }),
+  casesList: (contextId: number | null, withArchived = false) =>
+    invoke<Case[]>('cases_list', { contextId, withArchived }),
+  caseGet: (id: number) => invoke<Case>('case_get', { id }),
+  /** Starts a Vorgang for a customer, without documents yet */
+  caseCreate: (contextId: number, customerId: number | null, title: string | null) =>
+    invoke<Case>('case_create', { contextId, customerId, title }),
+  caseSetTitle: (id: number, title: string | null) => invoke<Case>('case_set_title', { id, title }),
+  /** Only a Vorgang without documents */
+  caseDelete: (id: number) => invoke<null>('case_delete', { id }),
+  caseEvents: (id: number) => invoke<DocumentEvent[]>('case_events', { id }),
+  /** Where the numbers of a context's Vorgänge stand today */
+  caseSequence: (contextId: number) => invoke<Sequence>('case_sequence', { contextId }),
+  /** Continues the numbers of the Vorgänge from `next` in today's period */
+  caseSequenceSet: (contextId: number, next: number) =>
+    invoke<Sequence>('case_sequence_set', { contextId, next }),
   invoiceDelete: (id: number) => invoke<null>('invoice_delete', { id }),
   /** A new invoice draft from a created offer, linked to it, with the layout and texts of invoices */
   offerToInvoice: (offerId: number) => invoke<StoredInvoice>('offer_to_invoice', { offerId }),

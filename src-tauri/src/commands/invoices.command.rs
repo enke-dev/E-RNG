@@ -105,19 +105,24 @@ pub fn invoice_save(
     context_id: Option<i64>,
     kind: Kind,
     draft: InvoiceDraft,
+    case_id: Option<i64>,
 ) -> CommandResult<StoredInvoice> {
-    let context_id = match (id, context_id) {
-        (Some(id), _) => store.invoice(id)?.context_id,
-        (None, Some(context_id)) => context_id,
-        (None, None) => return Err("Für eine neue Rechnung fehlt der Kontext.".into()),
+    let context_id = match (id, case_id, context_id) {
+        (Some(id), _, _) => store.invoice(id)?.context_id,
+        (None, Some(case), _) => store.case_context(case)?,
+        (None, None, Some(context_id)) => context_id,
+        (None, None, None) => return Err("Für eine neue Rechnung fehlt der Kontext.".into()),
     };
     let settings = store.settings(context_id)?;
     let total = build_invoice(&draft, &settings, "ENTWURF")
         .ok()
         .map(|invoice| totals(&invoice).gross);
-    store
-        .save_draft(id, context_id, kind, &draft, total.as_deref())
-        .map_err(CommandError::from)
+    match (id, case_id) {
+        // a new document within a Vorgang, else in one of its own
+        (None, Some(case)) => store.save_draft_in_case(case, kind, &draft, total.as_deref()),
+        _ => store.save_draft(id, context_id, kind, &draft, total.as_deref()),
+    }
+    .map_err(CommandError::from)
 }
 
 /// Takes an exported invoice out of the list, it stays as it is.
@@ -133,8 +138,14 @@ pub fn invoice_unarchive(store: State<'_, Store>, id: i64) -> CommandResult<Stor
 }
 
 #[tauri::command]
-pub fn invoice_duplicate(store: State<'_, Store>, id: i64) -> CommandResult<StoredInvoice> {
-    store.duplicate(id, &today()).map_err(CommandError::from)
+pub fn invoice_duplicate(
+    store: State<'_, Store>,
+    id: i64,
+    same_case: bool,
+) -> CommandResult<StoredInvoice> {
+    store
+        .duplicate_to(id, &today(), same_case)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]

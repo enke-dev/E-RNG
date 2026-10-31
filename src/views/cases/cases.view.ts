@@ -8,10 +8,12 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/tag/tag.js';
+import '../../common/components/case-detail/case-detail.component.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
 import '../../common/components/list/list/list.component.js';
 import '../../common/components/list/list-group/list-group.component.js';
 import '../../common/components/list/list-item/list-item.component.js';
+import '../../common/components/new-case/new-case.component.js';
 import '../../common/layouts/split/split.layout.js';
 import '../invoice-edit/invoice-edit.view.js';
 
@@ -21,9 +23,11 @@ import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
-import type { Kind, ListEntry } from '../../common/utils/api.utils.js';
+import type { Case, Kind, ListEntry } from '../../common/utils/api.utils.js';
 import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
+import type { Selection } from '../../common/utils/cases.utils.js';
+import { caseName, caseRoute, casesRoute, parseSelection } from '../../common/utils/cases.utils.js';
 import {
   activeContext,
   available,
@@ -55,31 +59,30 @@ const STAGES_OF: Record<Kind, Stage[]> = {
   invoice: ['draft', 'open', 'paid'],
 };
 
-/**
- * The address of the Vorgänge, or of a document in them: `new` becomes `new-offer` or
- * `new-invoice`, the kind is all a new one has
- */
-export function casesRoute(kind: Kind, id?: number | string): string {
-  if (id === undefined) {
-    return '/cases';
-  }
-  return id === 'new' ? `/cases/new-${kind}` : `/cases/${id}`;
-}
-
 /** What a document is called in the list: its kind and number, or the kind's draft */
 const titleOf = (entry: ListEntry) =>
   entry.number ? `${KINDS[entry.kind].noun} ${entry.number}` : KINDS[entry.kind].draftTitle;
 
+/** A Vorgang with the documents of it the filters leave */
+interface Group {
+  vorgang: Case;
+  documents: ListEntry[];
+}
+
 /**
- * Offers and invoices together, each in its Vorgang: a filterable list of groups on the left, the
- * selected document on the right. Until Vorgänge are stored each document is a group of its own.
+ * Offers and invoices together, each in its Vorgang: a filterable list of Vorgänge with their
+ * documents inset on the left; on the right the selected document, a new one, or a Vorgang itself.
  */
 @customElement('erng-cases')
 export class CasesView extends ErngElement.withStyles(styles) {
-  /** From the address: `new-offer`, `new-invoice`, an id, `none` (nothing open), or empty for "the newest" */
+  /**
+   * From the address: a document's id, `new-offer` or `new-invoice` (`@12` for one in Vorgang 12),
+   * `case-12` for a Vorgang, `none` (nothing open), or empty for "the newest"
+   */
   @property() selected = '';
 
   @state() private entries: ListEntry[] | undefined;
+  @state() private cases: Case[] = [];
   @state() private query = '';
   @state() private kind: Kind | 'all' = 'all';
   /** The stages shown, any combination */
@@ -92,6 +95,10 @@ export class CasesView extends ErngElement.withStyles(styles) {
   @state() private all = false;
   /** A document that got its id while the address still says `new-…` */
   @state() private created: number | undefined;
+  /** The dialog that starts a Vorgang is open */
+  @state() private starting = false;
+  /** Counts the changes of documents, a Vorgang on show reads itself again */
+  @state() private revision = 0;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -110,6 +117,10 @@ export class CasesView extends ErngElement.withStyles(styles) {
     }
   }
 
+  private get selection(): Selection {
+    return parseSelection(this.selected);
+  }
+
   /** The bare address shows the newest document: make it the address, so a reload keeps the selection */
   private selectNewest() {
     const newest = this.entries?.[0];
@@ -120,23 +131,28 @@ export class CasesView extends ErngElement.withStyles(styles) {
 
   private async load() {
     try {
-      const context = activeContext.get()?.id ?? null;
-      const entries = await api.invoicesList(this.all ? null : context, null, this.withArchived);
-      // opened by its address, the document may be archived or of another context: list it anyway
-      const id = Number(this.selected);
-      if (this.selected !== '' && Number.isInteger(id) && !entries.some(e => e.id === id)) {
-        const missing = await api.invoiceGet(id).catch(() => undefined);
+      const context = this.all ? null : (activeContext.get()?.id ?? null);
+      const [entries, cases] = await Promise.all([
+        api.invoicesList(context, null, this.withArchived),
+        api.casesList(context, this.withArchived),
+      ]);
+      // opened by its address, the document may be archived: list it anyway
+      const selection = this.selection;
+      if (selection.type === 'document' && !entries.some(e => e.id === selection.id)) {
+        const missing = await api.invoiceGet(selection.id).catch(() => undefined);
         if (missing?.archived_at && !this.withArchived) {
           this.withArchived = true;
           await this.load();
           return;
         }
         this.entries = entries;
+        this.cases = cases;
         const newest = entries[0];
-        redirect(newest ? casesRoute(newest.kind, newest.id) : casesRoute('invoice'));
+        redirect(newest ? casesRoute(newest.kind, newest.id) : '/cases/none');
         return;
       }
       this.entries = entries;
+      this.cases = cases;
       this.selectNewest();
     } catch (error) {
       notifyError(error);
@@ -150,9 +166,10 @@ export class CasesView extends ErngElement.withStyles(styles) {
     if (event.detail.deleted && this.entries) {
       this.entries = this.entries.filter(e => e.id !== event.detail.id);
     }
-    if (!event.detail.deleted && event.detail.id !== null && this.newKind) {
+    if (!event.detail.deleted && event.detail.id !== null && this.selection.type === 'new') {
       this.created = event.detail.id;
     }
+    this.revision++;
     await this.load();
   }
 
@@ -176,10 +193,13 @@ export class CasesView extends ErngElement.withStyles(styles) {
     this.stages = stages;
   }
 
-  /** A new document starts here, unless its context lacks what the kind needs: its route sends the user there */
-  private create(kind: Kind) {
+  /**
+   * A new document starts here, in a Vorgang or one of its own, unless its context lacks what the
+   * kind needs: its route sends the user there
+   */
+  private create(kind: Kind, inCase?: number) {
     const fit = kind === 'offer' ? readyForOffers.get() : ready.get();
-    goto(fit ? casesRoute(kind, 'new') : kindRoute(kind, 'new'));
+    goto(fit ? casesRoute(kind, 'new', inCase) : kindRoute(kind, 'new'));
   }
 
   /** The stages the status menu offers: those of the kind filtered for */
@@ -198,42 +218,85 @@ export class CasesView extends ErngElement.withStyles(styles) {
     return this.withArchived ? `${stages} + archivierte` : stages;
   }
 
-  /** The kind of the new document the address asks for, if it does */
-  private get newKind(): Kind | undefined {
-    const [, kind] = /^new-(offer|invoice)$/.exec(this.selected) ?? [];
-    return kind as Kind | undefined;
-  }
-
-  /** What the detail shows: the address wins, then the newest document */
-  private get current(): { kind: Kind; id: string } | undefined {
-    // closed: the user put the document away, nothing is open until they pick one
-    if (this.selected === 'none') {
-      return undefined;
+  /** What the detail shows: a Vorgang, a new document (perhaps in a Vorgang) or a stored one */
+  private get current():
+    | { type: 'case'; id: number }
+    | { type: 'document'; kind: Kind; id: string; caseId: number | null }
+    | undefined {
+    const selection = this.selection;
+    switch (selection.type) {
+      case 'none':
+        return undefined;
+      case 'case':
+        return selection;
+      case 'new':
+        return {
+          type: 'document',
+          kind: selection.kind,
+          id: this.created === undefined ? 'new' : String(this.created),
+          caseId: selection.caseId,
+        };
+      case 'newest':
+      case 'document': {
+        const id = selection.type === 'newest' ? this.entries?.[0]?.id : selection.id;
+        const entry = this.entries?.find(e => e.id === id);
+        return entry
+          ? { type: 'document', kind: entry.kind, id: String(entry.id), caseId: null }
+          : undefined;
+      }
     }
-    const kind = this.newKind;
-    if (kind) {
-      return { kind, id: this.created === undefined ? 'new' : String(this.created) };
-    }
-    const id = this.selected === '' ? this.entries?.[0]?.id : Number(this.selected);
-    const entry = this.entries?.find(e => e.id === id);
-    return entry ? { kind: entry.kind, id: String(entry.id) } : undefined;
   }
 
   /** A new document exists only once it is saved as a draft, until then there is no second new one */
   private get unsaved() {
-    return this.newKind !== undefined && this.created === undefined;
+    return this.selection.type === 'new' && this.created === undefined;
   }
 
-  private get shown(): ListEntry[] {
-    const query = this.query.trim().toLowerCase();
-    return (this.entries ?? []).filter(
-      e =>
-        (this.kind === 'all' || e.kind === this.kind) &&
-        this.stages.has(stageOf(e)) &&
-        (this.year === 'all' || yearOf(e) === this.year) &&
-        (this.customer === 'all' || e.customer_name === this.customer) &&
-        haystack(e).includes(query)
+  /** Whether a Vorgang is what the search and the customer filter look for */
+  private found(vorgang: Case, query: string) {
+    return (
+      (this.customer === 'all' || vorgang.customer_name === this.customer) &&
+      [vorgang.number, vorgang.title ?? '', vorgang.customer_name]
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
     );
+  }
+
+  /**
+   * The Vorgänge with the documents the filters leave, the one changed last first; inside a
+   * Vorgang by issue date. A Vorgang found by its own name shows all its documents the other
+   * filters leave, one without documents shows as long as nothing filters by documents.
+   */
+  private get groups(): Group[] {
+    const query = this.query.trim().toLowerCase();
+    const kept = (e: ListEntry) =>
+      (this.kind === 'all' || e.kind === this.kind) &&
+      this.stages.has(stageOf(e)) &&
+      (this.year === 'all' || yearOf(e) === this.year) &&
+      (this.customer === 'all' || e.customer_name === this.customer);
+    const byCase = new Map<number, ListEntry[]>();
+    (this.entries ?? []).forEach(e => byCase.set(e.case_id, [...(byCase.get(e.case_id) ?? []), e]));
+    const filtering =
+      this.kind !== 'all' || this.year !== 'all' || this.stages.size < STAGES.length;
+    const groups = this.cases.flatMap((vorgang): (Group & { last: string })[] => {
+      const all = byCase.get(vorgang.id) ?? [];
+      const named = this.found(vorgang, query);
+      const documents = all
+        .filter(e => kept(e) && (named || haystack(e).includes(query)))
+        .sort((a, b) => a.issue_date.localeCompare(b.issue_date) || a.id - b.id);
+      const empty = all.length === 0 && !filtering && named;
+      if (documents.length === 0 && !empty) {
+        return [];
+      }
+      // documents say `2026-10-31 12:00:00`, Vorgänge `2026-10-31T12:00:00Z`: compared alike
+      const moment = (at: string) => at.replace('T', ' ').replace('Z', '');
+      const last = all
+        .map(e => moment(e.updated_at))
+        .reduce((a, b) => (a > b ? a : b), moment(vorgang.created_at));
+      return [{ vorgang, documents, last }];
+    });
+    return groups.sort((a, b) => b.last.localeCompare(a.last));
   }
 
   /** What the year and customer filters offer: what the documents have */
@@ -318,24 +381,32 @@ export class CasesView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  /** "Neu" offers both kinds */
+  /** "Neu": an offer or invoice of its own, or a Vorgang to put them in */
   private renderCreate(slot: string) {
     return html`
       <wa-dropdown
         slot="${slot}"
-        @wa-select="${(e: CustomEvent<{ item: { value: string } }>) =>
-          this.create(e.detail.item.value as Kind)}"
+        @wa-select="${(e: CustomEvent<{ item: { value: string } }>) => {
+          const value = e.detail.item.value;
+          if (value === 'case') {
+            this.starting = true;
+          } else {
+            this.create(value as Kind);
+          }
+        }}"
       >
         <wa-button slot="trigger" size="s" variant="brand" with-caret ?disabled="${this.unsaved}">
           Neu
         </wa-button>
         <wa-dropdown-item value="offer">${KINDS.offer.newLabel}</wa-dropdown-item>
         <wa-dropdown-item value="invoice">${KINDS.invoice.newLabel}</wa-dropdown-item>
+        <wa-divider></wa-divider>
+        <wa-dropdown-item value="case">Neuer Vorgang …</wa-dropdown-item>
       </wa-dropdown>
     `;
   }
 
-  /** One document inset in its group */
+  /** One document inset in its Vorgang */
   private renderEntry(entry: ListEntry, highlighted: string | undefined) {
     const tags = tagsOf(entry, this.all);
     return html`
@@ -344,19 +415,100 @@ export class CasesView extends ErngElement.withStyles(styles) {
         @click="${() => goto(casesRoute(entry.kind, entry.id))}"
       >
         ${titleOf(entry)}
-        <span slot="sub-end">${formatDate(entry.issue_date)}</span>
+        <span slot="end">${money(entry.total)}</span>
+        <span slot="sub">${formatDate(entry.issue_date)}</span>
         ${tags.length > 0 ? html`<span slot="tags">${tags}</span>` : nothing}
-        <span slot="tags-end">${money(entry.total)}</span>
       </erng-list-item>
     `;
   }
 
-  override render() {
-    const shown = this.shown;
+  /** A Vorgang: its number and name open it (the name is cut, not the number), its documents below */
+  private renderGroup({ vorgang, documents }: Group, highlighted: string | undefined) {
     const current = this.current;
-    const newKind = this.newKind;
+    const newHere = this.unsaved && this.selection.type === 'new' ? this.selection : undefined;
     return html`
-      <erng-split position-key="split:cases" @invoice-changed="${this.handleChanged}">
+      <erng-list-group
+        pickable
+        heading="${vorgang.number} · ${caseName(vorgang)}"
+        ?selected="${current?.type === 'case' && current.id === vorgang.id}"
+        @group-pick="${() => goto(caseRoute(vorgang.id))}"
+      >
+        <wa-dropdown
+          slot="action"
+          @wa-select="${(e: CustomEvent<{ item: { value: string } }>) =>
+            this.create(e.detail.item.value as Kind, vorgang.id)}"
+        >
+          <wa-button slot="trigger" size="xs" appearance="outlined" ?disabled="${this.unsaved}">
+            Neu
+          </wa-button>
+          <wa-dropdown-item value="offer">${KINDS.offer.newLabel}</wa-dropdown-item>
+          <wa-dropdown-item value="invoice">${KINDS.invoice.newLabel}</wa-dropdown-item>
+        </wa-dropdown>
+        ${documents.map(e => this.renderEntry(e, highlighted))}
+        ${
+          newHere?.caseId === vorgang.id
+            ? html`
+                <erng-list-item placeholder selected>
+                  ${KINDS[newHere.kind].newLabel}
+                </erng-list-item>
+              `
+            : nothing
+        }
+      </erng-list-group>
+    `;
+  }
+
+  private renderDetail() {
+    const current = this.current;
+    if (!this.entries) {
+      return nothing;
+    }
+    if (current?.type === 'case') {
+      return html`
+        <erng-case-detail
+          slot="detail"
+          case-id="${current.id}"
+          revision="${this.revision}"
+        ></erng-case-detail>
+      `;
+    }
+    if (current?.type === 'document') {
+      // an editor is for one kind and one new document for good, another gets one of its own
+      return keyed(
+        `${current.kind}:${current.caseId ?? ''}`,
+        html`
+          <erng-invoice-edit
+            slot="detail"
+            kind="${current.kind}"
+            invoice-id="${current.id}"
+            case-id="${current.caseId ?? nothing}"
+            .route="${casesRoute}"
+          ></erng-invoice-edit>
+        `
+      );
+    }
+    return html`
+      <div slot="detail" class="placeholder">
+        <span>
+          ${this.entries.length === 0 && this.cases.length === 0 ? 'Noch keine Vorgänge.' : 'Nichts ausgewählt.'}
+        </span>
+        ${this.renderCreate('')}
+      </div>
+    `;
+  }
+
+  override render() {
+    const groups = this.groups;
+    const current = this.current;
+    const highlighted = current?.type === 'document' ? current.id : undefined;
+    const selection = this.selection;
+    const newAlone = this.unsaved && selection.type === 'new' && selection.caseId === null;
+    return html`
+      <erng-split
+        position-key="split:cases"
+        @invoice-changed="${this.handleChanged}"
+        @case-changed="${() => void this.load()}"
+      >
         <erng-filter-bar
           slot="list"
           .query="${this.query}"
@@ -366,10 +518,10 @@ export class CasesView extends ErngElement.withStyles(styles) {
           ${this.renderFilters()} ${this.renderCreate('actions')}
         </erng-filter-bar>
         ${
-          this.entries && shown.length === 0
+          this.entries && groups.length === 0 && !newAlone
             ? html`
                 <wa-callout slot="list" variant="neutral">
-                  ${this.entries.length > 0 ? 'Keine Treffer.' : 'Noch keine Vorgänge.'}
+                  ${this.cases.length > 0 ? 'Keine Treffer.' : 'Noch keine Vorgänge.'}
                 </wa-callout>
               `
             : nothing
@@ -377,49 +529,35 @@ export class CasesView extends ErngElement.withStyles(styles) {
 
         <erng-list slot="list">
           ${
-            this.unsaved && newKind
+            newAlone && selection.type === 'new'
               ? html`
                   <erng-list-group heading="Neuer Vorgang" placeholder>
-                    <erng-list-item placeholder selected>${KINDS[newKind].newLabel}</erng-list-item>
+                    <erng-list-item placeholder selected>
+                      ${KINDS[selection.kind].newLabel}
+                    </erng-list-item>
                   </erng-list-group>
                 `
               : nothing
           }
-          ${shown.map(
-            e => html`
-              <erng-list-group heading="${e.customer_name || '–'}">
-                ${this.renderEntry(e, current?.id)}
-              </erng-list-group>
-            `
-          )}
+          ${groups.map(group => this.renderGroup(group, highlighted))}
         </erng-list>
 
-        ${
-          this.entries
-            ? current
-              ? // an editor is for one kind for good, another kind gets one of its own
-                keyed(
-                  current.kind,
-                  html`
-                    <erng-invoice-edit
-                      slot="detail"
-                      kind="${current.kind}"
-                      invoice-id="${current.id}"
-                      .route="${casesRoute}"
-                    ></erng-invoice-edit>
-                  `
-                )
-              : html`
-                  <div slot="detail" class="placeholder">
-                    <span>
-                      ${this.entries.length === 0 ? 'Noch keine Vorgänge.' : 'Kein Beleg ausgewählt.'}
-                    </span>
-                    ${this.renderCreate('')}
-                  </div>
-                `
-            : nothing
-        }
+        ${this.renderDetail()}
       </erng-split>
+      ${
+        this.starting
+          ? html`
+              <erng-new-case
+                context-id="${activeContext.get()?.id ?? 0}"
+                @case-created="${(e: CustomEvent<Case>) => {
+                  void this.load();
+                  goto(caseRoute(e.detail.id));
+                }}"
+                @closed="${() => (this.starting = false)}"
+              ></erng-new-case>
+            `
+          : nothing
+      }
     `;
   }
 }

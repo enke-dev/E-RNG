@@ -1,32 +1,71 @@
-/* a line down the left, a dot per entry on it */
+/*
+ * A line down the left with a dot per entry on it, the latest on top; above it the line runs on
+ * dashed, to now. All is measured from the dot: its size, the line's width, where it sits.
+ */
+:host {
+  --dot: 0.75rem;
+  --rail: var(--wa-border-width-m);
+  --indent: 1.75rem;
+  /* from the top of an entry to the top of its dot: centred on the first line, the caption */
+  --dot-top: calc(0.5lh - var(--dot) / 2);
+  --line-color: var(--wa-color-surface-border);
+
+  display: block;
+}
+
 ol {
-  display: flex;
-  flex-direction: column;
-  gap: var(--wa-space-m);
+  position: relative;
   margin: 0;
-  padding: 0 0 0 var(--wa-space-l);
+  padding: var(--wa-space-l) 0 0 var(--indent);
   list-style: none;
-  border-inline-start: var(--wa-border-width-m) solid var(--wa-color-surface-border);
+
+  /* until now */
+  &::before {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: calc(var(--dot) / 2 - var(--rail) / 2);
+    block-size: calc(var(--wa-space-l) + var(--dot-top) + var(--dot) / 2);
+    border-inline-start: var(--rail) dashed var(--line-color);
+    content: '';
+  }
 }
 
 li {
   position: relative;
   display: flex;
   flex-direction: column;
+  align-items: start;
   gap: var(--wa-space-3xs);
+  /* the native styles indent list items, the line is the indent here */
+  margin: 0;
+  padding-block-end: var(--wa-space-m);
 
+  /* the dot, centred on the line */
   &::before {
     position: absolute;
-    inset-block-start: 0.35em;
-    inset-inline-start: calc(
-      -1 * var(--wa-space-l) - var(--wa-border-width-m) / 2 - var(--dot) / 2
-    );
-    --dot: 0.75rem;
+    z-index: 1;
+    inset-block-start: var(--dot-top);
+    inset-inline-start: calc(-1 * var(--indent));
+    box-sizing: border-box;
     inline-size: var(--dot);
     block-size: var(--dot);
     border-radius: 50%;
     background: var(--wa-color-neutral-fill-loud);
     content: '';
+  }
+
+  /* the line from this dot to the next one */
+  &:not(:last-child)::after {
+    position: absolute;
+    inset-block: calc(var(--dot-top) + var(--dot) / 2) calc(-1 * (var(--dot-top) + var(--dot) / 2));
+    inset-inline-start: calc(-1 * var(--indent) + var(--dot) / 2 - var(--rail) / 2);
+    inline-size: var(--rail);
+    background: var(--line-color);
+    content: '';
+  }
+
+  &:last-child {
+    padding-block-end: 0;
   }
 }
 

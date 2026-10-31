@@ -48,6 +48,8 @@ pub struct Branding {
     pub unit_labels: Vec<String>,
     /// How many times it was exported as a draft; a draft shows the version its next export is
     pub version: u32,
+    /// The number of its Vorgang, empty for a document shown without one (a layout's sample)
+    pub case_number: String,
 }
 
 /// The seller's fields that only layouts use: they are not part of the invoice data and not in
@@ -150,6 +152,7 @@ impl Branding {
             closing: pick(draft.closing.as_deref(), settings.closing(kind)),
             unit_labels: draft.positions.iter().map(Position::unit_label).collect(),
             version: 0,
+            case_number: String::new(),
         }
     }
 }
@@ -171,13 +174,15 @@ fn title_of(
     } else {
         &format.title
     };
-    headline(pattern, &branding.wording, branding.draft, number, version)
+    headline(pattern, branding, number, version)
 }
 
-/// The headline as the layout's pattern writes it: `{title}`, `{draft_title}`, `{number}` and
-/// `{version}` are filled in. A pattern that comes out empty gives the plain wording.
-fn headline(pattern: &str, wording: &Wording, draft: bool, number: &str, version: &str) -> String {
-    let plain = if draft {
+/// The headline as the layout's pattern writes it: `{title}`, `{draft_title}`, `{number}`,
+/// `{version}` and `{vorgang_number}` are filled in. A pattern that comes out empty gives the plain
+/// wording.
+fn headline(pattern: &str, branding: &Branding, number: &str, version: &str) -> String {
+    let wording = &branding.wording;
+    let plain = if branding.draft {
         &wording.draft_title
     } else {
         &wording.title
@@ -186,7 +191,8 @@ fn headline(pattern: &str, wording: &Wording, draft: bool, number: &str, version
         .replace("{title}", &wording.title)
         .replace("{draft_title}", &wording.draft_title)
         .replace("{number}", number)
-        .replace("{version}", version);
+        .replace("{version}", version)
+        .replace("{vorgang_number}", &branding.case_number);
     let text = text.trim();
     if text.is_empty() {
         plain.clone()
@@ -201,6 +207,8 @@ pub struct InvoiceView {
     pub number: String,
     /// The version, for `{version}`; empty for a document never exported as a draft
     pub version: String,
+    /// The number of its Vorgang, for `{vorgang_number}`
+    pub case_number: String,
     pub issue: YearMonthDay,
     pub seller: PartyView,
     /// The seller's single fields, one text each, for the `{seller_*}` placeholders
@@ -798,6 +806,7 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         title,
         number,
         version,
+        case_number: branding.case_number.clone(),
         issue: YearMonthDay {
             year: issue.year(),
             month: issue.month(),

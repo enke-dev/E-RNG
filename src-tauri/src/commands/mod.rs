@@ -1,5 +1,7 @@
 #[path = "backup.command.rs"]
 pub mod backup_command;
+#[path = "cases.command.rs"]
+pub mod cases_command;
 #[path = "check-invoice.command.rs"]
 pub mod check_invoice_command;
 #[path = "contexts.command.rs"]

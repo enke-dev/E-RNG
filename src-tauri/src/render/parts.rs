@@ -356,6 +356,8 @@ fn placeholder(view: &InvoiceView, name: &str) -> Option<String> {
         "seller_name" => Some(view.seller.name.clone()),
         // how many times the document went out as a draft, empty before the first
         "version" => Some(view.version.clone()),
+        // the number of the document's Vorgang, opt-in for whoever wants it on the document
+        "vorgang_number" => Some(view.case_number.clone()),
         // single fields: the plain value, empty when it is not set
         "seller_street" => Some(fields.street.clone()),
         "seller_postcode_city" => Some(fields.postcode_city.clone()),

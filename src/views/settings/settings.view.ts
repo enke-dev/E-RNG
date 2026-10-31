@@ -96,6 +96,7 @@ const PAGES = [
   ['bank', 'Bankverbindung'],
   ['rates', 'Steuersätze'],
   ['units', 'Einheiten'],
+  ['cases', 'Vorgänge'],
   ['offers', 'Angebote'],
   ['invoices', 'Rechnungen'],
 ] as const;
@@ -124,7 +125,7 @@ const RESET_NAMES: Record<NumberReset, string> = {
 };
 
 /** `context-<id>-<page>`, or `context-new-<page>` for one that is not stored yet */
-const CONTEXT_PAGE = /^context-(new|\d+)-(company|bank|rates|units|offers|invoices)$/;
+const CONTEXT_PAGE = /^context-(new|\d+)-(company|bank|rates|units|cases|offers|invoices)$/;
 
 /** What the form calls the fields that must be filled in before an invoice can be issued */
 const FIELD_LABELS: Record<string, string> = {
@@ -190,11 +191,46 @@ const resetOptions = (fiscalYearStart: string | null): [NumberReset, string][] =
   ];
 };
 
-const patternOf = (settings: Settings, kind: Kind) =>
-  kind === 'offer' ? settings.offer.number_pattern : settings.number_pattern;
+/** What is numbered: the kinds of documents and the Vorgänge */
+type Numbered = Kind | 'case';
 
-const resetOf = (settings: Settings, kind: Kind) =>
-  kind === 'offer' ? settings.offer.number_reset : settings.number_reset;
+const patternOf = (settings: Settings, kind: Numbered) =>
+  ({
+    invoice: settings.number_pattern,
+    offer: settings.offer.number_pattern,
+    case: settings.cases.number_pattern,
+  })[kind];
+
+const resetOf = (settings: Settings, kind: Numbered) =>
+  ({
+    invoice: settings.number_reset,
+    offer: settings.offer.number_reset,
+    case: settings.cases.number_reset,
+  })[kind];
+
+/** Writes the pattern or the reset of what is numbered into settings that are being edited */
+const setPattern = (settings: Settings, kind: Numbered, pattern: string) => {
+  ({
+    invoice: () => (settings.number_pattern = pattern),
+    offer: () => (settings.offer.number_pattern = pattern),
+    case: () => (settings.cases.number_pattern = pattern),
+  })[kind]();
+};
+
+const setReset = (settings: Settings, kind: Numbered, reset: NumberReset) => {
+  ({
+    invoice: () => (settings.number_reset = reset),
+    offer: () => (settings.offer.number_reset = reset),
+    case: () => (settings.cases.number_reset = reset),
+  })[kind]();
+};
+
+/** The label of a pattern and the prefix of its examples */
+const NUMBERED: Record<Numbered, { label: string; prefix: string }> = {
+  invoice: { label: 'Muster der Rechnungsnummer', prefix: 'RE' },
+  offer: { label: 'Muster der Angebotsnummer', prefix: 'AN' },
+  case: { label: 'Muster der Vorgangsnummer', prefix: 'VG' },
+};
 
 /** What identifies a context's form values, brand and settings (the rest is computed) */
 const snapshot = (context: Context | undefined) =>
@@ -235,16 +271,17 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   @state() private removing: { what: 'share' | 'move' | 'delete'; to: number | null } | undefined;
 
   /** What the next number would look like by the pattern in the form, or what is wrong with it */
-  @state() private numberHints: Record<Kind, string> = { invoice: '', offer: '' };
+  @state() private numberHints: Record<Numbered, string> = { invoice: '', offer: '', case: '' };
   /** The common patterns of each kind with what they make today: pattern, number, note */
-  @state() private numberExamples: Record<Kind, [string, string, string][]> = {
+  @state() private numberExamples: Record<Numbered, [string, string, string][]> = {
     invoice: [],
     offer: [],
+    case: [],
   };
   /** Where the numbers of the selected stored context stand, by its saved settings */
-  @state() private sequences: Partial<Record<Kind, Sequence>> = {};
+  @state() private sequences: Partial<Record<Numbered, Sequence>> = {};
   /** The dialog that continues the counter of a kind: what is typed and why it was refused */
-  @state() private counterEdit: { kind: Kind; value: string; error: string } | undefined;
+  @state() private counterEdit: { kind: Numbered; value: string; error: string } | undefined;
   @state() private layouts: LayoutInfo[] = [];
   @state() private customs: CustomLayout[] = [];
   /** A copy of the selected own layout, what its form edits */
@@ -474,12 +511,13 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       return;
     }
     try {
-      const [invoice, offer] = await Promise.all([
+      const [invoice, offer, vorgang] = await Promise.all([
         api.numberSequence(id, 'invoice'),
         api.numberSequence(id, 'offer'),
+        api.caseSequence(id),
       ]);
       if (this.context?.id === id) {
-        this.sequences = { invoice, offer };
+        this.sequences = { invoice, offer, case: vorgang };
       }
     } catch (error) {
       notifyError(error);
@@ -707,17 +745,20 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         return errorText(error);
       }
     };
-    const [invoice, offer, invoiceExamples, offerExamples] = await Promise.all([
-      hint(settings?.number_pattern ?? '', settings?.number_reset ?? 'fiscal_year'),
-      hint(settings?.offer.number_pattern ?? '', settings?.offer.number_reset ?? 'fiscal_year'),
-      this.examplesOf('RE', fiscal),
-      this.examplesOf('AN', fiscal),
-    ]);
+    const [invoice, offer, vorgang, invoiceExamples, offerExamples, caseExamples] =
+      await Promise.all([
+        hint(settings?.number_pattern ?? '', settings?.number_reset ?? 'fiscal_year'),
+        hint(settings?.offer.number_pattern ?? '', settings?.offer.number_reset ?? 'fiscal_year'),
+        hint(settings?.cases.number_pattern ?? '', settings?.cases.number_reset ?? 'fiscal_year'),
+        this.examplesOf(NUMBERED.invoice.prefix, fiscal),
+        this.examplesOf(NUMBERED.offer.prefix, fiscal),
+        this.examplesOf(NUMBERED.case.prefix, fiscal),
+      ]);
     if (request !== this.#exampleRequest) {
       return;
     }
-    this.numberHints = { invoice, offer };
-    this.numberExamples = { invoice: invoiceExamples, offer: offerExamples };
+    this.numberHints = { invoice, offer, case: vorgang };
+    this.numberExamples = { invoice: invoiceExamples, offer: offerExamples, case: caseExamples };
   }
 
   private async save() {
@@ -915,7 +956,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   /** The period of the counter depends on the saved reset and business year, the number on the pattern */
-  private numberingEdited(kind: Kind) {
+  private numberingEdited(kind: Numbered) {
     const id = this.context?.id;
     const saved = id == null ? undefined : contextById(id)?.settings;
     const edited = this.context?.settings;
@@ -940,7 +981,10 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       return;
     }
     try {
-      const sequence = await api.numberSequenceSet(id, dialog.kind, next);
+      const sequence =
+        dialog.kind === 'case'
+          ? await api.caseSequenceSet(id, next)
+          : await api.numberSequenceSet(id, dialog.kind, next);
       if (this.context?.id === id) {
         this.sequences = { ...this.sequences, [dialog.kind]: sequence };
       }
@@ -952,7 +996,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   /** The next number and the way to continue the numbers of another program */
-  private counterRow(kind: Kind) {
+  private counterRow(kind: Numbered) {
     const sequence = this.sequences[kind];
     if (!sequence) {
       return nothing;
@@ -1574,21 +1618,14 @@ export class SettingsView extends ErngElement.withStyles(styles) {
   }
 
   /** The pattern of a kind's numbers, how it is written, and where its counter stands */
-  private numberFields(kind: Kind, settings: Settings) {
-    const offer = kind === 'offer';
+  private numberFields(kind: Numbered, settings: Settings) {
     return html`
       <wa-input
-        label="${offer ? 'Muster der Angebotsnummer' : 'Muster der Rechnungsnummer'}"
+        label="${NUMBERED[kind].label}"
         hint="${this.numberHints[kind]}"
         .value="${patternOf(settings, kind)}"
         @input="${(e: Event) => {
-          this.edit(s => {
-            if (offer) {
-              s.offer.number_pattern = text(e);
-            } else {
-              s.number_pattern = text(e);
-            }
-          });
+          this.edit(s => setPattern(s, kind, text(e)));
           this.askNumberExample();
         }}"
       ></wa-input>
@@ -1598,13 +1635,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         .value="${resetOf(settings, kind)}"
         @change="${(e: Event) => {
           const reset = (e.target as WaSelect).value as NumberReset;
-          this.edit(s => {
-            if (offer) {
-              s.offer.number_reset = reset;
-            } else {
-              s.number_reset = reset;
-            }
-          });
+          this.edit(s => setReset(s, kind, reset));
           void this.showNumberExample();
         }}"
       >
@@ -1684,6 +1715,18 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         ${field('draft_title', 'Überschrift im Entwurf', draft)}
         ${field('number_label', 'Bezeichnung der Nummer', number)}
       </div>
+    `;
+  }
+
+  /** How the Vorgänge are numbered; the number shows only where a layout puts it */
+  private casesPage(settings: Settings) {
+    return html`
+      <p class="hint">
+        Jedes Angebot und jede Rechnung gehört zu einem Vorgang, auch wenn er nicht zu sehen ist.
+        Seine Nummer steht nur dort, wo ein Layout den Platzhalter {vorgang_number} setzt.
+        Vorgangsnummern dürfen Lücken haben, sie sind keine Dokumentnummern.
+      </p>
+      ${this.numberFields('case', settings)}
     `;
   }
 
@@ -1913,6 +1956,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     const content = {
       company: () => this.companyPage(settings),
       bank: () => this.bankPage(),
+      cases: () => this.casesPage(settings),
       offers: () => this.offersPage(settings),
       invoices: () => this.invoicesPage(settings),
     }[page];

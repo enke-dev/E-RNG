@@ -58,6 +58,11 @@ pub(crate) fn shown(
         .transpose()?
         .unwrap_or(0);
     let version = exports + u32::from(is_draft);
+    // a document not stored yet is in no Vorgang so far
+    let case_number = id
+        .map(|id| store.case_number_of(id))
+        .transpose()?
+        .unwrap_or_default();
 
     let customs = store.all_custom_layouts()?;
     Ok(
@@ -65,6 +70,7 @@ pub(crate) fn shown(
             let mut branding = Branding {
                 draft: is_draft,
                 version,
+                case_number: case_number.clone(),
                 ..Branding::for_document(kind, draft, &settings, &customs)
             };
             if let Some(offers) = offers {

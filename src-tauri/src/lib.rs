@@ -1,4 +1,5 @@
 mod backup;
+mod cases;
 mod commands;
 mod context;
 mod creation;
@@ -167,6 +168,14 @@ pub fn run() {
             commands::contexts_command::number_sequence_set,
             commands::contexts_command::settings_check,
             commands::customers_command::customer_delete,
+            commands::cases_command::case_create,
+            commands::cases_command::case_delete,
+            commands::cases_command::case_events,
+            commands::cases_command::case_get,
+            commands::cases_command::case_sequence,
+            commands::cases_command::case_sequence_set,
+            commands::cases_command::case_set_title,
+            commands::cases_command::cases_list,
             commands::customers_command::customer_save,
             commands::customers_command::customers_list,
             commands::invoices_command::document_link,

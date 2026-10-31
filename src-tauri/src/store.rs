@@ -12,6 +12,7 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use en16931::Date;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
+use crate::cases::{case_of, new_case};
 use crate::context::{Context, ContextUsage, Disposition, BRANDS};
 use crate::draft::{build_invoice, totals};
 use crate::history::record;
@@ -41,7 +42,7 @@ pub struct Sequence {
 
 /// What `PRAGMA user_version` says of a database this app has migrated; a backup of an older one is
 /// migrated on restore, so no step of `migrate` may ever be dropped.
-pub const SCHEMA_VERSION: i32 = 12;
+pub const SCHEMA_VERSION: i32 = 13;
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -116,6 +117,10 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     if version < 12 {
         crate::history::migrate_to_history(conn)?;
     }
+    if version < 13 {
+        crate::cases::migrate_to_cases(conn)?;
+    }
+    crate::cases::ensure_started(conn)?;
     ensure_app_state(conn)
 }
 
@@ -763,6 +768,18 @@ fn rate_key(rate: &Rate) -> (String, String) {
     )
 }
 
+/// The settings of a context, read within a lock that is held already
+pub(crate) fn context_settings(conn: &Connection, context: i64) -> Result<Settings> {
+    let json: String = conn
+        .query_row("SELECT json FROM contexts WHERE id = ?1", [context], |r| {
+            r.get(0)
+        })
+        .optional()?
+        .ok_or_else(|| anyhow!("unknown context"))?;
+    let body: ContextBody = serde_json::from_str(&json)?;
+    Ok(body.settings.normalized())
+}
+
 /// The rate the context's positions take when they pick none, none for a context without VAT
 fn default_rate(conn: &Connection, context: i64) -> Result<Option<String>> {
     let json: String = conn
@@ -852,7 +869,7 @@ fn follow_rate(
     Ok(())
 }
 
-/// A new draft row with its first event; `from` is the document it was made of
+/// A new draft row in a Vorgang with its first event; `from` is the document it was made of
 fn insert_draft(
     conn: &Connection,
     context_id: i64,
@@ -860,11 +877,12 @@ fn insert_draft(
     json: &str,
     total: Option<&str>,
     from: Option<i64>,
+    case_id: i64,
 ) -> Result<i64> {
     conn.execute(
-        "INSERT INTO invoices (context_id, kind, status, draft, total, updated_at)
-         VALUES (?1, ?2, 'draft', ?3, ?4, datetime('now'))",
-        params![context_id, kind.as_str(), json, total],
+        "INSERT INTO invoices (context_id, kind, status, draft, total, updated_at, case_id)
+         VALUES (?1, ?2, 'draft', ?3, ?4, datetime('now'), ?5)",
+        params![context_id, kind.as_str(), json, total, case_id],
     )?;
     let id = conn.last_insert_rowid();
     let detail = EventDetail {
@@ -936,6 +954,7 @@ fn stored(row: &Row) -> rusqlite::Result<StoredRow> {
     Ok((
         StoredInvoice {
             id: row.get("id")?,
+            case_id: row.get::<_, Option<i64>>("case_id")?.unwrap_or_default(),
             context_id: row.get("context_id")?,
             kind: Kind::from_column(&row.get::<_, String>("kind")?),
             number: row.get("number")?,
@@ -1360,6 +1379,8 @@ impl Store {
         tx.execute("DELETE FROM rates WHERE context_id = ?1", [id])?;
         // ids are reused, a later context must not inherit the floors
         tx.execute("DELETE FROM number_floors WHERE context_id = ?1", [id])?;
+        // only empty ones are left, a context with documents is not removed
+        tx.execute("DELETE FROM cases WHERE context_id = ?1", [id])?;
         tx.execute("DELETE FROM contexts WHERE id = ?1", [id])?;
         tx.commit()?;
         Ok(())
@@ -1431,9 +1452,17 @@ impl Store {
         })
     }
 
+    /// Its Vorgänge keep their documents (which have their own copy of it) and lose the lock on
+    /// it, a Vorgang cannot be locked to a customer that is gone
     pub fn delete_customer(&self, id: i64) -> Result<()> {
-        self.conn()
-            .execute("DELETE FROM customers WHERE id = ?1", [id])?;
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM customers WHERE id = ?1", [id])?;
+        tx.execute(
+            "UPDATE cases SET customer_id = NULL WHERE customer_id = ?1",
+            [id],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -2037,7 +2066,7 @@ impl Store {
         let payments = crate::history::all_payments(&conn)?;
         let mut statement = conn.prepare(
             "SELECT id, context_id, kind, number, status, draft, total, exported_at, answer,
-                 answered_on, updated_at, archived_at, files,
+                 answered_on, updated_at, archived_at, files, case_id,
                  (SELECT COUNT(*) FROM document_links
                   WHERE offer_id = invoices.id OR invoice_id = invoices.id) AS linked
              FROM invoices WHERE (?2 OR archived_at IS NULL) AND (?1 IS NULL OR context_id = ?1)
@@ -2081,6 +2110,7 @@ impl Store {
                 updated_at: invoice.updated_at,
                 archived_at: invoice.archived_at,
                 linked,
+                case_id: invoice.case_id,
             })
         })
         .collect()
@@ -2091,7 +2121,7 @@ impl Store {
         let (mut invoice, draft, files) = conn
             .query_row(
                 "SELECT id, context_id, kind, number, status, draft, total, exported_at, answer,
-                     answered_on, updated_at, archived_at, files
+                     answered_on, updated_at, archived_at, files, case_id
                  FROM invoices WHERE id = ?1",
                 [id],
                 stored,
@@ -2123,8 +2153,9 @@ impl Store {
         let json = serde_json::to_string(draft)?;
         let id = {
             let conn = self.conn();
-            if let Some(id) = id {
-                let changed = conn.execute(
+            let tx = conn.unchecked_transaction()?;
+            let id = if let Some(id) = id {
+                let changed = tx.execute(
                     "UPDATE invoices SET draft = ?1, total = ?2, updated_at = datetime('now')
                      WHERE id = ?3 AND status = 'draft'",
                     params![json, total, id],
@@ -2132,10 +2163,45 @@ impl Store {
                 if changed == 0 {
                     bail!("an exported invoice cannot be changed, duplicate it instead");
                 }
+                // a refused customer rolls the save back
+                crate::cases::follow_customer(&tx, case_of(&tx, id)?, draft.customer.id)?;
                 id
             } else {
-                insert_draft(&conn, context_id, kind, &json, total, None)?
-            }
+                // a plain new document makes its own Vorgang
+                let case = new_case(&tx, context_id, draft.customer.id, None)?;
+                insert_draft(&tx, context_id, kind, &json, total, None, case)?
+            };
+            tx.commit()?;
+            id
+        };
+        self.invoice(id)
+    }
+
+    /// A new draft of a kind in a Vorgang, for its customer: it is the Vorgang's, a draft alone in
+    /// its Vorgang may still change it (see `cases`)
+    pub fn save_draft_in_case(
+        &self,
+        case_id: i64,
+        kind: Kind,
+        draft: &InvoiceDraft,
+        total: Option<&str>,
+    ) -> Result<StoredInvoice> {
+        let json = serde_json::to_string(draft)?;
+        let id = {
+            let conn = self.conn();
+            let tx = conn.unchecked_transaction()?;
+            let context_id: i64 = tx
+                .query_row(
+                    "SELECT context_id FROM cases WHERE id = ?1",
+                    [case_id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow!("unknown Vorgang"))?;
+            let id = insert_draft(&tx, context_id, kind, &json, total, None, case_id)?;
+            crate::cases::follow_customer(&tx, case_id, draft.customer.id)?;
+            tx.commit()?;
+            id
         };
         self.invoice(id)
     }
@@ -2144,6 +2210,12 @@ impl Store {
     pub fn delete_draft(&self, id: i64) -> Result<()> {
         let conn = self.conn();
         let tx = conn.unchecked_transaction()?;
+        let case: Option<i64> = tx
+            .query_row("SELECT case_id FROM invoices WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .flatten();
         let changed = tx.execute(
             "DELETE FROM invoices WHERE id = ?1 AND status = 'draft'",
             [id],
@@ -2156,13 +2228,22 @@ impl Store {
             [id],
         )?;
         crate::history::forget(&tx, id)?;
+        if let Some(case) = case {
+            crate::cases::drop_if_empty(&tx, case)?;
+        }
         tx.commit()?;
         Ok(())
     }
 
     /// A new draft with the content of an existing invoice or offer, dated `today`, in the same
-    /// context and of the same kind. An offer keeps its validity days.
+    /// context and of the same kind, in a Vorgang of its own. An offer keeps its validity days.
+    #[cfg(test)]
     pub fn duplicate(&self, id: i64, today: &str) -> Result<StoredInvoice> {
+        self.duplicate_to(id, today, false)
+    }
+
+    /// A copy as `duplicate` makes it, in the original's Vorgang when `same_case`
+    pub fn duplicate_to(&self, id: i64, today: &str, same_case: bool) -> Result<StoredInvoice> {
         let source = self.invoice(id)?;
         let mut draft = source.draft;
         draft.issue_date = today.into();
@@ -2173,14 +2254,26 @@ impl Store {
         draft.frozen_layout = None;
         draft.frozen_offers = Vec::new();
         let json = serde_json::to_string(&draft)?;
-        let copy = insert_draft(
-            &self.conn(),
-            source.context_id,
-            source.kind,
-            &json,
-            None,
-            Some(id),
-        )?;
+        let copy = {
+            let conn = self.conn();
+            let tx = conn.unchecked_transaction()?;
+            let case = if same_case {
+                source.case_id
+            } else {
+                new_case(&tx, source.context_id, draft.customer.id, None)?
+            };
+            let copy = insert_draft(
+                &tx,
+                source.context_id,
+                source.kind,
+                &json,
+                None,
+                Some(id),
+                case,
+            )?;
+            tx.commit()?;
+            copy
+        };
         self.invoice(copy)
     }
 
@@ -2220,6 +2313,7 @@ impl Store {
                 &json,
                 total.as_deref(),
                 Some(offer_id),
+                offer.case_id,
             )?;
             tx.execute(
                 "INSERT INTO document_links (offer_id, invoice_id, created_at)

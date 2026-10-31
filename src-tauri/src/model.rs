@@ -228,6 +228,26 @@ pub struct Settings {
     pub offer_reference: bool,
     /// Numbers, validity, texts and wording of offers
     pub offer: OfferSettings,
+    /// How the Vorgänge are numbered
+    pub cases: CaseSettings,
+}
+
+/// How the Vorgänge of a context are numbered; every one gets a number, whether it is shown or not
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CaseSettings {
+    /// See `numbering`; a pattern that does not parse numbers by the default
+    pub number_pattern: String,
+    pub number_reset: crate::numbering::Reset,
+}
+
+impl Default for CaseSettings {
+    fn default() -> Self {
+        Self {
+            number_pattern: crate::numbering::DEFAULT_CASE_PATTERN.into(),
+            number_reset: crate::numbering::Reset::default(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -249,6 +269,7 @@ impl Default for Settings {
             invoice_wording: Wording::invoice(),
             offer_reference: false,
             offer: OfferSettings::default(),
+            cases: CaseSettings::default(),
         }
     }
 }
@@ -740,6 +761,8 @@ pub struct Event {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StoredInvoice {
     pub id: i64,
+    /// The Vorgang it is in, for good
+    pub case_id: i64,
     /// The context (issuer) it was made under, for good
     pub context_id: i64,
     /// What it is, for good: the table holds invoices and offers
@@ -788,6 +811,53 @@ pub struct ListEntry {
     pub archived_at: Option<String>,
     /// How many documents of the other kind it is linked to
     pub linked: u32,
+    /// The Vorgang it is in
+    pub case_id: i64,
+}
+
+/// Where a Vorgang stands, read from its documents (see `cases::status`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaseStage {
+    /// Nothing created yet
+    Draft,
+    /// Offers created, none answered yet
+    Offered,
+    Accepted,
+    /// Every offer declined, nothing invoiced
+    Declined,
+    /// Invoiced, nothing paid
+    Invoiced,
+    PartlyPaid,
+    /// Every invoice paid completely
+    Paid,
+}
+
+/// A Vorgang: the documents of one business case for one customer
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Case {
+    pub id: i64,
+    pub context_id: i64,
+    pub number: String,
+    /// The customer of its documents; none while its only draft has none
+    pub customer_id: Option<i64>,
+    /// As its newest document has it, else as the customer is stored
+    pub customer_name: String,
+    pub title: Option<String>,
+    pub created_at: String,
+    /// The customer cannot change any more: it has a second document or a created one
+    pub locked: bool,
+    pub documents: u32,
+    pub stage: CaseStage,
+    /// Gross sums of its created documents: offers not declined, accepted offers, invoices, and
+    /// what was paid on them; what is open is invoiced minus paid
+    pub offered: String,
+    pub accepted: String,
+    pub invoiced: String,
+    pub paid: String,
+    pub open: String,
+    /// Every document of it is archived (an empty one is not)
+    pub archived: bool,
 }
 
 /// The other end of a link between an offer and an invoice

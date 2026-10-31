@@ -31,8 +31,9 @@ import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { ask } from '../../common/components/ask/ask.component.js';
+import { ask, choose } from '../../common/components/ask/ask.component.js';
 import type {
+  Case,
   Check,
   Customer,
   InvoiceDraft,
@@ -93,6 +94,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   /** What is edited, for good: the list makes one element per kind */
   @property() kind: Kind = 'invoice';
 
+  /** A new document goes into this Vorgang and takes its customer; else it gets one of its own */
+  @property({ type: Number, attribute: 'case-id' }) caseId: number | null = null;
+
   /** Where a document is shown: its kind's list, or the Vorgänge when opened from there */
   @property({ attribute: false }) route: (kind: Kind, id?: number | string) => string = kindRoute;
 
@@ -106,6 +110,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   @state() private stored: StoredInvoice | undefined;
   /** Counts what may have happened to the document, its history is read again on each */
   @state() private revision = 0;
+  /** The Vorgang of the document, or the one a new document goes into */
+  @state() private case: Case | undefined;
   @state() private draft: InvoiceDraft | undefined;
   @state() private settings: Settings | undefined;
   /** The context the invoice is made under: its own when stored, else the active one */
@@ -192,6 +198,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   /** Tells the list around us that invoices changed, so it can reload */
   private announce(options: { id?: number | null; deleted?: boolean; restored?: boolean } = {}) {
     this.revision++;
+    void this.refreshCase();
     this.dispatchEvent(
       new CustomEvent('invoice-changed', {
         bubbles: true,
@@ -203,6 +210,24 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         },
       })
     );
+  }
+
+  /** Whether the Vorgang locked its customer, read again after every change */
+  private async refreshCase() {
+    const id = this.stored?.case_id;
+    if (id !== undefined) {
+      // a Vorgang gone with its last draft keeps what was shown
+      this.case = await api.caseGet(id).catch(() => this.case);
+    }
+  }
+
+  /** The customer is the Vorgang's: it has another document or a created one (see `cases`) */
+  private get customerFixed() {
+    const owner = this.case;
+    if (!owner || owner.customer_id === null) {
+      return false;
+    }
+    return owner.locked || (this.stored === undefined && owner.documents > 0);
   }
 
   private get locked() {
@@ -228,7 +253,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       const stored =
         this.invoiceId === 'new' ? undefined : await api.invoiceGet(Number(this.invoiceId));
       await ensureContexts();
-      const contextId = stored?.context_id ?? activeContext.get()?.id;
+      const caseId = stored?.case_id ?? this.caseId;
+      const owner = caseId === null ? undefined : await api.caseGet(caseId);
+      const contextId = stored?.context_id ?? owner?.context_id ?? activeContext.get()?.id;
       const context = contextById(contextId);
       if (contextId == null || !context) {
         throw new Error(this.texts.missingContext);
@@ -251,10 +278,17 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       this.rates = rates;
       this.settings = settings;
       this.customers = customers;
+      this.case = owner;
       if (stored === undefined) {
         this.stored = undefined;
         // with the default layout and texts of its kind, which it can change for itself
         this.draft = await api.invoiceBlank(contextId, this.kind);
+        // within a Vorgang it is for the Vorgang's customer
+        const customer = customers.find(c => c.id !== null && c.id === owner?.customer_id);
+        if (customer) {
+          this.draft.customer = structuredClone(customer);
+          this.draft.buyer_reference = customer.buyer_reference;
+        }
         // a new position starts with the default unit of the context
         this.draft.positions.forEach(position =>
           Object.assign(position, startUnit(units, settings.unit))
@@ -263,6 +297,13 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         this.stored = stored;
         this.draft = stored.draft;
         this.outputKind = stored.draft.profile === 'xrechnung' ? 'xml' : 'pdf';
+        // a draft without customer in a Vorgang that has one takes it, the select is locked then
+        if (stored.status === 'draft' && owner?.locked && stored.draft.customer.id === null) {
+          const customer = customers.find(c => c.id !== null && c.id === owner.customer_id);
+          if (customer) {
+            this.selectCustomer(String(customer.id));
+          }
+        }
       }
       this.links = stored ? await api.documentLinks(stored.id) : [];
       await this.runCheck();
@@ -375,7 +416,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       this.stored?.id ?? null,
       this.contextId ?? null,
       this.kind,
-      this.draft
+      this.draft,
+      this.stored ? null : (this.case?.id ?? null)
     );
     // typed while saving: that is for the next save
     if (revision === this.#revision) {
@@ -423,7 +465,19 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       if (this.#dirty) {
         await this.persist({ updateUrl: false });
       }
-      const copy = await api.invoiceDuplicate(this.stored.id);
+      const where = await choose(
+        'Die Kopie kann einen eigenen Vorgang bekommen oder zu diesem gehören, z. B. als Nachtrag.',
+        {
+          title: `${this.texts.noun} duplizieren`,
+          okLabel: 'Neuer Vorgang',
+          altLabel: 'In diesem Vorgang',
+          cancelLabel: 'Abbrechen',
+        }
+      );
+      if (where === null) {
+        return;
+      }
+      const copy = await api.invoiceDuplicate(this.stored.id, where === 'alt');
       this.#dirty = false;
       this.announce({ id: copy.id });
       goto(this.route(this.kind, copy.id));
@@ -1361,12 +1415,16 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     if (!stored) {
       return html`<div class="status"><wa-tag appearance="outlined">Neu</wa-tag></div>`;
     }
+    const vorgang = this.case
+      ? html`<wa-tag appearance="outlined" title="Vorgang">${this.case.number}</wa-tag>`
+      : nothing;
     if (stored.status === 'draft') {
-      return html`<div class="status"><wa-tag>Entwurf</wa-tag></div>`;
+      return html`<div class="status">${vorgang}<wa-tag>Entwurf</wa-tag></div>`;
     }
     const until = validUntil(stored.draft.issue_date, stored.draft.validity_days);
     return html`
       <div class="status">
+        ${vorgang}
         <wa-tag>${stored.number}</wa-tag>
         ${stored.archived_at ? html`<wa-tag variant="neutral">Archiviert</wa-tag>` : nothing}
         ${
@@ -1440,14 +1498,15 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                   <wa-select
                     label="Kunde"
                     placeholder="Kunde auswählen"
-                    ?disabled="${locked}"
+                    hint="${this.customerFixed && !locked ? `Der Kunde des Vorgangs ${this.case?.number ?? ''}` : ''}"
+                    ?disabled="${locked || this.customerFixed}"
                     required
                     .value="${draft.customer.id == null ? '' : String(draft.customer.id)}"
                     @change="${(e: Event) => this.selectCustomer(String((e.target as WaSelect).value))}"
                   >
                     ${this.customers.map(c => html`<wa-option value="${String(c.id)}">${c.name}</wa-option>`)}
                   </wa-select>
-                  ${locked ? nothing : html`<wa-button @click="${() => (this.newCustomer = blankCustomer())}" appearance="outlined">Neuer Kunde</wa-button>`}
+                  ${locked || this.customerFixed ? nothing : html`<wa-button @click="${() => (this.newCustomer = blankCustomer())}" appearance="outlined">Neuer Kunde</wa-button>`}
                 </div>
                 <wa-select
                   label="Layout"
