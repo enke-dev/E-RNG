@@ -11,11 +11,21 @@
   text-align: center;
 }
 
+/* round marks the size of a tag: the badge pads its inside for text, an icon needs none */
 .created,
 .payed,
 .linked {
-  aspect-ratio: 1;
-  padding: var(--wa-space-3xs);
+  justify-content: center;
+  align-items: center;
+  inline-size: 1.75em;
+  block-size: 1.75em;
+  padding: 0;
+}
+
+.created::part(base),
+.payed::part(base),
+.linked::part(base) {
+  padding: 0;
 }
 
 /* the trigger of the status menu is as wide as the menu, which the filter bar sizes like a select */

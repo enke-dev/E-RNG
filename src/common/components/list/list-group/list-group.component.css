@@ -26,6 +26,12 @@ header {
   }
 }
 
+/* the heading is set in capitals, what sits beside it (a button, its menu) is not */
+::slotted([slot='action']) {
+  font-size: var(--wa-font-size-m);
+  text-transform: none;
+}
+
 /* a heading that opens what the group stands for */
 .heading {
   all: unset;
@@ -50,6 +56,7 @@ header {
   font-style: italic;
 }
 
+/* the entries of a group sit further in; padding, an indent would shift icons and tags as well */
 slot:not([name])::slotted(erng-list-item) {
-  text-indent: var(--wa-space-l);
+  --erng-list-inset: var(--wa-space-l);
 }

@@ -10,6 +10,8 @@ button {
   box-sizing: border-box;
   width: 100%;
   padding: var(--wa-space-s) var(--wa-space-l);
+  /* further in inside a group */
+  padding-inline-start: calc(var(--wa-space-l) + var(--erng-list-inset, 0px));
   cursor: pointer;
   border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
 

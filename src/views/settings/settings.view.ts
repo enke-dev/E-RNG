@@ -1348,8 +1348,11 @@ export class SettingsView extends ErngElement.withStyles(styles) {
 
   // render
 
+  /** A layout in the list; `sub` tags what sets it apart (built in, archived), an own one needs none */
   private item(key: string, label: string, sub: string, tag: unknown = nothing, archived = false) {
-    const kind = html`<wa-tag variant="neutral" size="s">${sub}</wa-tag>`;
+    const kind = sub
+      ? html`<span slot="sub"><wa-tag variant="neutral" size="s">${sub}</wa-tag></span>`
+      : nothing;
     return html`
       <erng-list-item
         ?selected="${this.section === key}"
@@ -1358,7 +1361,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       >
         ${label}
         <span slot="end">${tag}</span>
-        <span slot="sub">${kind}</span>
+        ${kind}
       </erng-list-item>
     `;
   }
@@ -1478,7 +1481,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
             this.item(
               `${LAYOUT}${c.id}`,
               c.name,
-              c.archived ? 'Archiviert' : 'individuell',
+              c.archived ? 'Archiviert' : '',
               isDefault(`custom-${c.id}`),
               c.archived
             )
