@@ -59,6 +59,24 @@ export class RootView extends ErngElement.withStyles(styles) {
   readonly #router = registerRouter(this, routes);
   #stopMenu: (() => void) | undefined;
 
+  /** The settings stay where they are if open already */
+  readonly #openSettings = () => {
+    if (!location.pathname.startsWith('/settings')) {
+      goto('/settings');
+    }
+  };
+
+  /**
+   * Ctrl+, outside macOS: the menu entry names it too, but on Windows the key does not reach the menu
+   * while the page has the focus (WebView2 takes it)
+   */
+  readonly #settingsKey = (e: KeyboardEvent) => {
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key === ',') {
+      e.preventDefault();
+      this.#openSettings();
+    }
+  };
+
   @eventOptions({ passive: true })
   private handleErrorClick() {
     location.href = '/';
@@ -68,14 +86,13 @@ export class RootView extends ErngElement.withStyles(styles) {
     super.connectedCallback();
     // the overlay title bar puts the traffic lights on top of the header
     this.toggleAttribute('macos', platform() === 'macos');
+    if (platform() !== 'macos') {
+      window.addEventListener('keydown', this.#settingsKey);
+    }
     void followOpenedFiles();
     loadContexts().catch((error: unknown) => notifyError(error));
-    // the menu bar entry "Einstellungen…" (⌘,), the settings stay where they are if open already
-    void listen('open-settings', () => {
-      if (!location.pathname.startsWith('/settings')) {
-        goto('/settings');
-      }
-    }).then(stop => {
+    // the menu bar entry "Einstellungen" (⌘, or Ctrl+,)
+    void listen('open-settings', this.#openSettings).then(stop => {
       if (this.isConnected) {
         this.#stopMenu = stop;
       } else {
@@ -87,6 +104,7 @@ export class RootView extends ErngElement.withStyles(styles) {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.#stopMenu?.();
+    window.removeEventListener('keydown', this.#settingsKey);
   }
 
   /** Another context: its brand color tints the UI, what shows is what it owns */
