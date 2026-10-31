@@ -1,0 +1,51 @@
+:host {
+  display: inline-flex;
+}
+
+/* a small round button, quiet beside the text, recognisable as one */
+.trigger::part(base) {
+  block-size: 1.75em;
+  padding: 0 var(--wa-space-xs);
+}
+
+wa-dialog {
+  --width: min(48rem, 90vw);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--wa-font-size-s);
+
+  th,
+  td {
+    padding: var(--wa-space-2xs) var(--wa-space-s);
+    text-align: start;
+    vertical-align: top;
+  }
+
+  thead th {
+    color: var(--wa-color-text-quiet);
+    font-weight: normal;
+  }
+
+  .group th {
+    padding-block-start: var(--wa-space-m);
+    border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+    font-weight: var(--wa-font-weight-semibold);
+  }
+
+  tbody tr:not(.group) {
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      background: var(--wa-color-surface-lowered);
+      outline: none;
+    }
+  }
+
+  code {
+    white-space: nowrap;
+  }
+}

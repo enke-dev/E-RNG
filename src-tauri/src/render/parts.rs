@@ -227,6 +227,38 @@ pub fn fill(lines: Vec<Line>, value: &dyn Fn(&str) -> Option<String>) -> Vec<Lin
         .collect()
 }
 
+/// Fills the `{placeholders}` of a plain text (the letter texts) like `fill` does for parts: a line
+/// whose placeholders all come out empty goes, unknown ones stay as typed. None when nothing is left.
+pub fn fill_text(text: &str, view: &InvoiceView) -> Option<String> {
+    let lines: Vec<String> = text
+        .lines()
+        .filter_map(|line| {
+            let mut filled = String::new();
+            let (mut replaced, mut said) = (false, false);
+            let mut rest = line;
+            while let Some(open) = rest.find('{') {
+                let Some(close) = rest[open..].find('}').map(|close| open + close) else {
+                    break;
+                };
+                filled.push_str(&rest[..open]);
+                let name = &rest[open + 1..close];
+                match placeholder(view, name) {
+                    Some(value) => {
+                        replaced = true;
+                        said |= !value.is_empty();
+                        filled.push_str(&value);
+                    }
+                    None => filled.push_str(&rest[open..=close]),
+                }
+                rest = &rest[close + 1..];
+            }
+            filled.push_str(rest);
+            (!replaced || said).then_some(filled)
+        })
+        .collect();
+    Some(lines.join("\n")).filter(|text| !text.trim().is_empty())
+}
+
 fn info(view: &InvoiceView, field: InfoField, long: bool) -> Option<InfoRow> {
     let key = match field {
         InfoField::Number => "number",
@@ -353,6 +385,11 @@ fn part_view(
 fn placeholder(view: &InvoiceView, name: &str) -> Option<String> {
     let fields = &view.seller_fields;
     match name {
+        // the document: its number (the pattern on a draft), date, due date and customer
+        "number" => Some(view.number.clone()),
+        "date" => Some(view.facts.date.clone()),
+        "due_date" => Some(view.facts.due_date.clone().unwrap_or_default()),
+        "customer_name" => Some(view.buyer.name.clone()),
         "seller_name" => Some(view.seller.name.clone()),
         // how many times the document went out as a draft, empty before the first
         "version" => Some(view.version.clone()),

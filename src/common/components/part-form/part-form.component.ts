@@ -1,14 +1,13 @@
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/color-picker/color-picker.js';
-import '@awesome.me/webawesome/dist/components/dropdown/dropdown.js';
-import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '../anchor-picker/anchor-picker.component.js';
+import '../placeholders/placeholders.component.js';
 
 import type WaColorPicker from '@awesome.me/webawesome/dist/components/color-picker/color-picker.js';
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
@@ -25,6 +24,7 @@ import { ErngElement } from '../../utils/base.utils.js';
 import { text } from '../../utils/form.utils.js';
 import { cleanInvisible, invisibleIn } from '../../utils/invisible.utils.js';
 import { notifyError } from '../../utils/notify.utils.js';
+import { PAGE_PLACEHOLDERS, PART_PLACEHOLDERS } from '../../utils/placeholders.utils.js';
 import styles from './part-form.component.css';
 
 /** The facts an information block can show, in the order it shows them */
@@ -49,53 +49,6 @@ const ALIGNS: [Align, string][] = [
 
 /** What Typst brings along, besides the fonts of the layout */
 export const BUILTIN_FAMILIES = ['Libertinus Serif', 'New Computer Modern', 'DejaVu Sans Mono'];
-
-/** The placeholders a text can use, as groups of name and caption, for the menu that inserts them */
-const PLACEHOLDERS: [string, [string, string][]][] = [
-  [
-    'Unternehmen',
-    [
-      ['seller_name', 'Name'],
-      ['seller_street', 'Straße'],
-      ['seller_postcode_city', 'PLZ und Ort'],
-      ['seller_contact_name', 'Ansprechpartner'],
-      ['seller_phone', 'Telefon'],
-      ['seller_mobile', 'Mobil'],
-      ['seller_fax', 'Fax'],
-      ['seller_email', 'E-Mail'],
-      ['seller_website', 'Website'],
-      ['seller_vat_id', 'USt-IdNr.'],
-      ['seller_tax_number', 'Steuernummer'],
-    ],
-  ],
-  [
-    'Bankverbindung',
-    [
-      ['bank_name', 'Name der Bank'],
-      ['account_holder', 'Kontoinhaber'],
-      ['iban', 'IBAN'],
-      ['bic', 'BIC'],
-    ],
-  ],
-  [
-    'Mehrere Zeilen',
-    [
-      ['seller_address', 'Anschrift'],
-      ['seller_contact', 'Ansprechpartner, Telefon, E-Mail'],
-      ['seller_registration', 'USt-IdNr. und Steuernummer'],
-      ['legal', 'Rechtliche Angaben'],
-      ['bank', 'Bankverbindung'],
-      ['valid_until', 'Gültig bis (Angebote)'],
-    ],
-  ],
-  [
-    'Beleg',
-    [
-      ['version', 'Version (wie oft der Entwurf exportiert wurde)'],
-      ['vorgang_number', 'Vorgangsnummer'],
-    ],
-  ],
-];
 
 /** Presets of the color picker: black, the letterhead's black and the greys the parts have by default */
 const SWATCHES = [
@@ -349,7 +302,6 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
       case 'text':
         return html`
           <wa-textarea
-            label="Text"
             rows="3"
             hint="**fett**, *kursiv*. Eine Zeile mit Platzhaltern, die alle leer sind, entfällt samt ihrem Text. Ein Tabulator teilt eine Zeile in Spalten, die untereinander ausgerichtet sind."
             ${ref(this.#text)}
@@ -358,30 +310,14 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
               part.text = text(e);
               this.changed();
             }}"
-          ></wa-textarea>
+          >
+            <span slot="label" class="label-row">
+              Text
+              <erng-placeholders .groups="${PART_PLACEHOLDERS}"></erng-placeholders>
+            </span>
+          </wa-textarea>
           ${this.invisible(part)}
           <div class="insert">
-            <wa-dropdown
-              @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) =>
-                this.insertText(part, `{${e.detail.item.value}}`)}"
-            >
-              <wa-button slot="trigger" appearance="outlined" size="small" with-caret
-                >Platzhalter einfügen</wa-button
-              >
-              ${PLACEHOLDERS.map(
-                ([group, names]) => html`
-                  <h3>${group}</h3>
-                  ${names.map(
-                    ([name, caption]) => html`
-                      <wa-dropdown-item value="${name}">
-                        ${caption}
-                        <span slot="details">{${name}}</span>
-                      </wa-dropdown-item>
-                    `
-                  )}
-                `
-              )}
-            </wa-dropdown>
             <!-- the Tab key stays what it is in a form, moving on: a column is put in by button -->
             <wa-button
               appearance="outlined"
@@ -419,7 +355,9 @@ export class PartFormComponent extends ErngElement.withStyles(styles) {
               part.text = text(e);
               this.changed();
             }}"
-          ></wa-input>
+          >
+            <erng-placeholders slot="end" .groups="${PAGE_PLACEHOLDERS}"></erng-placeholders>
+          </wa-input>
           ${this.invisible(part)}
           <wa-switch
             ?checked="${part.several_pages_only ?? false}"

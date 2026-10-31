@@ -2,6 +2,7 @@ import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
+import '../placeholders/placeholders.component.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import { html, nothing } from 'lit';
@@ -10,6 +11,7 @@ import { customElement, property } from 'lit/decorators.js';
 import type { CountryFormat, Format, PhoneFormat } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { text } from '../../utils/form.utils.js';
+import { HEADLINE_PLACEHOLDERS } from '../../utils/placeholders.utils.js';
 import styles from './format-form.component.css';
 
 const DECIMALS: [string, string][] = [
@@ -155,13 +157,15 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
       <wa-input
         label="${label}"
         placeholder="${placeholder}"
-        hint="{title} und {draft_title} sind die Bezeichnungen der Belegart, {number} die Nummer, {version} wie oft der Entwurf exportiert wurde, {vorgang_number} die Nummer des Vorgangs"
+        hint="Mit Platzhaltern, z. B. „Ihre {title} {number}“ oder „{draft_title} · Version {version}“"
         .value="${value}"
         @input="${(e: Event) => {
           apply(text(e));
           this.changed();
         }}"
-      ></wa-input>
+      >
+        <erng-placeholders slot="end" .groups="${HEADLINE_PLACEHOLDERS}"></erng-placeholders>
+      </wa-input>
     `;
   }
 

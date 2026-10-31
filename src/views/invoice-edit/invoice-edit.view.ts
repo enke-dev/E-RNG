@@ -21,6 +21,7 @@ import '../../common/components/list/list/list.component.js';
 import '../../common/components/list/list-item/list-item.component.js';
 import '../../common/components/offer-answer/offer-answer.component.js';
 import '../../common/components/payments/payments.component.js';
+import '../../common/components/placeholders/placeholders.component.js';
 import '../../common/components/sheet/sheet.component.js';
 import '../../common/layouts/editor/editor.layout.js';
 
@@ -66,6 +67,7 @@ import {
 } from '../../common/utils/kind.utils.js';
 import { latest } from '../../common/utils/latest.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
+import { LETTER_PLACEHOLDERS } from '../../common/utils/placeholders.utils.js';
 import { chargesVat, pickRate, rateChoice, rateText } from '../../common/utils/rates.utils.js';
 import reorderStyles from '../../common/utils/reorder.utils.css';
 import { Reorder } from '../../common/utils/reorder.utils.js';
@@ -846,6 +848,18 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     this.announce();
   }
 
+  /** The letter texts take placeholders: their label gets the button that lists them */
+  private textPlaceholders(label: string, locked: boolean) {
+    return !locked
+      ? html`
+          <span slot="label" class="label-row">
+            ${label}
+            <erng-placeholders .groups="${LETTER_PLACEHOLDERS}"></erng-placeholders>
+          </span>
+        `
+      : nothing;
+  }
+
   private renderPayment(stored: StoredInvoice) {
     return html`
       <wa-card>
@@ -1559,7 +1573,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                 .placeholder="${this.defaults?.intro ?? ''}"
                 .value="${draft.intro ?? ''}"
                 @input="${(e: Event) => this.edit(d => (d.intro = text(e)))}"
-              ></wa-textarea>
+              >
+                ${this.textPlaceholders('Einleitung', locked)}
+              </wa-textarea>
               <wa-textarea
                 label="Anmerkung"
                 hint="Steht nach der Einleitung, vor den Positionen"
@@ -1575,7 +1591,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                 .placeholder="${this.defaults?.closing ?? ''}"
                 .value="${draft.closing ?? ''}"
                 @input="${(e: Event) => this.edit(d => (d.closing = text(e)))}"
-              ></wa-textarea>
+              >
+                ${this.textPlaceholders('Schlusstext', locked)}
+              </wa-textarea>
             </div>
           </wa-card>
 

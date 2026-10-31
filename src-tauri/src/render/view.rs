@@ -62,25 +62,6 @@ pub struct SellerDetails {
     pub bank_name: Option<String>,
 }
 
-/// What stands for the day an offer is valid until in the letter texts
-const VALID_UNTIL: &str = "{valid_until}";
-
-/// Puts the day into `{valid_until}`. Without a day the lines that mention it are left out: an
-/// offer without validity does not say "valid until" and nothing.
-fn with_validity(text: &str, valid_until: Option<&str>) -> Option<String> {
-    if !text.contains(VALID_UNTIL) {
-        return Some(text.to_owned());
-    }
-    let lines: Vec<String> = text
-        .lines()
-        .filter_map(|line| match valid_until {
-            Some(day) => Some(line.replace(VALID_UNTIL, day)),
-            None => (!line.contains(VALID_UNTIL)).then(|| line.to_owned()),
-        })
-        .collect();
-    Some(lines.join("\n")).filter(|text| !text.trim().is_empty())
-}
-
 impl Branding {
     /// Look, feel, wording and letter texts of a document: what it chose for itself, else the
     /// settings for its kind.
@@ -155,6 +136,24 @@ impl Branding {
             case_number: String::new(),
         }
     }
+}
+
+/// Fills the placeholders of the letter texts with what the document says, as text parts do: a
+/// line whose placeholders all come out empty goes (an offer without validity does not say "valid
+/// until" and nothing), a text left empty is none.
+fn with_letter(mut view: InvoiceView) -> InvoiceView {
+    let intro = view
+        .letter
+        .intro
+        .as_deref()
+        .and_then(|text| super::parts::fill_text(text, &view));
+    let closing = view
+        .letter
+        .closing
+        .as_deref()
+        .and_then(|text| super::parts::fill_text(text, &view));
+    view.letter = Letter { intro, closing };
+    view
 }
 
 /// The headline of a document: a credit note's is fixed, else the layout's pattern for a draft or
@@ -790,11 +789,6 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
     vat_notes.dedup();
 
     let offer = branding.kind == Kind::Offer;
-    let valid_until = branding.valid_until.map(|day| fmt.date_long(day));
-    let letter_text = |text: &Option<String>| {
-        text.as_deref()
-            .and_then(|text| with_validity(text, valid_until.as_deref()))
-    };
     let number = invoice.number.clone().unwrap_or_default();
     let version = match branding.version {
         0 => String::new(),
@@ -802,7 +796,7 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
     };
     let title = title_of(credit, branding, format, &number, &version);
 
-    InvoiceView {
+    let view = InvoiceView {
         title,
         number,
         version,
@@ -836,9 +830,10 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
             )
         },
         legal: branding.legal.clone(),
+        // the placeholders are filled once the rest is known
         letter: Letter {
-            intro: letter_text(&branding.intro),
-            closing: letter_text(&branding.closing),
+            intro: branding.intro.clone(),
+            closing: branding.closing.clone(),
         },
         facts: Facts {
             number: invoice.number.clone().unwrap_or_default(),
@@ -861,7 +856,8 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         },
         bank: bank_lines(invoice, branding.seller.bank_name.as_deref(), fmt),
         page: PageView::default(),
-    }
+    };
+    with_letter(view)
 }
 
 #[cfg(test)]
@@ -1179,6 +1175,35 @@ mod tests {
         };
         let view = build(&invoice, &shown_as_draft, &Format::default());
         assert_eq!(view.title, "Offertenentwurf");
+    }
+
+    #[test]
+    fn the_letter_texts_take_the_placeholders_of_the_parts() {
+        let settings = crate::draft::fixtures::settings();
+        let (draft, invoice) = offer_document(&settings);
+        let branding = Branding {
+            intro: Some(
+                "Guten Tag {customer_name},\nzu {number} vom {date}:\nFax: {seller_fax}\n{unbekannt}".into(),
+            ),
+            closing: Some("Fax: {seller_fax}".into()),
+            case_number: "VG-2026-007".into(),
+            ..Branding::for_document(Kind::Offer, &draft, &settings, &[])
+        };
+
+        let view = build(&invoice, &branding, &Format::default());
+
+        let intro = view.letter.intro.unwrap();
+        let lines: Vec<_> = intro.lines().collect();
+        assert_eq!(lines[0], format!("Guten Tag {},", view.buyer.name));
+        assert_eq!(
+            lines[1],
+            format!("zu {} vom {}:", view.number, view.facts.date)
+        );
+        // no fax: its line goes; what is no placeholder stays as typed
+        assert_eq!(lines[2], "{unbekannt}");
+        assert_eq!(lines.len(), 3);
+        // nothing left: no text
+        assert_eq!(view.letter.closing, None);
     }
 
     #[test]

@@ -15,6 +15,7 @@ import '../../common/components/list/list/list.component.js';
 import '../../common/components/list/list-group/list-group.component.js';
 import '../../common/components/list/list-item/list-item.component.js';
 import '../../common/components/page/page.component.js';
+import '../../common/components/placeholders/placeholders.component.js';
 import '../../common/components/scope-select/scope-select.component.js';
 import '../../common/components/rate-list/rate-list.component.js';
 import '../../common/components/unit-list/unit-list.component.js';
@@ -75,6 +76,7 @@ import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
 import { recall, remember } from '../../common/utils/memory.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { takeOpened } from '../../common/utils/opened.utils.js';
+import { LETTER_PLACEHOLDERS } from '../../common/utils/placeholders.utils.js';
 import { indexAfterMove } from '../../common/utils/reorder.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
 import type { Check } from '../../common/utils/validation.utils.js';
@@ -1749,19 +1751,27 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       ></wa-input>
       ${this.wordingFields('offer', settings)}
       <wa-textarea
-        label="Einleitung"
-        hint="Vor der Positionstabelle, z. B. Anrede und Anlass. Jedes Angebot kann einen eigenen Text haben."
+        hint="Vor der Positionstabelle, z. B. Anrede und Anlass, mit Platzhaltern. Jedes Angebot kann einen eigenen Text haben."
         rows="3"
         .value="${offer.intro ?? ''}"
         @input="${(e: Event) => this.edit(s => (s.offer.intro = nullable(text(e))))}"
-      ></wa-textarea>
+      >
+        <span slot="label" class="label-row">
+          Einleitung
+          <erng-placeholders .groups="${LETTER_PLACEHOLDERS}"></erng-placeholders>
+        </span>
+      </wa-textarea>
       <wa-textarea
-        label="Schlusstext"
         hint="Nach den Summen. {valid_until} schreibt das Datum, bis zu dem das Angebot gilt, eine Zeile mit dem Platzhalter entfällt ohne Gültigkeit."
         rows="3"
         .value="${offer.closing ?? ''}"
         @input="${(e: Event) => this.edit(s => (s.offer.closing = nullable(text(e))))}"
-      ></wa-textarea>
+      >
+        <span slot="label" class="label-row">
+          Schlusstext
+          <erng-placeholders .groups="${LETTER_PLACEHOLDERS}"></erng-placeholders>
+        </span>
+      </wa-textarea>
       <wa-select
         label="Standard-Layout"
         hint="Neue Angebote dieses Kontexts beginnen damit, jedes kann ein anderes wählen."
@@ -1804,19 +1814,27 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       }
       ${this.numberFields('invoice', settings)} ${this.wordingFields('invoice', settings)}
       <wa-textarea
-        label="Einleitung"
-        hint="Vor der Positionstabelle, z. B. Anrede und Anlass. Jede Rechnung kann einen eigenen Text haben."
+        hint="Vor der Positionstabelle, z. B. Anrede und Anlass, mit Platzhaltern. Jede Rechnung kann einen eigenen Text haben."
         rows="3"
         .value="${settings.intro ?? ''}"
         @input="${(e: Event) => this.edit(s => (s.intro = nullable(text(e))))}"
-      ></wa-textarea>
+      >
+        <span slot="label" class="label-row">
+          Einleitung
+          <erng-placeholders .groups="${LETTER_PLACEHOLDERS}"></erng-placeholders>
+        </span>
+      </wa-textarea>
       <wa-textarea
-        label="Schlusstext"
-        hint="Nach den Summen, z. B. Dank und Grußformel mit Namen."
+        hint="Nach den Summen, z. B. Dank und Grußformel mit Namen, mit Platzhaltern."
         rows="3"
         .value="${settings.closing ?? ''}"
         @input="${(e: Event) => this.edit(s => (s.closing = nullable(text(e))))}"
-      ></wa-textarea>
+      >
+        <span slot="label" class="label-row">
+          Schlusstext
+          <erng-placeholders .groups="${LETTER_PLACEHOLDERS}"></erng-placeholders>
+        </span>
+      </wa-textarea>
       <wa-select
         label="Standard-Layout"
         hint="Neue Rechnungen dieses Kontexts beginnen damit, jede kann ein anderes wählen. Individuelle Layouts legst du unter Layouts an."
