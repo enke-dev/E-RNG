@@ -48,7 +48,7 @@ const SAFETY_KEEP: usize = 3;
 const MANIFEST_LIMIT: u64 = 32 * 1024 * 1024;
 
 const NEWER_VERSION: &str =
-    "Diese Sicherung stammt aus einer neueren Version von e-rng. Bitte zuerst die App aktualisieren.";
+    "Diese Sicherung stammt aus einer neueren Version von E-RNG. Bitte zuerst die App aktualisieren.";
 
 /// One file of a backup
 #[derive(Debug, Serialize, Deserialize)]
@@ -283,7 +283,7 @@ fn damaged(path: &str) -> anyhow::Error {
 
 fn read_manifest<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Manifest> {
     let mut entry = zip.by_name(MANIFEST).map_err(|_| {
-        anyhow!("Das ist keine Datensicherung von e-rng: es fehlt die Datei {MANIFEST}.")
+        anyhow!("Das ist keine Datensicherung von E-RNG: es fehlt die Datei {MANIFEST}.")
     })?;
     let mut text = Vec::new();
     // one byte more than the limit tells a file that is too big from one that just fits
@@ -297,9 +297,9 @@ fn read_manifest<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Manifest> {
         bail!("Die Sicherung ist beschädigt: {MANIFEST} ist zu groß.");
     }
     let header: Header = serde_json::from_slice(&text)
-        .map_err(|_| anyhow!("Das ist keine Datensicherung von e-rng: {MANIFEST} ist unlesbar."))?;
+        .map_err(|_| anyhow!("Das ist keine Datensicherung von E-RNG: {MANIFEST} ist unlesbar."))?;
     if header.format != FORMAT {
-        bail!("Das ist keine Datensicherung von e-rng.");
+        bail!("Das ist keine Datensicherung von E-RNG.");
     }
     if header.version > FORMAT_VERSION {
         bail!(NEWER_VERSION);
@@ -365,7 +365,7 @@ fn extract<R: Read + Seek>(zip: &mut ZipArchive<R>, entry: &Entry, staging: &Pat
 /// in use is touched.
 fn check_database(staging: &Path, manifest: &Manifest) -> Result<()> {
     let path = staging.join(DB_FILE);
-    let broken = || anyhow!("Die Datenbank in der Sicherung ist beschädigt oder keine von e-rng.");
+    let broken = || anyhow!("Die Datenbank in der Sicherung ist beschädigt oder keine von E-RNG.");
     let version: i32 = {
         let conn = Connection::open(&path).map_err(|_| broken())?;
         let version = conn
@@ -410,7 +410,7 @@ pub struct Prepared {
 fn prepare(archive: &Path, staging: &Path) -> Result<Prepared> {
     let file = File::open(archive).with_context(|| format!("cannot open {}", archive.display()))?;
     let mut zip = ZipArchive::new(file).map_err(|_| {
-        anyhow!("Das ist keine Datensicherung von e-rng: die Datei ist kein ZIP-Archiv.")
+        anyhow!("Das ist keine Datensicherung von E-RNG: die Datei ist kein ZIP-Archiv.")
     })?;
     let manifest = read_manifest(&mut zip)?;
     check_listing(&manifest, &zip)?;
@@ -642,7 +642,7 @@ pub fn interrupted(data: &Path) -> Vec<PathBuf> {
 /// Deletes such a folder of replaced data, and nothing that is not one
 pub fn discard_interrupted(data: &Path, folder: &Path) -> Result<()> {
     if !interrupted(data).iter().any(|known| known == folder) {
-        bail!("Diesen Ordner kann e-rng nicht löschen.");
+        bail!("Diesen Ordner kann E-RNG nicht löschen.");
     }
     std::fs::remove_dir_all(folder)?;
     Ok(())
@@ -1029,7 +1029,7 @@ mod tests {
         };
 
         let message = refusal(&store, data.path(), &with(None, "something-else"));
-        assert_eq!(message, "Das ist keine Datensicherung von e-rng.");
+        assert_eq!(message, "Das ist keine Datensicherung von E-RNG.");
         let message = refusal(&store, data.path(), &with(Some(2), FORMAT));
         assert_eq!(message, NEWER_VERSION);
     }
@@ -1097,7 +1097,7 @@ mod tests {
 
         assert_eq!(
             message,
-            "Diese Sicherung stammt aus einer neueren Version von e-rng. Bitte zuerst die App aktualisieren."
+            "Diese Sicherung stammt aus einer neueren Version von E-RNG. Bitte zuerst die App aktualisieren."
         );
     }
 

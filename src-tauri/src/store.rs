@@ -1113,7 +1113,7 @@ impl Store {
         }
         let reopen = |guard: &mut Connection| {
             open_connection(path).map(|conn| *guard = conn).context(
-                "Die Datenbank ließ sich nicht wieder öffnen. Bitte e-rng beenden und neu starten.",
+                "Die Datenbank ließ sich nicht wieder öffnen. Bitte E-RNG beenden und neu starten.",
             )
         };
         let swapped = match swap() {

@@ -25,7 +25,7 @@ const EXTENSION = 'erng-backup';
 /** The word that confirms removing everything, the backend asks for it as well */
 const REMOVE_WORD = 'ENTFERNEN';
 
-const FILTERS = [{ name: 'e-rng-Datensicherung', extensions: [EXTENSION] }];
+const FILTERS = [{ name: 'E-RNG-Datensicherung', extensions: [EXTENSION] }];
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
@@ -128,7 +128,7 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
     this.busy = 'backup';
     try {
       const path = await save({
-        defaultPath: `${today()}-e-rng-backup.${EXTENSION}`,
+        defaultPath: `${today()}-E-RNG-Datensicherung.${EXTENSION}`,
         filters: FILTERS,
       });
       if (path) {
@@ -154,7 +154,7 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
         return;
       }
       const sure = await ask(
-        `Alle jetzigen Daten werden durch die der Sicherung „${fileName(path)}“ ersetzt. Vorher legt e-rng eine Kopie der jetzigen Daten an: ${this.status?.safety_dir ?? 'im Ordner „backups“ der App-Daten'}. Fortfahren?`,
+        `Alle jetzigen Daten werden durch die der Sicherung „${fileName(path)}“ ersetzt. Vorher legt E-RNG eine Kopie der jetzigen Daten an: ${this.status?.safety_dir ?? 'im Ordner „backups“ der App-Daten'}. Fortfahren?`,
         {
           title: 'Datensicherung einspielen',
           danger: true,
@@ -191,7 +191,7 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
       const removed = await api.dataRemove(word);
       reloadReplaced({
         title: 'Alle Daten entfernt',
-        lines: ['e-rng ist wieder im Zustand nach der Installation.'],
+        lines: ['E-RNG ist wieder im Zustand nach der Installation.'],
         safetyCopy: removed.safety_copy,
         problems: [],
       });
@@ -225,7 +225,7 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
                     Ort liegt.
                   </wa-callout>
                   <span>
-                    Vorher legt e-rng eine Kopie der jetzigen Daten an, in
+                    Vorher legt E-RNG eine Kopie der jetzigen Daten an, in
                     ${revealLink(this.status?.safety_dir ?? '')} als „…-vor-entfernen“. Dort bleiben
                     die letzten drei liegen.
                   </span>
@@ -318,7 +318,7 @@ export class BackupComponent extends ErngElement.withStyles(styles) {
               Alle Daten entfernen
             </wa-button>
             <span class="hint">
-              Setzt e-rng zurück auf den Anfang, wie nach der Installation, nach einer Kopie der
+              Setzt E-RNG zurück auf den Anfang, wie nach der Installation, nach einer Kopie der
               jetzigen Daten.
             </span>
           </div>
