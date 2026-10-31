@@ -1,23 +1,23 @@
 {
   "version": "0.8.2",
   "notes": "See the assets to download this version and install.",
-  "pub_date": "2026-10-31T01:54:25.230Z",
+  "pub_date": "2026-10-31T16:15:28.556Z",
   "platforms": {
     "darwin-aarch64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzVTR3cyQ3ZCenRFQSsvVXhLWUpmS1JJd3YzMDN1YmIxRGRKTlpNZGc1c013V2hHaHJ2RTZTWitmYkQrbzZEKzZZRTlFTU03eEYrM1FjNGxzUFpoQ2dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDExNTc5CWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuOC4yCkUyRG1ub0Njb0hZeGlONjFHODRTQjY5YTg0ZlRjYm0za1JBelQwbU1IZU8vWWx2N042b0I4K0FIZ0Z4VmtPTjlFa2JocFJLSEdtWjh1OTh4bUg2ZUN3PT0K",
-      "url": "https://github.com/enke-dev/E-RNG/releases/download/untagged-0319831024ed7e9cc468/E-RNG_0.8.2_aarch64.app.tar.gz"
+      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.8.2/E-RNG_0.8.2_aarch64.app.tar.gz"
     },
     "darwin-aarch64-app": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzVTR3cyQ3ZCenRFQSsvVXhLWUpmS1JJd3YzMDN1YmIxRGRKTlpNZGc1c013V2hHaHJ2RTZTWitmYkQrbzZEKzZZRTlFTU03eEYrM1FjNGxzUFpoQ2dZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDExNTc5CWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuOC4yCkUyRG1ub0Njb0hZeGlONjFHODRTQjY5YTg0ZlRjYm0za1JBelQwbU1IZU8vWWx2N042b0I4K0FIZ0Z4VmtPTjlFa2JocFJLSEdtWjh1OTh4bUg2ZUN3PT0K",
-      "url": "https://github.com/enke-dev/E-RNG/releases/download/untagged-0319831024ed7e9cc468/E-RNG_0.8.2_aarch64.app.tar.gz"
+      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.8.2/E-RNG_0.8.2_aarch64.app.tar.gz"
     },
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzNzL3hkQjg0aFA0Qk9qN0VZandjck5JQW9KanB3SVY0T2Frem5ublZ1NXlxVTZCODd1UGU5RElzL1JnZW9YWFRRb3hVeWNsYXFFNUlUZFBSdSt4dHdNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDExNjQ1CWZpbGU6RS1STkdfMC44LjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuOC4yClpubk9lNHRSY2pZclJwQ0g3VGxpcURUOVJzcXdocFo3QUk4V0ZNQUU2OVpFY2ZOb0tQL1F4Z3lwenNYM2o0UWt5NDlyVjVvVEl6bm1JS2U2dU9HUEFBPT0K",
-      "url": "https://github.com/enke-dev/E-RNG/releases/download/untagged-0319831024ed7e9cc468/E-RNG_0.8.2_x64-setup.exe"
+      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.8.2/E-RNG_0.8.2_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzNzL3hkQjg0aFA0Qk9qN0VZandjck5JQW9KanB3SVY0T2Frem5ublZ1NXlxVTZCODd1UGU5RElzL1JnZW9YWFRRb3hVeWNsYXFFNUlUZFBSdSt4dHdNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNDExNjQ1CWZpbGU6RS1STkdfMC44LjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuOC4yClpubk9lNHRSY2pZclJwQ0g3VGxpcURUOVJzcXdocFo3QUk4V0ZNQUU2OVpFY2ZOb0tQL1F4Z3lwenNYM2o0UWt5NDlyVjVvVEl6bm1JS2U2dU9HUEFBPT0K",
-      "url": "https://github.com/enke-dev/E-RNG/releases/download/untagged-0319831024ed7e9cc468/E-RNG_0.8.2_x64-setup.exe"
+      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.8.2/E-RNG_0.8.2_x64-setup.exe"
     }
   }
 }
