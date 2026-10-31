@@ -4,7 +4,8 @@
  * builds could lose one. Keys are the ones tauri-action wrote, `{os}-{arch}` and `{os}-{arch}-{bundle}`.
  * URLs are the plain download links, not the API ones tauri-action writes (for private repos): the
  * API allows 60 requests an hour per address without a login, an office or VPN sharing one used
- * them up and the update failed with 403.
+ * them up and the update failed with 403. They are built from the tag: the release is still a draft
+ * here, its `browser_download_url` points at `untagged-…`, which is gone once it is published.
  *
  * `bun scripts/updater-manifest.ts <release id> <out file>`, with `GITHUB_REPOSITORY` and a token
  * for `gh`. Refuses a release that lacks a platform's bundle or signature.
@@ -16,7 +17,6 @@ import { argv, env, stdout } from 'node:process';
 interface Asset {
   id: number;
   name: string;
-  browser_download_url: string;
 }
 
 /** What each platform ships for the updater, by the ending of its asset */
@@ -53,6 +53,9 @@ const download = (asset: Asset) =>
     `repos/${repo}/releases/assets/${asset.id}`,
   ]);
 
+const link = (asset: Asset) =>
+  `https://github.com/${repo}/releases/download/${release.tag_name}/${encodeURIComponent(asset.name)}`;
+
 const platforms = Object.fromEntries(
   PLATFORMS.flatMap(({ ending, keys }) => {
     const bundle = release.assets.find(asset => asset.name.endsWith(ending));
@@ -60,7 +63,7 @@ const platforms = Object.fromEntries(
     if (!bundle || !signature) {
       throw new Error(`${release.tag_name} has no ${ending} with its signature`);
     }
-    const entry = { signature: download(signature).trim(), url: bundle.browser_download_url };
+    const entry = { signature: download(signature).trim(), url: link(bundle) };
     return keys.map(key => [key, entry]);
   })
 );
