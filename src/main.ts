@@ -1,6 +1,7 @@
 import 'element-internals-polyfill';
 import 'urlpattern-polyfill';
 
+import { ensureContexts } from './common/utils/context.utils.js';
 import { registerIcons } from './common/utils/icon.utils.js';
 import { initLog } from './common/utils/log.utils.js';
 import { restoreRoute } from './common/utils/memory.utils.js';
@@ -8,7 +9,6 @@ import { errors, followSystemScheme } from './state.js';
 
 followSystemScheme();
 registerIcons();
-restoreRoute();
 
 /**
  * First set up logging, then load the app
@@ -23,6 +23,8 @@ const ready =
 
 ready
   .then(() => initLog())
+  // the view of the last run, if there is data to show in it
+  .then(async () => restoreRoute((await ensureContexts().catch(() => [])).length > 0))
   .catch((error: unknown) => {
     // a rejected init would leave the boot spinner up for ever with nothing rendered
     errors.set([error instanceof Error ? error.message : String(error)]);

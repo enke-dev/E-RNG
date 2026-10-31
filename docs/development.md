@@ -229,7 +229,7 @@ sample with the guides off and on, the preview and the PDF of a draft, created a
 exported to a layout file, imported into another store and shown again; `ERNG_E2E_OUT` names the folder that keeps its SVG,
 PNG and PDF files.
 
-What is remembered between runs is a convenience of the machine, not a setting: the dividers, the guides toggle and the last open view (`memory.utils.ts`, `localStorage`, wrapped so a missing storage breaks nothing; a blank invoice is not restored) and the size, place and state of the window (`tauri-plugin-window-state`). A divider is stored as the `position` (percent) of its `wa-split-panel`; the limits are its native `--min`/`--max` in the layout's css, which clamp what is drawn, not the stored value.
+What is remembered between runs is a convenience of the machine, not a setting: the dividers, the guides toggle and the last open view (`memory.utils.ts`, `localStorage`, wrapped so a missing storage breaks nothing; a blank invoice or offer is not restored, and the view only when there is a context: a fresh start, after removing all data or on a new install, begins at the form of the first context and forgets it, `main.ts`) and the size, place and state of the window (`tauri-plugin-window-state`). A divider is stored as the `position` (percent) of its `wa-split-panel`; the limits are its native `--min`/`--max` in the layout's css, which clamp what is drawn, not the stored value.
 
 ## Open work
 

@@ -44,7 +44,8 @@ const ROUTE = `${PREFIX}route`;
 
 /** Views worth coming back to; a blank invoice or offer is not stored yet, there is nothing to come back to */
 const restorable = (path: string) =>
-  !/^\/(invoices|offers)\//.test(path) || /^\/(invoices|offers)\/\d+$/.test(path);
+  (!/^\/(invoices|offers)\//.test(path) || /^\/(invoices|offers)\/\d+$/.test(path)) &&
+  !/^\/cases\/new-/.test(path);
 
 /** Notes the view that is open, call it on every navigation */
 export function rememberRoute(path: string) {
@@ -57,8 +58,16 @@ export function rememberRoute(path: string) {
   }
 }
 
-/** Opens the view that was open last, if the app was started without a place of its own */
-export function restoreRoute() {
+/**
+ * Opens the view that was open last, if the app was started without a place of its own. Only with
+ * data to come back to: a fresh start (no context yet, data removed, a new install) begins at the
+ * form of the first context, the view of an earlier run is forgotten.
+ */
+export function restoreRoute(hasData: boolean) {
+  if (!hasData) {
+    forgetRoute();
+    return;
+  }
   try {
     const path = localStorage.getItem(ROUTE);
     if (location.pathname === '/' && path && path !== '/' && restorable(path)) {
@@ -66,5 +75,14 @@ export function restoreRoute() {
     }
   } catch {
     // start where the app starts
+  }
+}
+
+/** Forgets the view that was open last */
+export function forgetRoute() {
+  try {
+    localStorage.removeItem(ROUTE);
+  } catch {
+    // nothing remembered, nothing to forget
   }
 }
