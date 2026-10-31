@@ -90,6 +90,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   /** What is edited, for good: the list makes one element per kind */
   @property() kind: Kind = 'invoice';
 
+  /** Where a document is shown: its kind's list, or the Vorgänge when opened from there */
+  @property({ attribute: false }) route: (kind: Kind, id?: number | string) => string = kindRoute;
+
   private readonly reorder = new Reorder(this, {
     rows: '.position:not(.head)',
     noun: 'Position',
@@ -226,7 +229,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       }
       // a document of the other kind belongs to the other list
       if (stored && stored.kind !== this.kind) {
-        redirect(kindRoute(stored.kind, stored.id));
+        redirect(this.route(stored.kind, stored.id));
         return;
       }
       const settings = context.settings;
@@ -374,7 +377,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
     // the first save gives the new invoice its address, without reloading the form
     if (updateUrl && isNew && this.invoiceId === 'new') {
-      history.replaceState({}, '', kindRoute(this.kind, this.stored.id));
+      history.replaceState({}, '', this.route(this.kind, this.stored.id));
     }
     return this.stored;
   }
@@ -417,7 +420,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       const copy = await api.invoiceDuplicate(this.stored.id);
       this.#dirty = false;
       this.announce({ id: copy.id });
-      goto(kindRoute(this.kind, copy.id));
+      goto(this.route(this.kind, copy.id));
     } catch (error) {
       notifyError(error);
     }
@@ -435,7 +438,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         return;
       }
     }
-    goto(kindRoute(this.kind, 'none'));
+    goto(this.route(this.kind, 'none'));
   }
 
   /** A new invoice that was never saved is dropped, what was typed asks first */
@@ -453,7 +456,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
     // nothing of it is kept: no draft is saved on the way out
     this.#dirty = false;
-    goto(kindRoute(this.kind, 'none'));
+    goto(this.route(this.kind, 'none'));
   }
 
   /** An exported invoice cannot go, it leaves the list instead and stays for the books */
@@ -466,7 +469,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       await api.invoiceArchive(id);
       this.announce({ id, deleted: true });
       notify(this.texts.archived);
-      goto(kindRoute(this.kind));
+      goto(this.route(this.kind));
     } catch (error) {
       notifyError(error);
     }
@@ -494,7 +497,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       await api.invoiceDelete(id);
       this.#dirty = false;
       this.announce({ id, deleted: true });
-      goto(kindRoute(this.kind));
+      goto(this.route(this.kind));
     } catch (error) {
       notifyError(error);
     }
@@ -766,7 +769,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       const invoice = await api.offerToInvoice(offer.id);
       this.announce();
       notify(`Rechnungsentwurf aus Angebot ${offer.number ?? ''} angelegt.`);
-      goto(kindRoute('invoice', invoice.id));
+      goto(this.route('invoice', invoice.id));
     } catch (error) {
       notifyError(error);
     } finally {
@@ -1160,7 +1163,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                     ${this.links.map(
                       l => html`
                         <div class="link">
-                          <erng-list-item @click="${() => goto(kindRoute(l.kind, l.id))}">
+                          <erng-list-item @click="${() => goto(this.route(l.kind, l.id))}">
                             ${l.customer_name || '–'}
                             <span slot="sub">
                               ${l.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}

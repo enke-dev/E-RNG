@@ -34,6 +34,7 @@ import { routes } from './root.routes.js';
 import styles from './root.view.css';
 
 const NAV = [
+  ['/cases', 'Vorgänge'],
   ['/offers', 'Angebote'],
   ['/', 'Rechnungen'],
   ['/customers', 'Kunden'],
@@ -47,6 +48,7 @@ const NEEDS_CONTEXT = new Map([
   ['/customers', ready],
   ['/templates', ready],
   ['/offers', readyForOffers],
+  ['/cases', readyForOffers],
 ]);
 
 const isActive = (href: string) =>

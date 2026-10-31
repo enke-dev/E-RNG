@@ -68,10 +68,23 @@ const invoices = (selected = '') => html`<erng-invoices selected="${selected}"><
 const offers = (selected = '') =>
   html`<erng-invoices kind="offer" selected="${selected}"></erng-invoices>`;
 
+/** The Vorgänge show both kinds; a new document is `new-offer` or `new-invoice` */
+const cases = (selected = '') => html`<erng-cases selected="${selected}"></erng-cases>`;
+
 const settings = (section = '') => html`<erng-settings selected="${section}"></erng-settings>`;
 
 /** Views are loaded on first visit, the shell stays small */
 export const routes: RouteConfig[] = [
+  {
+    path: '/cases',
+    enter: entering(() => import('./cases/cases.view.js'), 'offer'),
+    render: () => cases(),
+  },
+  {
+    path: '/cases/:id',
+    enter: entering(() => import('./cases/cases.view.js'), 'offer'),
+    render: ({ id }) => cases(id),
+  },
   {
     path: '/offers',
     enter: entering(() => import('./invoices/invoices.view.js'), 'offer'),

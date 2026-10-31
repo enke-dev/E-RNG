@@ -1273,7 +1273,7 @@ export function installMocks() {
         }
         case 'invoices_list':
           return invoices
-            .filter(i => i.kind === args['kind'])
+            .filter(i => args['kind'] == null || i.kind === args['kind'])
             .filter(i => args['contextId'] == null || i.context_id === args['contextId'])
             .filter(i => i.archived_at === null || Boolean(args['withArchived']))
             .map((i): ListEntry => ({

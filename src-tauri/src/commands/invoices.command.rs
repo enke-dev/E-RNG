@@ -9,7 +9,7 @@ use crate::utils::{today, CommandError, CommandResult};
 pub fn invoices_list(
     store: State<'_, Store>,
     context_id: Option<i64>,
-    kind: Kind,
+    kind: Option<Kind>,
     with_archived: bool,
 ) -> CommandResult<Vec<ListEntry>> {
     store

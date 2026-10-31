@@ -716,7 +716,8 @@ export const api = {
     invoke<null>('rates_reorder', { contextId, ids }),
 
   /** The documents of one kind, `null` lists those of all contexts; archived ones only when asked */
-  invoicesList: (contextId: number | null, kind: Kind, withArchived = false) =>
+  /** `kind` null lists both, as the Vorgänge do */
+  invoicesList: (contextId: number | null, kind: Kind | null, withArchived = false) =>
     invoke<ListEntry[]>('invoices_list', { contextId, kind, withArchived }),
   invoiceGet: (id: number) => invoke<StoredInvoice>('invoice_get', { id }),
   /** A blank draft with the layout, texts and validity the settings of the context give its kind */

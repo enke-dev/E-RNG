@@ -22,99 +22,14 @@ import { customElement, property, state } from 'lit/decorators.js';
 import type { Kind, ListEntry } from '../../common/utils/api.utils.js';
 import { api } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
-import { activeContext, available, contextById, label } from '../../common/utils/context.utils.js';
-import { today } from '../../common/utils/form.utils.js';
+import { activeContext, available } from '../../common/utils/context.utils.js';
+import styles from '../../common/utils/documents.utils.css';
+import type { Stage } from '../../common/utils/documents.utils.js';
+import { stageOf, STAGES, tagsOf, yearOf } from '../../common/utils/documents.utils.js';
 import { formatDate, money } from '../../common/utils/format.utils.js';
-import { haystack, kindRoute, KINDS, otherKind } from '../../common/utils/kind.utils.js';
+import { haystack, kindRoute, KINDS } from '../../common/utils/kind.utils.js';
 import { notifyError } from '../../common/utils/notify.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
-import styles from './invoices.view.css';
-
-/**
- * Where a document stands: a draft, or created. An invoice is open until it is paid, an offer valid
- * until its day has passed.
- */
-type Stage = 'draft' | 'open' | 'paid' | 'valid' | 'expired';
-
-const STAGES: Record<Kind, [Stage, string][]> = {
-  invoice: [
-    ['draft', 'Entwürfe'],
-    ['open', 'Offen'],
-    ['paid', 'Bezahlt'],
-  ],
-  offer: [
-    ['draft', 'Entwürfe'],
-    ['valid', 'Gültig'],
-    ['expired', 'Abgelaufen'],
-  ],
-};
-
-/** A created offer whose day has passed; one without a validity never expires */
-const expired = (entry: ListEntry) =>
-  entry.status === 'exported' && entry.valid_until !== null && entry.valid_until < today();
-
-const stageOf = (entry: ListEntry): Stage => {
-  if (entry.status === 'draft') {
-    return 'draft';
-  }
-  if (entry.kind === 'offer') {
-    return expired(entry) ? 'expired' : 'valid';
-  }
-  return entry.paid_at ? 'paid' : 'open';
-};
-
-/** The context as its tag names it everywhere, else the seller the invoice was made with */
-const contextName = (entry: ListEntry) => {
-  const context = contextById(entry.context_id);
-  return context ? label(context) : entry.seller_name || '–';
-};
-
-/** What a document is, as tags and check marks on a row of its own; the context only in a mixed list */
-function tagsOf(entry: ListEntry, mixed: boolean) {
-  // an offer is not checked against rules, it is only made
-  const created = entry.kind === 'offer' ? 'Erstellt' : 'Erstellt und geprüft';
-  return [
-    mixed ? html`<wa-tag variant="neutral" size="s">${contextName(entry)}</wa-tag>` : null,
-    entry.archived_at ? html`<wa-tag variant="neutral" size="s">Archiviert</wa-tag>` : null,
-    expired(entry) ? html`<wa-tag variant="neutral" size="s">Abgelaufen</wa-tag>` : null,
-    entry.status === 'exported'
-      ? html`
-          <wa-badge pill class="created" variant="brand" title="${created}">
-            <wa-icon name="check" label="${created}"></wa-icon>
-          </wa-badge>
-        `
-      : null,
-    entry.paid_at
-      ? html`
-          <wa-badge
-            pill
-            class="payed"
-            variant="success"
-            title="Bezahlt am ${formatDate(entry.paid_at)}"
-          >
-            <wa-icon name="check" label="Bezahlt"></wa-icon>
-          </wa-badge>
-        `
-      : null,
-    entry.linked > 0
-      ? html`
-          <wa-badge
-            pill
-            class="linked"
-            variant="neutral"
-            title="${KINDS[otherKind(entry.kind)].linkedTo(entry.linked)}"
-          >
-            <wa-icon
-              name="link"
-              label="${KINDS[otherKind(entry.kind)].linkedTo(entry.linked)}"
-            ></wa-icon>
-          </wa-badge>
-        `
-      : null,
-  ].filter(tag => tag !== null);
-}
-
-const yearOf = (entry: ListEntry) => entry.issue_date.slice(0, 4);
 
 /**
  * Invoices or offers: a small filterable list on the left, the selected document on the right.
@@ -320,7 +235,7 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
                 `
               : nothing
           }
-          <wa-dropdown slot="filters" @wa-select="${this.handleStatus}">
+          <wa-dropdown slot="filters" class="status" @wa-select="${this.handleStatus}">
             <wa-button slot="trigger" size="s" appearance="outlined" with-caret>
               ${this.statusLabel}
             </wa-button>

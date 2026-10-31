@@ -1984,7 +1984,7 @@ impl Store {
     pub fn invoices(
         &self,
         context: Option<i64>,
-        kind: Kind,
+        kind: Option<Kind>,
         with_archived: bool,
     ) -> Result<Vec<ListEntry>> {
         let sellers: std::collections::HashMap<i64, String> = self
@@ -1999,12 +1999,13 @@ impl Store {
                  (SELECT COUNT(*) FROM document_links
                   WHERE offer_id = invoices.id OR invoice_id = invoices.id) AS linked
              FROM invoices WHERE (?2 OR archived_at IS NULL) AND (?1 IS NULL OR context_id = ?1)
-                 AND kind = ?3
+                 AND (?3 IS NULL OR kind = ?3)
              ORDER BY updated_at DESC, id DESC",
         )?;
-        let rows = statement.query_map(params![context, with_archived, kind.as_str()], |row| {
-            Ok((stored(row)?, row.get::<_, u32>("linked")?))
-        })?;
+        let rows = statement.query_map(
+            params![context, with_archived, kind.map(Kind::as_str)],
+            |row| Ok((stored(row)?, row.get::<_, u32>("linked")?)),
+        )?;
         rows.map(|row| {
             let ((invoice, draft, _), linked) = row?;
             let draft: InvoiceDraft = serde_json::from_str(&draft)?;
@@ -2915,7 +2916,7 @@ mod tests {
         let paid = store.set_paid(id, Some("2026-10-20")).unwrap();
         assert_eq!(paid.paid_at.as_deref(), Some("2026-10-20"));
         assert_eq!(
-            store.invoices(None, Kind::Invoice, false).unwrap()[0].paid_at,
+            store.invoices(None, Some(Kind::Invoice), false).unwrap()[0].paid_at,
             paid.paid_at
         );
 
@@ -2952,7 +2953,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(updated.draft.note.as_deref(), Some("Danke"));
-        let list = store.invoices(None, Kind::Invoice, false).unwrap();
+        let list = store.invoices(None, Some(Kind::Invoice), false).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(
             (list[0].customer_name.as_str(), list[0].total.as_deref()),
@@ -3145,7 +3146,7 @@ mod tests {
         store.delete_draft(id).unwrap();
 
         assert_eq!(
-            store.invoices(None, Kind::Invoice, false).unwrap(),
+            store.invoices(None, Some(Kind::Invoice), false).unwrap(),
             Vec::new()
         );
         assert!(store.delete_draft(id).is_err());
@@ -3197,7 +3198,7 @@ mod tests {
         assert_eq!(contexts[0].id, Some(1));
         assert_eq!(contexts[0].brand, "blue");
         assert_eq!(contexts[0].settings, old);
-        let list = store.invoices(None, Kind::Invoice, false).unwrap();
+        let list = store.invoices(None, Some(Kind::Invoice), false).unwrap();
         assert_eq!(list.len(), 2);
         assert!(list.iter().all(|i| i.context_id == 1));
         let exported = list.iter().find(|i| i.number.is_some()).unwrap();
@@ -3301,8 +3302,14 @@ mod tests {
             .save_draft(None, b, Kind::Invoice, &draft(), None)
             .unwrap();
 
-        assert_eq!(store.invoices(None, Kind::Invoice, false).unwrap().len(), 2);
-        let only_a = store.invoices(Some(a), Kind::Invoice, false).unwrap();
+        assert_eq!(
+            store
+                .invoices(None, Some(Kind::Invoice), false)
+                .unwrap()
+                .len(),
+            2
+        );
+        let only_a = store.invoices(Some(a), Some(Kind::Invoice), false).unwrap();
         assert_eq!(only_a.len(), 1);
         assert_eq!(only_a[0].seller_name, "Alpha");
 
@@ -3322,10 +3329,10 @@ mod tests {
             .unwrap();
         store.archive_invoice(in_a.id).unwrap();
         assert_eq!(
-            store.invoices(Some(a), Kind::Invoice, false).unwrap(),
+            store.invoices(Some(a), Some(Kind::Invoice), false).unwrap(),
             Vec::new()
         );
-        let with_archived = store.invoices(Some(a), Kind::Invoice, true).unwrap();
+        let with_archived = store.invoices(Some(a), Some(Kind::Invoice), true).unwrap();
         assert_eq!(with_archived.len(), 1);
         assert!(with_archived[0].archived_at.is_some());
         // it still counts for the numbers
@@ -3346,7 +3353,10 @@ mod tests {
         assert_eq!(restored.archived_at, None);
         assert_eq!(restored.number.as_deref(), Some("RE-2026-001"));
         assert_eq!(
-            store.invoices(Some(a), Kind::Invoice, false).unwrap().len(),
+            store
+                .invoices(Some(a), Some(Kind::Invoice), false)
+                .unwrap()
+                .len(),
             1
         );
         assert!(store.unarchive_invoice(in_a.id).is_err());
@@ -4076,7 +4086,7 @@ mod tests {
             "RG-2026-002"
         );
         // the invoice is as it was
-        let list = store.invoices(Some(1), Kind::Invoice, true).unwrap();
+        let list = store.invoices(Some(1), Some(Kind::Invoice), true).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].number.as_deref(), Some("RG-2026-001"));
         assert_eq!(list[0].paid_at.as_deref(), Some("2026-10-05"));
@@ -4172,8 +4182,17 @@ mod tests {
         assert!(created.archived_at.is_some());
         assert_eq!(created.files, Some(files()));
         assert_eq!(store.invoice(2).unwrap().kind, Kind::Invoice);
-        assert_eq!(store.invoices(None, Kind::Invoice, true).unwrap().len(), 2);
-        assert_eq!(store.invoices(None, Kind::Offer, true).unwrap(), Vec::new());
+        assert_eq!(
+            store
+                .invoices(None, Some(Kind::Invoice), true)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            store.invoices(None, Some(Kind::Offer), true).unwrap(),
+            Vec::new()
+        );
         // the stored counter goes on, not the one the number reads as
         let day = Date::new(2026, 5, 7).unwrap();
         assert_eq!(
@@ -4189,7 +4208,13 @@ mod tests {
             .execute_batch("PRAGMA user_version = 7;")
             .unwrap();
         migrate(&store.conn()).unwrap();
-        assert_eq!(store.invoices(None, Kind::Invoice, true).unwrap().len(), 2);
+        assert_eq!(
+            store
+                .invoices(None, Some(Kind::Invoice), true)
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -4300,7 +4325,7 @@ mod tests {
     }
 
     #[test]
-    fn the_lists_hold_one_kind_and_a_draft_keeps_its_kind() {
+    fn the_lists_hold_one_kind_or_both_and_a_draft_keeps_its_kind() {
         let store = Store::in_memory().unwrap();
         let mut valid = draft();
         valid.validity_days = Some(30);
@@ -4311,13 +4336,16 @@ mod tests {
             .save_draft(None, 1, Kind::Invoice, &draft(), None)
             .unwrap();
 
-        let offers = store.invoices(None, Kind::Offer, false).unwrap();
+        let offers = store.invoices(None, Some(Kind::Offer), false).unwrap();
         assert_eq!(offers.len(), 1);
         assert_eq!(offers[0].kind, Kind::Offer);
         assert_eq!(offers[0].valid_until.as_deref(), Some("2026-11-16"));
-        let invoices = store.invoices(None, Kind::Invoice, false).unwrap();
+        let invoices = store.invoices(None, Some(Kind::Invoice), false).unwrap();
         assert_eq!(invoices.len(), 1);
         assert_eq!(invoices[0].valid_until, None);
+        // without a kind both are listed, as the Vorgänge show them
+        let both = store.invoices(None, None, false).unwrap();
+        assert_eq!(both.len(), 2);
 
         // saving again keeps what it is, whatever the caller says
         let saved = store
@@ -4423,7 +4451,7 @@ mod tests {
             Some("AN-2026-001")
         );
         assert_eq!(
-            store.invoices(None, Kind::Offer, true).unwrap()[0].linked,
+            store.invoices(None, Some(Kind::Offer), true).unwrap()[0].linked,
             0
         );
         store.link(1, 2).unwrap();
@@ -4656,7 +4684,7 @@ mod tests {
 
         let linked = |kind: Kind| -> std::collections::HashMap<i64, u32> {
             store
-                .invoices(None, kind, true)
+                .invoices(None, Some(kind), true)
                 .unwrap()
                 .into_iter()
                 .map(|e| (e.id, e.linked))
@@ -4729,7 +4757,7 @@ mod tests {
         assert_eq!(links[0].id, offer.id);
         assert_eq!(links[0].number.as_deref(), Some("AN-2026-001"));
         assert_eq!(
-            store.invoices(None, Kind::Offer, true).unwrap()[0].linked,
+            store.invoices(None, Some(Kind::Offer), true).unwrap()[0].linked,
             1
         );
 
@@ -4754,7 +4782,13 @@ mod tests {
         }
 
         // nothing was stored
-        assert_eq!(store.invoices(None, Kind::Invoice, true).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .invoices(None, Some(Kind::Invoice), true)
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(store.links(drafted.id).unwrap(), Vec::new());
     }
 
