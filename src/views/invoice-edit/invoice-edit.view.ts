@@ -47,6 +47,7 @@ import type {
   Preview,
   ProduceError,
   Rate,
+  Relation,
   Settings,
   StoredInvoice,
   Unit,
@@ -54,6 +55,7 @@ import type {
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
 import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
+import { RELATIONS } from '../../common/utils/documents.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { formatDate, money, percent } from '../../common/utils/format.utils.js';
 import {
@@ -468,7 +470,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         await this.persist({ updateUrl: false });
       }
       const where = await choose(
-        'Die Kopie kann einen eigenen Vorgang bekommen oder zu diesem gehören, z. B. als Nachtrag.',
+        'Die Kopie kann einen eigenen Vorgang bekommen oder zu diesem gehören.',
         {
           title: `${this.texts.noun} duplizieren`,
           okLabel: 'Neuer Vorgang',
@@ -486,6 +488,61 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     } catch (error) {
       notifyError(error);
     }
+  }
+
+  /** A new offer in this Vorgang that refers to this created one: a Nachtrag, an alternative, a replacement */
+  private async relate(relation: Relation) {
+    if (!this.stored) {
+      return;
+    }
+    try {
+      const offer = await api.offerRelated(this.stored.id, relation);
+      this.announce({ id: offer.id });
+      goto(this.route('offer', offer.id));
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+
+  /** Why an offer cannot get a related one of a kind, nothing when it can (as `related_offer` checks) */
+  private relationRefused(relation: Relation): string {
+    const { answer, lapsed } = this.stored ?? {};
+    switch (relation) {
+      case 'supplement':
+        return answer === 'declined' ? 'Ein abgelehntes Angebot bekommt keinen Nachtrag.' : '';
+      case 'alternative':
+        return answer === 'accepted' || lapsed
+          ? 'Ein Angebot dieser Gruppe ist schon angenommen.'
+          : '';
+      case 'replacement':
+        return answer === 'accepted' ? 'Ein angenommenes Angebot wird nicht ersetzt.' : '';
+    }
+  }
+
+  /** A created offer: a Nachtrag, an alternative or a replacement of it, made in its Vorgang */
+  private renderRelate() {
+    const relations = Object.entries(RELATIONS) as [Relation, (typeof RELATIONS)[Relation]][];
+    return html`
+      <wa-dropdown
+        placement="top-end"
+        @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) =>
+          void this.relate(e.detail.item.value as Relation)}"
+      >
+        <wa-button slot="trigger" appearance="outlined" with-caret>Angebot dazu</wa-button>
+        ${relations.map(([relation, { noun, hint }]) => {
+          const refused = this.relationRefused(relation);
+          return html`
+            <wa-dropdown-item
+              value="${relation}"
+              ?disabled="${refused !== ''}"
+              title="${refused || hint}"
+            >
+              ${noun}
+            </wa-dropdown-item>
+          `;
+        })}
+      </wa-dropdown>
+    `;
   }
 
   /** Puts the invoice away; edits of a draft are kept as a draft, like when another invoice opens */
@@ -1432,14 +1489,24 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     const vorgang = this.case
       ? html`<wa-tag appearance="outlined" title="Vorgang">${this.case.number}</wa-tag>`
       : nothing;
+    // the offer it refers to, as the document names it
+    const related = stored.relation
+      ? html`
+          <wa-tag appearance="outlined" title="${RELATIONS[stored.relation].hint}">
+            ${RELATIONS[stored.relation].of(stored.related_number ?? '')}
+          </wa-tag>
+        `
+      : nothing;
     if (stored.status === 'draft') {
-      return html`<div class="status">${vorgang}<wa-tag>Entwurf</wa-tag></div>`;
+      return html`<div class="status">${vorgang}${related}<wa-tag>Entwurf</wa-tag></div>`;
     }
     const until = validUntil(stored.draft.issue_date, stored.draft.validity_days);
     return html`
       <div class="status">
-        ${vorgang}
+        ${vorgang} ${related}
         <wa-tag>${stored.number}</wa-tag>
+        ${stored.superseded ? html`<wa-tag variant="neutral">Ersetzt</wa-tag>` : nothing}
+        ${stored.lapsed ? html`<wa-tag variant="neutral">Entfallen</wa-tag>` : nothing}
         ${stored.archived_at ? html`<wa-tag variant="neutral">Archiviert</wa-tag>` : nothing}
         ${
           stored.paid_at
@@ -1459,7 +1526,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
             : nothing
         }
         ${
-          this.kind === 'offer' && until
+          this.kind === 'offer' && until && !stored.superseded && !stored.lapsed
             ? html`
                 <wa-tag variant="${until < today() ? 'warning' : 'neutral'}">
                   Gültig bis ${formatDate(until)}
@@ -1639,6 +1706,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                     <wa-button appearance="outlined" @click="${this.duplicate}">
                       Duplizieren
                     </wa-button>
+                    ${locked && this.kind === 'offer' ? this.renderRelate() : nothing}
                     ${
                       locked
                         ? stored.archived_at
@@ -1680,8 +1748,14 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                   <wa-button
                     variant="brand"
                     ?loading="${this.converting}"
-                    ?disabled="${!this.invoicesReady}"
-                    title="${this.invoicesReady ? '' : 'Für Rechnungen fehlen noch Angaben in den Einstellungen.'}"
+                    ?disabled="${!this.invoicesReady || stored?.superseded || stored?.lapsed}"
+                    title="${
+                      stored?.superseded || stored?.lapsed
+                        ? 'Ein ersetztes oder entfallenes Angebot wird nicht in Rechnung gestellt.'
+                        : this.invoicesReady
+                          ? ''
+                          : 'Für Rechnungen fehlen noch Angaben in den Einstellungen.'
+                    }"
                     @click="${this.invoiceFromOffer}"
                   >
                     Rechnung erstellen

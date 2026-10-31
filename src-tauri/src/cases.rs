@@ -16,6 +16,7 @@ use rust_decimal::Decimal;
 
 use crate::model::{Answer, Case, CaseStage, Event, InvoiceDraft, Kind, Payment, Settings, Status};
 use crate::numbering::{Given, Pattern, DEFAULT_CASE_PATTERN};
+use crate::relations::{lapsed, Relation, RELATION_COLUMNS};
 use crate::store::{context_settings, now, Sequence, Store};
 
 /// The Vorgänge table and every document's Vorgang. What older versions stored gets one Vorgang
@@ -334,6 +335,10 @@ pub(crate) struct Standing {
     pub total: Option<String>,
     pub paid: Decimal,
     pub answer: Option<Answer>,
+    pub relation: Option<Relation>,
+    /// Out of the running: another offer of its group accepted, or replaced (see `relations`)
+    pub lapsed: bool,
+    pub superseded: bool,
 }
 
 fn decimal(text: Option<&str>) -> Decimal {
@@ -348,8 +353,12 @@ pub(crate) fn status(documents: &[Standing]) -> (CaseStage, [Decimal; 5]) {
             .iter()
             .filter(move |d| d.kind == kind && d.status == Status::Exported)
     };
-    let offered: Decimal = created(Kind::Offer)
+    // what is still on offer: neither lapsed nor replaced; an alternative only once it is taken,
+    // until then its group is offered once, by the offer it is a variant of
+    let running = || created(Kind::Offer).filter(|d| !d.lapsed && !d.superseded);
+    let offered: Decimal = running()
         .filter(|d| d.answer != Some(Answer::Declined))
+        .filter(|d| d.relation != Some(Relation::Alternative) || d.answer.is_some())
         .map(|d| decimal(d.total.as_deref()))
         .sum();
     let accepted: Decimal = created(Kind::Offer)
@@ -375,7 +384,7 @@ pub(crate) fn status(documents: &[Standing]) -> (CaseStage, [Decimal; 5]) {
         CaseStage::Draft
     } else if created(Kind::Offer).any(|d| d.answer == Some(Answer::Accepted)) {
         CaseStage::Accepted
-    } else if created(Kind::Offer).all(|d| d.answer == Some(Answer::Declined)) {
+    } else if running().all(|d| d.answer == Some(Answer::Declined)) {
         CaseStage::Declined
     } else {
         CaseStage::Offered
@@ -431,6 +440,63 @@ impl Store {
     }
 }
 
+/// The documents of a Vorgang as `status` reads them, the newest first, with the customer's name
+/// on the newest and whether all of them are archived (a Vorgang without documents is not)
+fn documents_of(
+    conn: &Connection,
+    id: i64,
+    payments: &HashMap<i64, Vec<Payment>>,
+) -> Result<(Vec<Standing>, Option<String>, bool)> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT id, kind, status, total, answer, draft, archived_at, {RELATION_COLUMNS}
+         FROM invoices WHERE case_id = ?1 ORDER BY updated_at DESC, id DESC",
+    ))?;
+    let rows = statement
+        .query_map([id], |r| {
+            let kind = Kind::from_column(&r.get::<_, String>("kind")?);
+            let status = if r.get::<_, String>("status")? == "exported" {
+                Status::Exported
+            } else {
+                Status::Draft
+            };
+            let answer = r
+                .get::<_, Option<String>>("answer")?
+                .as_deref()
+                .and_then(Answer::from_column);
+            let paid = payments
+                .get(&r.get::<_, i64>("id")?)
+                .map(|p| p.iter().map(|p| decimal(Some(&p.amount))).sum())
+                .unwrap_or_default();
+            let standing = Standing {
+                kind,
+                status,
+                total: r.get("total")?,
+                paid,
+                answer,
+                relation: r
+                    .get::<_, Option<String>>("relation")?
+                    .as_deref()
+                    .and_then(Relation::from_column),
+                lapsed: lapsed(kind, status, answer, r.get("taken")?),
+                superseded: r.get("superseded")?,
+            };
+            let archived = r.get::<_, Option<String>>("archived_at")?.is_some();
+            Ok((standing, r.get::<_, String>("draft")?, archived))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let newest_customer = rows
+        .first()
+        .map(|(_, draft, _)| serde_json::from_str::<InvoiceDraft>(draft))
+        .transpose()?
+        .map(|draft| draft.customer.name);
+    let archived = !rows.is_empty() && rows.iter().all(|(_, _, archived)| *archived);
+    Ok((
+        rows.into_iter().map(|(standing, _, _)| standing).collect(),
+        newest_customer,
+        archived,
+    ))
+}
+
 /// A Vorgang with what its documents say, `payments` of all documents by document
 fn read_case(conn: &Connection, id: i64, payments: &HashMap<i64, Vec<Payment>>) -> Result<Case> {
     let (context_id, number, customer_id, title, created_at) = conn
@@ -449,50 +515,7 @@ fn read_case(conn: &Connection, id: i64, payments: &HashMap<i64, Vec<Payment>>) 
         )
         .optional()?
         .ok_or_else(|| anyhow!("unknown Vorgang"))?;
-    let mut statement = conn.prepare(
-        "SELECT id, kind, status, total, answer, draft, archived_at FROM invoices
-             WHERE case_id = ?1 ORDER BY updated_at DESC, id DESC",
-    )?;
-    let rows = statement
-        .query_map([id], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?,
-                r.get::<_, Option<String>>(4)?,
-                r.get::<_, String>(5)?,
-                r.get::<_, Option<String>>(6)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut newest_customer = None;
-    let mut archived = !rows.is_empty();
-    let standings: Vec<Standing> = rows
-        .into_iter()
-        .map(|(doc, kind, status, total, answer, draft, archived_at)| {
-            if newest_customer.is_none() {
-                let draft: InvoiceDraft = serde_json::from_str(&draft)?;
-                newest_customer = Some(draft.customer.name);
-            }
-            archived &= archived_at.is_some();
-            let paid = payments
-                .get(&doc)
-                .map(|p| p.iter().map(|p| decimal(Some(&p.amount))).sum())
-                .unwrap_or_default();
-            Ok(Standing {
-                kind: Kind::from_column(&kind),
-                status: if status == "exported" {
-                    Status::Exported
-                } else {
-                    Status::Draft
-                },
-                total,
-                paid,
-                answer: answer.as_deref().and_then(Answer::from_column),
-            })
-        })
-        .collect::<Result<_>>()?;
+    let (standings, newest_customer, archived) = documents_of(conn, id, payments)?;
     let customer_name = match newest_customer {
         Some(name) => name,
         None => customer_id
@@ -652,7 +675,7 @@ impl Store {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::draft::fixtures::{draft, settings};
     use crate::model::{InvoiceFiles, StoredFile};
@@ -665,7 +688,7 @@ mod tests {
         draft
     }
 
-    fn bake(store: &Store, id: i64, number: &str, total: &str) {
+    pub(crate) fn bake(store: &Store, id: i64, number: &str, total: &str) {
         let file = StoredFile {
             path: "x.pdf".into(),
             sha256: "0".repeat(64),

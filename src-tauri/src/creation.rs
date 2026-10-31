@@ -171,11 +171,16 @@ fn make_offer(
         .map_err(|problems| ProduceError::Input { problems })?;
     let total = totals(&invoice).gross;
     let customs = store.all_custom_layouts().map_err(failed)?;
-    let branding = Branding {
+    let mut branding = Branding {
         version: store.draft_exports(stored.id).map_err(failed)?,
         case_number: store.case_number_of(stored.id).map_err(failed)?,
         ..Branding::for_document(Kind::Offer, &draft, settings, &customs)
     };
+    // the offer it is a Nachtrag, an alternative or a replacement of, as the preview names it
+    if let Some((relation, number)) = store.relation_of(stored.id).map_err(failed)? {
+        branding.offers = vec![number];
+        branding.offer_label = relation.label(&settings.wording(Kind::Offer).title);
+    }
     let layout = branding.custom.clone();
     let work = Work(
         tempfile::Builder::new()

@@ -2,6 +2,7 @@ use tauri::State;
 
 use crate::draft::{build_invoice, totals};
 use crate::model::{Answer, Event, InvoiceDraft, Kind, Linked, ListEntry, StoredInvoice};
+use crate::relations::Relation;
 use crate::store::Store;
 use crate::utils::{today, CommandError, CommandResult};
 
@@ -145,6 +146,19 @@ pub fn invoice_duplicate(
 ) -> CommandResult<StoredInvoice> {
     store
         .duplicate_to(id, &today(), same_case)
+        .map_err(CommandError::from)
+}
+
+/// A new offer draft that refers to the created offer `id` as a Nachtrag, an alternative or a
+/// replacement, in its Vorgang
+#[tauri::command]
+pub fn offer_related(
+    store: State<'_, Store>,
+    id: i64,
+    relation: Relation,
+) -> CommandResult<StoredInvoice> {
+    store
+        .related_offer(id, relation, &today())
         .map_err(CommandError::from)
 }
 

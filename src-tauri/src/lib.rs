@@ -18,6 +18,7 @@ mod originals;
 mod package;
 mod pipeline;
 mod rates;
+mod relations;
 mod render;
 mod sidecar;
 mod store;
@@ -196,6 +197,7 @@ pub fn run() {
             commands::invoices_command::invoice_remove_payment,
             commands::invoices_command::invoice_events,
             commands::invoices_command::invoice_snapshot,
+            commands::invoices_command::offer_related,
             commands::invoices_command::offer_set_answer,
             commands::invoices_command::invoices_list,
             commands::invoices_command::offer_to_invoice,

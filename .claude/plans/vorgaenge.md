@@ -1,6 +1,6 @@
 # Vorgänge – Plan
 
-**Status (2026-10-31): phases 1–4 done, not pushed yet; phase 5 next.**
+**Status (2026-11-01): phases 1–5 done, not pushed yet; phase 6 next.**
 Details of what is built are in `docs/development.md`. A living plan: decisions are edited in place,
 what is dropped is removed, not kept as history.
 
@@ -113,12 +113,23 @@ bills follows from its positions, there is no link table. Only what has no posit
 | Ersatzangebot               | replaces a baked offer (rare, agreeing happens in drafts)          | same                |
 | Folgeangebot                | a follow-up deal based on an earlier one (next year's maintenance) | new, a Folgevorgang |
 
+How they are made: `Angebot dazu` on a created offer makes the new offer in its Vorgang, referring
+to it for good; only created offers are referred to, so the number on the document is fixed. A
+Nachtrag starts blank with the customer, an alternative and an Ersatzangebot as a copy. A Nachtrag
+to a Nachtrag and an alternative to an alternative refer to what theirs refers to (one main offer,
+one group). The document names the offer in its information block (`Nachtrag zu Angebot AN-…`,
+`Alternative zu …`, `Ersetzt …`). A declined offer gets no Nachtrag, an accepted one no
+replacement, a group with an accepted offer no further alternative.
+
 **Offer states**: a baked offer is marked **accepted** or **declined** with a date, as an invoice is
 marked paid; each is a history event. The rest is derived, never stored: an Alternativangebot lapses
 when another of its group is accepted, an Ersatzangebot supersedes the one it replaces, an offer past
-`valid_until` without answer is expired. The Vorgang's status is derived from these marks, it is not
-marked itself. No Auftragsbestätigung as a document kind: in German practice the seller sends it to
-confirm an order, but here the accepted date covers it; a printable one could come later.
+`valid_until` without answer is expired. Lapsed (`Entfallen`) and superseded (`Ersetzt`) offers are
+not accepted or billed and do not expire. The Vorgang's status is derived from these marks, it is
+not marked itself: lapsed and replaced offers are no longer offered, an alternative group is offered
+once, by its head, until one of it is accepted. No Auftragsbestätigung as a document kind: in
+German practice the seller sends it to confirm an order, but here the accepted date covers it; a
+printable one could come later.
 
 ### Offer → invoice (positions)
 
@@ -194,8 +205,9 @@ others.
 4. **Done. Versions compared**: a compare button on each kept version in the history (with the next
    newer one, the newest of a draft with the draft now, only where they differ), any two versions
    picked in the dialog, the fields, positions and totals that differ.
-5. **Next. Offer → offer**: Nachtrag, Alternativangebot (lapsing), Ersatzangebot.
-6. **Position references, final**: Rechnung (today's "invoice from offer"), Teilrechnung,
+5. **Done. Offer → offer**: Nachtrag, Alternativangebot (lapsing), Ersatzangebot (superseding),
+   `Angebot dazu`, the row on the document, stages and tags. Schema 14, no data to migrate.
+6. **Next. Position references, final**: Rechnung (today's "invoice from offer"), Teilrechnung,
    Sammelrechnung within a Vorgang; the open amount per offer and position. The offer ↔ invoice
    links go (their grouping lives on in the Vorgang since phase 3, the printed offer numbers in
    `frozen_offers`). An invoice that bills an offer can say so in its texts, a placeholder like

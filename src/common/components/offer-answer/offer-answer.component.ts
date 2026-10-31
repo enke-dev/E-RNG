@@ -37,11 +37,18 @@ export class OfferAnswerComponent extends ErngElement {
   }
 
   override render() {
-    const { answer, answered_on } = this.offer;
+    const { answer, answered_on, superseded, lapsed } = this.offer;
+    // out of the running: what is accepted is the replacement, or the other offer of the group
+    const why = superseded
+      ? 'Ersetzt, angenommen wird das Ersatzangebot.'
+      : lapsed
+        ? 'Ein anderes Angebot dieser Gruppe ist angenommen.'
+        : '';
     return html`
       <div class="grid">
         <wa-select
           label="Antwort des Kunden"
+          hint="${why}"
           ?disabled="${this.busy}"
           .value="${answer ?? 'open'}"
           @change="${(e: Event) => {
@@ -50,7 +57,9 @@ export class OfferAnswerComponent extends ErngElement {
           }}"
         >
           <wa-option value="open">Noch offen</wa-option>
-          <wa-option value="accepted">Angenommen</wa-option>
+          <wa-option value="accepted" ?disabled="${why !== '' && answer !== 'accepted'}">
+            Angenommen
+          </wa-option>
           <wa-option value="declined">Abgelehnt</wa-option>
         </wa-select>
         ${

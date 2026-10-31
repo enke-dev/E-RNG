@@ -1,6 +1,7 @@
 //! What the app stores and what the UI edits. Money and quantities travel as strings so the
 //! webview never rounds them, the Rust side parses them exactly (`draft.rs`).
 
+use crate::relations::Relation;
 use serde::{Deserialize, Serialize};
 
 use crate::invisible::clean;
@@ -785,6 +786,14 @@ pub struct StoredInvoice {
     pub archived_at: Option<String>,
     /// The originals, none for a draft and for an invoice exported before they were kept
     pub files: Option<InvoiceFiles>,
+    /// Offers: how it refers to another created offer of its Vorgang, for good (see `relations`)
+    pub relation: Option<Relation>,
+    pub related_id: Option<i64>,
+    pub related_number: Option<String>,
+    /// Offers: another offer of its alternative group is accepted, it is out of the running
+    pub lapsed: bool,
+    /// Offers: an Ersatzangebot for it is created
+    pub superseded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -813,6 +822,11 @@ pub struct ListEntry {
     pub linked: u32,
     /// The Vorgang it is in
     pub case_id: i64,
+    /// See `StoredInvoice`
+    pub relation: Option<Relation>,
+    pub related_number: Option<String>,
+    pub lapsed: bool,
+    pub superseded: bool,
 }
 
 /// Where a Vorgang stands, read from its documents (see `cases::status`)

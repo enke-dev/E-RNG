@@ -52,6 +52,12 @@ pub(crate) fn shown(
         _ => None,
     };
 
+    let relation = id
+        .filter(|_| kind == Kind::Offer)
+        .map(|id| store.relation_of(id))
+        .transpose()?
+        .flatten();
+
     // a draft shows the version its next export will be, a created document how many there were
     let exports = id
         .map(|id| store.draft_exports(id))
@@ -75,6 +81,11 @@ pub(crate) fn shown(
             };
             if let Some(offers) = offers {
                 branding.offers = offers;
+            }
+            // an offer names the created offer it is a Nachtrag, an alternative or a replacement of
+            if let Some((relation, number)) = &relation {
+                branding.offers = vec![number.clone()];
+                branding.offer_label = relation.label(&settings.wording(Kind::Offer).title);
             }
             (invoice, branding)
         }),

@@ -288,6 +288,23 @@ export interface Payment {
 /** What the customer said to a created offer */
 export type Answer = 'accepted' | 'declined';
 
+/**
+ * How an offer refers to a created offer of its Vorgang: a Nachtrag (more work), an alternative
+ * (a variant, one of the group is taken) or an Ersatzangebot (replaces it)
+ */
+export type Relation = 'supplement' | 'alternative' | 'replacement';
+
+/** What an offer has from its relations, read from the data (`relations.rs`) */
+export interface Related {
+  relation: Relation | null;
+  /** The number of the offer it refers to */
+  related_number: string | null;
+  /** Another offer of its alternative group is accepted, it is out of the running */
+  lapsed: boolean;
+  /** An Ersatzangebot for it is created */
+  superseded: boolean;
+}
+
 export type EventKind =
   | 'created'
   | 'draft-exported'
@@ -321,7 +338,7 @@ export interface DocumentEvent {
   has_snapshot: boolean;
 }
 
-export interface StoredInvoice {
+export interface StoredInvoice extends Related {
   id: number;
   /** The Vorgang it is in, for good */
   case_id: number;
@@ -346,6 +363,8 @@ export interface StoredInvoice {
   archived_at: string | null;
   /** The originals made when it was created, none for a draft and for an invoice from before */
   files: InvoiceFiles | null;
+  /** The offer it refers to, see `relation` */
+  related_id: number | null;
 }
 
 export interface StoredFile {
@@ -370,7 +389,7 @@ export interface Created {
   warnings: Issue[];
 }
 
-export interface ListEntry {
+export interface ListEntry extends Related {
   id: number;
   context_id: number;
   kind: Kind;
@@ -848,6 +867,9 @@ export const api = {
   /** A copy in a Vorgang of its own, or in the original's (`sameCase`) */
   invoiceDuplicate: (id: number, sameCase = false) =>
     invoke<StoredInvoice>('invoice_duplicate', { id, sameCase }),
+  /** A new offer in the Vorgang of the created offer `id` that refers to it */
+  offerRelated: (id: number, relation: Relation) =>
+    invoke<StoredInvoice>('offer_related', { id, relation }),
   casesList: (contextId: number | null, withArchived = false) =>
     invoke<Case[]>('cases_list', { contextId, withArchived }),
   caseGet: (id: number) => invoke<Case>('case_get', { id }),

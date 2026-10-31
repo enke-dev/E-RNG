@@ -493,6 +493,9 @@ impl Store {
         if let Some((_, on)) = answer {
             en16931::Date::parse(on).with_context(|| format!("{on:?} is not a date"))?;
         }
+        if let Some((Answer::Accepted, _)) = answer {
+            self.may_accept(invoice_id)?;
+        }
         {
             let conn = self.conn();
             let tx = conn.unchecked_transaction()?;

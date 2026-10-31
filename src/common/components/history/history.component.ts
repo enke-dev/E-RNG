@@ -10,6 +10,7 @@ import type { DocumentEvent, InvoiceDraft, StoredInvoice } from '../../utils/api
 import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { diffDrafts } from '../../utils/diff.utils.js';
+import { RELATIONS } from '../../utils/documents.utils.js';
 import { formatDate, formatMoment, money } from '../../utils/format.utils.js';
 import { KINDS } from '../../utils/kind.utils.js';
 import type { VersionKey } from '../compare/compare.component.js';
@@ -119,8 +120,15 @@ export class HistoryComponent extends ErngElement.withStyles(styles) {
     const document = this.sources.get(event.invoice_id);
     const noun = document ? KINDS[document.kind].noun : 'Beleg';
     const from = event.from === undefined ? '' : ` aus ${nameOf(this.sources.get(event.from))}`;
+    // an offer made for another says how it refers to it
+    const relation = (inCase ? document : this.invoice)?.relation;
     switch (event.kind) {
       case 'created':
+        if (relation && event.from !== undefined) {
+          const { noun: as, to } = RELATIONS[relation];
+          const source = nameOf(this.sources.get(event.from));
+          return inCase ? `${as} angelegt ${to} ${source}` : `Angelegt als ${as} ${to} ${source}`;
+        }
         return inCase ? `${noun} angelegt${from}` : `Angelegt${from}`;
       case 'draft-exported': {
         const what = inCase && document ? KINDS[document.kind].draftTitle : 'Entwurf';

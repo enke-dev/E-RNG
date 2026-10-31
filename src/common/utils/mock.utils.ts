@@ -27,6 +27,7 @@ import type {
   Rate,
   RateDef,
   RateUsage,
+  Relation,
   Seller,
   Sequence,
   Settings,
@@ -666,6 +667,15 @@ const draftOf = (customer: Customer): InvoiceDraft => ({
   frozen: null,
 });
 
+/** A document that refers to no other, what every one starts as */
+const UNRELATED = {
+  relation: null,
+  related_id: null,
+  related_number: null,
+  lapsed: false,
+  superseded: false,
+} as const;
+
 const invoices: StoredInvoice[] = [
   {
     id: 1,
@@ -684,6 +694,7 @@ const invoices: StoredInvoice[] = [
     updated_at: '2026-10-02 08:00:00',
     archived_at: null,
     files: null,
+    ...UNRELATED,
   },
   {
     id: 2,
@@ -702,6 +713,7 @@ const invoices: StoredInvoice[] = [
     updated_at: '2026-10-05 09:00:00',
     archived_at: null,
     files: null,
+    ...UNRELATED,
   },
   // an offer that has run out, one still valid and a draft
   ...[
@@ -731,6 +743,7 @@ const invoices: StoredInvoice[] = [
     updated_at: `${o.issued} 08:00:00`,
     archived_at: null,
     files: null,
+    ...UNRELATED,
   })),
 ];
 
@@ -1023,6 +1036,24 @@ const numberOf = (stored: StoredInvoice) =>
   sequenceOf(stored.context_id, stored.kind, dayOf(stored.draft.issue_date)).next_number;
 
 const find = (id: number) => invoices.find(i => i.id === id) as StoredInvoice;
+
+/** The offer a group of alternatives is headed by; every other offer heads its own */
+const groupOf = (i: StoredInvoice) => (i.relation === 'alternative' ? i.related_id : i.id);
+
+/** What the relations say of a document, read from the others as `relations.rs` does */
+function related(i: StoredInvoice): StoredInvoice {
+  const taken =
+    i.kind === 'offer' &&
+    invoices.some(m => m.id !== i.id && m.answer === 'accepted' && groupOf(m) === groupOf(i));
+  return {
+    ...i,
+    related_number: i.related_id === null ? null : find(i.related_id).number,
+    lapsed: i.status === 'exported' && i.answer === null && taken,
+    superseded: invoices.some(
+      r => r.related_id === i.id && r.relation === 'replacement' && r.status === 'exported'
+    ),
+  };
+}
 
 export function installMocks() {
   // `platform()` reads this synchronously
@@ -1479,6 +1510,7 @@ export function installMocks() {
             .filter(i => args['kind'] == null || i.kind === args['kind'])
             .filter(i => args['contextId'] == null || i.context_id === args['contextId'])
             .filter(i => i.archived_at === null || Boolean(args['withArchived']))
+            .map(related)
             .map((i): ListEntry => ({
               id: i.id,
               context_id: i.context_id,
@@ -1499,6 +1531,10 @@ export function installMocks() {
               archived_at: i.archived_at,
               linked: links.filter(l => l.includes(i.id)).length,
               case_id: i.case_id,
+              relation: i.relation,
+              related_number: i.related_number,
+              lapsed: i.lapsed,
+              superseded: i.superseded,
             }));
         case 'invoice_archive':
           find(args['id']).archived_at = new Date().toISOString();
@@ -1551,12 +1587,25 @@ export function installMocks() {
           const stored = find(args['id']);
           const answer = (args['answer'] as Answer | null) ?? null;
           const on = (args['on'] as string | null) ?? null;
+          // mirrors `Store::may_accept`
+          const standing = related(stored);
+          if (answer === 'accepted' && standing.superseded) {
+            throw 'Ein ersetztes Angebot wird nicht angenommen, sein Ersatzangebot schon.';
+          }
+          if (
+            answer === 'accepted' &&
+            invoices.some(
+              m => m.id !== stored.id && m.answer === 'accepted' && groupOf(m) === groupOf(stored)
+            )
+          ) {
+            throw 'Ein anderes Angebot dieser Gruppe ist schon angenommen.';
+          }
           if (answer !== null || stored.answer !== null) {
             event(stored.id, answer ?? 'answer-removed', answer ? on : null);
           }
           stored.answer = answer;
           stored.answered_on = answer ? on : null;
-          return { ...stored };
+          return related(stored);
         }
         case 'invoice_events':
           return events.filter(e => e.invoice_id === args['id']);
@@ -1566,7 +1615,7 @@ export function installMocks() {
           return snapshots.get(id) ?? find(found?.invoice_id ?? 0).draft;
         }
         case 'invoice_get':
-          return find(args['id']);
+          return related(find(args['id']));
         case 'invoice_blank': {
           // mirrors `Settings::blank_draft`
           const kind = args['kind'] as Kind;
@@ -1606,6 +1655,7 @@ export function installMocks() {
             updated_at: '',
             archived_at: null,
             files: null,
+            ...UNRELATED,
           };
           followCustomer(stored.case_id, draft.customer.id, existing === undefined);
           stored.draft = draft;
@@ -1615,6 +1665,70 @@ export function installMocks() {
             event(stored.id, 'created', null, {}, draft);
           }
           return stored;
+        }
+        case 'offer_related': {
+          // mirrors `Store::related_offer`
+          const source = related(find(args['id'] as number));
+          const relation = args['relation'] as Relation;
+          if (source.kind !== 'offer' || source.status !== 'exported') {
+            throw 'Nachtrag, Alternative und Ersatz gibt es nur zu einem erstellten Angebot.';
+          }
+          if (relation === 'supplement' && source.answer === 'declined') {
+            throw 'Ein abgelehntes Angebot bekommt keinen Nachtrag.';
+          }
+          const taken = invoices.some(
+            m => m.id !== source.id && m.answer === 'accepted' && groupOf(m) === groupOf(source)
+          );
+          if (relation === 'alternative' && (source.answer === 'accepted' || taken)) {
+            throw 'Ein Angebot dieser Gruppe ist schon angenommen, eine Alternative kommt zu spät.';
+          }
+          if (relation === 'replacement' && source.answer === 'accepted') {
+            throw 'Ein angenommenes Angebot wird nicht ersetzt.';
+          }
+          const target =
+            relation !== 'replacement' && source.relation === relation && source.related_id !== null
+              ? source.related_id
+              : source.id;
+          const own = (contexts.find(c => c.id === source.context_id) as Context).settings;
+          const draft: InvoiceDraft =
+            relation === 'supplement'
+              ? {
+                  ...draftOf(source.draft.customer),
+                  buyer_reference: source.draft.buyer_reference,
+                  validity_days: own.offer.validity_days,
+                  layout: own.offer.layout || own.layout,
+                  intro: own.offer.intro ?? '',
+                  closing: own.offer.closing ?? '',
+                  offer_reference: false,
+                }
+              : structuredClone(source.draft);
+          draft.issue_date = today();
+          draft.delivery_date = today();
+          draft.delivery_end = null;
+          draft.frozen = null;
+          const offer: StoredInvoice = {
+            ...structuredClone(source),
+            id: nextId(),
+            number: null,
+            status: 'draft',
+            draft,
+            total: null,
+            exported_at: null,
+            paid_at: null,
+            payments: [],
+            answer: null,
+            answered_on: null,
+            archived_at: null,
+            updated_at: new Date().toISOString(),
+            files: null,
+            ...UNRELATED,
+            relation,
+            related_id: target,
+            related_number: find(target).number,
+          };
+          invoices.push(offer);
+          event(offer.id, 'created', null, { from: source.id }, offer.draft);
+          return offer;
         }
         case 'invoice_duplicate': {
           const copy: StoredInvoice = {
@@ -1631,6 +1745,7 @@ export function installMocks() {
             answer: null,
             answered_on: null,
             archived_at: null,
+            ...UNRELATED,
           };
           copy.draft.issue_date = today();
           copy.draft.delivery_date = today();
@@ -1704,6 +1819,10 @@ export function installMocks() {
           if (offer.kind !== 'offer' || offer.status !== 'exported') {
             throw 'Nur aus einem erstellten Angebot kann eine Rechnung entstehen.';
           }
+          const standing = related(offer);
+          if (standing.superseded || standing.lapsed) {
+            throw 'Ein ersetztes oder entfallenes Angebot wird nicht in Rechnung gestellt.';
+          }
           const own = (contexts.find(c => c.id === offer.context_id) as Context).settings;
           const { customer, positions, buyer_reference, note } = structuredClone(offer.draft);
           const draft: InvoiceDraft = {
@@ -1735,6 +1854,7 @@ export function installMocks() {
             updated_at: '',
             archived_at: null,
             files: null,
+            ...UNRELATED,
           };
           invoices.push(invoice);
           event(invoice.id, 'created', null, { from: offer.id }, invoice.draft);

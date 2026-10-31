@@ -23,6 +23,7 @@ use crate::model::{
 };
 use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
 use crate::rates::{self, Rate, RateDef, RateUsage};
+use crate::relations::{lapsed, Relation, RELATION_COLUMNS};
 use crate::units::{self, DraftRef, TemplateRef, Unit, UnitDef, UnitUsage};
 
 pub struct Store(Mutex<Connection>);
@@ -42,7 +43,7 @@ pub struct Sequence {
 
 /// What `PRAGMA user_version` says of a database this app has migrated; a backup of an older one is
 /// migrated on restore, so no step of `migrate` may ever be dropped.
-pub const SCHEMA_VERSION: i32 = 13;
+pub const SCHEMA_VERSION: i32 = 14;
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -119,6 +120,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 13 {
         crate::cases::migrate_to_cases(conn)?;
+    }
+    if version < 14 {
+        crate::relations::migrate_to_relations(conn)?;
     }
     crate::cases::ensure_started(conn)?;
     ensure_app_state(conn)
@@ -871,7 +875,7 @@ fn follow_rate(
 
 /// A new draft row in a Vorgang with its first event, which keeps the draft as it started; `from` is
 /// the document it was made of
-fn insert_draft(
+pub(crate) fn insert_draft(
     conn: &Connection,
     context_id: i64,
     kind: Kind,
@@ -954,18 +958,24 @@ fn stored(row: &Row) -> rusqlite::Result<StoredRow> {
     let draft: String = row.get("draft")?;
     let files: Option<String> = row.get("files")?;
     let status: String = row.get("status")?;
+    let kind = Kind::from_column(&row.get::<_, String>("kind")?);
+    let status = if status == "exported" {
+        Status::Exported
+    } else {
+        Status::Draft
+    };
+    let answer = row
+        .get::<_, Option<String>>("answer")?
+        .as_deref()
+        .and_then(Answer::from_column);
     Ok((
         StoredInvoice {
             id: row.get("id")?,
             case_id: row.get::<_, Option<i64>>("case_id")?.unwrap_or_default(),
             context_id: row.get("context_id")?,
-            kind: Kind::from_column(&row.get::<_, String>("kind")?),
+            kind,
             number: row.get("number")?,
-            status: if status == "exported" {
-                Status::Exported
-            } else {
-                Status::Draft
-            },
+            status,
             // filled below, `serde_json` errors do not fit rusqlite's error type
             draft: InvoiceDraft::blank(""),
             total: row.get("total")?,
@@ -973,14 +983,19 @@ fn stored(row: &Row) -> rusqlite::Result<StoredRow> {
             // from the payments, read apart
             paid_at: None,
             payments: Vec::new(),
-            answer: row
-                .get::<_, Option<String>>("answer")?
-                .as_deref()
-                .and_then(Answer::from_column),
+            answer,
             answered_on: row.get("answered_on")?,
             updated_at: row.get("updated_at")?,
             archived_at: row.get("archived_at")?,
             files: None,
+            relation: row
+                .get::<_, Option<String>>("relation")?
+                .as_deref()
+                .and_then(Relation::from_column),
+            related_id: row.get("related_id")?,
+            related_number: row.get("related_number")?,
+            lapsed: lapsed(kind, status, answer, row.get("taken")?),
+            superseded: row.get("superseded")?,
         },
         draft,
         files,
@@ -2067,15 +2082,15 @@ impl Store {
             .collect();
         let conn = self.conn();
         let payments = crate::history::all_payments(&conn)?;
-        let mut statement = conn.prepare(
+        let mut statement = conn.prepare(&format!(
             "SELECT id, context_id, kind, number, status, draft, total, exported_at, answer,
-                 answered_on, updated_at, archived_at, files, case_id,
+                 answered_on, updated_at, archived_at, files, case_id, {RELATION_COLUMNS},
                  (SELECT COUNT(*) FROM document_links
                   WHERE offer_id = invoices.id OR invoice_id = invoices.id) AS linked
              FROM invoices WHERE (?2 OR archived_at IS NULL) AND (?1 IS NULL OR context_id = ?1)
                  AND (?3 IS NULL OR kind = ?3)
              ORDER BY updated_at DESC, id DESC",
-        )?;
+        ))?;
         let rows = statement.query_map(
             params![context, with_archived, kind.map(Kind::as_str)],
             |row| Ok((stored(row)?, row.get::<_, u32>("linked")?)),
@@ -2114,6 +2129,10 @@ impl Store {
                 archived_at: invoice.archived_at,
                 linked,
                 case_id: invoice.case_id,
+                relation: invoice.relation,
+                related_number: invoice.related_number,
+                lapsed: invoice.lapsed,
+                superseded: invoice.superseded,
             })
         })
         .collect()
@@ -2123,9 +2142,12 @@ impl Store {
         let conn = self.conn();
         let (mut invoice, draft, files) = conn
             .query_row(
-                "SELECT id, context_id, kind, number, status, draft, total, exported_at, answer,
-                     answered_on, updated_at, archived_at, files, case_id
-                 FROM invoices WHERE id = ?1",
+                &format!(
+                    "SELECT id, context_id, kind, number, status, draft, total, exported_at,
+                         answer, answered_on, updated_at, archived_at, files, case_id,
+                         {RELATION_COLUMNS}
+                     FROM invoices WHERE id = ?1"
+                ),
                 [id],
                 stored,
             )
@@ -2295,6 +2317,10 @@ impl Store {
         }
         if offer.status != Status::Exported {
             bail!("only a created offer can become an invoice");
+        }
+        // out of the running: the replacement or the accepted alternative is billed instead
+        if offer.superseded || offer.lapsed {
+            bail!("Ein ersetztes oder entfallenes Angebot wird nicht in Rechnung gestellt.");
         }
         let mut draft = settings.blank_draft(Kind::Invoice, today);
         draft.customer = offer.draft.customer;
