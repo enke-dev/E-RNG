@@ -1,8 +1,10 @@
 /**
  * Writes the updater's `latest.json` for a release from its uploaded assets, once every platform is
  * built: tauri-action merges its own platform into the release's manifest without a lock, so parallel
- * builds could lose one. Keys and URLs are the ones tauri-action wrote: `{os}-{arch}` and
- * `{os}-{arch}-{bundle}`, the asset's API URL (the updater asks it for `application/octet-stream`).
+ * builds could lose one. Keys are the ones tauri-action wrote, `{os}-{arch}` and `{os}-{arch}-{bundle}`.
+ * URLs are the plain download links, not the API ones tauri-action writes (for private repos): the
+ * API allows 60 requests an hour per address without a login, an office or VPN sharing one used
+ * them up and the update failed with 403.
  *
  * `bun scripts/updater-manifest.ts <release id> <out file>`, with `GITHUB_REPOSITORY` and a token
  * for `gh`. Refuses a release that lacks a platform's bundle or signature.
@@ -14,7 +16,7 @@ import { argv, env, stdout } from 'node:process';
 interface Asset {
   id: number;
   name: string;
-  url: string;
+  browser_download_url: string;
 }
 
 /** What each platform ships for the updater, by the ending of its asset */
@@ -58,7 +60,7 @@ const platforms = Object.fromEntries(
     if (!bundle || !signature) {
       throw new Error(`${release.tag_name} has no ${ending} with its signature`);
     }
-    const entry = { signature: download(signature).trim(), url: bundle.url };
+    const entry = { signature: download(signature).trim(), url: bundle.browser_download_url };
     return keys.map(key => [key, entry]);
   })
 );
