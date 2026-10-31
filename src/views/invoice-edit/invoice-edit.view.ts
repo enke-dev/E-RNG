@@ -60,6 +60,7 @@ import {
   parseDays,
   validUntil,
 } from '../../common/utils/kind.utils.js';
+import { latest } from '../../common/utils/latest.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
 import { chargesVat, pickRate, rateChoice, rateText } from '../../common/utils/rates.utils.js';
 import reorderStyles from '../../common/utils/reorder.utils.css';
@@ -138,9 +139,10 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
 
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-  #previewTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Each edit renders at once (a render takes milliseconds), one at a time */
+  readonly #preview = latest(() => this.renderPreview());
 
-  /** Answers of the renderer can arrive out of order, only the newest request counts */
+  /** An answer for the invoice that was open before does not count */
   #previewRequest = 0;
 
   #timer: ReturnType<typeof setTimeout> | undefined;
@@ -159,7 +161,6 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       void this.persist({ updateUrl: false }).catch(notifyError);
     }
     clearTimeout(this.#timer);
-    clearTimeout(this.#previewTimer);
   }
 
   /** Opening another invoice keeps what was typed into a draft instead of dropping it */
@@ -176,7 +177,6 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     this.#dirty = false;
     // what was said about the last invoice (saved, exported) must not show up on the next one
     this.#previewRequest++;
-    clearTimeout(this.#previewTimer);
     this.preview = undefined;
     await this.load();
   }
@@ -257,7 +257,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       }
       this.links = stored ? await api.documentLinks(stored.id) : [];
       await this.runCheck();
-      void this.renderPreview();
+      void this.#preview();
     } catch (error) {
       notifyError(error);
     }
@@ -294,7 +294,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
   }
 
-  /** Call after every edit: re-renders now, asks the backend for totals and findings shortly after */
+  /** Call after every edit: renders the preview now, asks the backend for totals and findings shortly after */
   private changed() {
     this.#dirty = true;
     this.#revision++;
@@ -306,8 +306,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     this.requestUpdate();
     clearTimeout(this.#timer);
     this.#timer = setTimeout(() => void this.runCheck().catch(() => undefined), 300);
-    clearTimeout(this.#previewTimer);
-    this.#previewTimer = setTimeout(() => void this.renderPreview(), 100);
+    void this.#preview();
   }
 
   private edit(change: (draft: InvoiceDraft) => void) {
@@ -536,7 +535,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         );
       }
       await this.runCheck();
-      void this.renderPreview();
+      void this.#preview();
     } catch (error) {
       this.createError = isProduceError(error) ? error : errorText(error);
     } finally {
@@ -712,7 +711,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       this.linkable = undefined;
       this.links = await api.documentLinks(this.stored.id);
       this.announce();
-      this.namesOffers && void this.renderPreview();
+      this.namesOffers && void this.#preview();
     } catch (error) {
       notifyError(error);
     }
@@ -726,7 +725,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       await api.documentUnlink(...this.ends(other.id));
       this.links = await api.documentLinks(this.stored.id);
       this.announce();
-      this.namesOffers && void this.renderPreview();
+      this.namesOffers && void this.#preview();
     } catch (error) {
       notifyError(error);
     }

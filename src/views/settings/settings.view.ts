@@ -70,6 +70,7 @@ import {
 } from '../../common/utils/defaults.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
 import { parseDays } from '../../common/utils/kind.utils.js';
+import { latest } from '../../common/utils/latest.utils.js';
 import { registerLeaveCheck } from '../../common/utils/leave.utils.js';
 import { recall, remember } from '../../common/utils/memory.utils.js';
 import { notify, notifyError } from '../../common/utils/notify.utils.js';
@@ -288,7 +289,8 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         resolve: (answer: ImportChoice | undefined) => void;
       }
     | undefined;
-  #sampleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Each edit renders the sample at once (a render takes milliseconds), one at a time */
+  readonly #sample = latest(() => this.renderSample());
   #sampleRequest = 0;
 
   private get changed() {
@@ -519,7 +521,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     const id = this.layoutId;
     if (this.section === `${LAYOUT}standard`) {
       this.sample = undefined;
-      this.schedulePreview(0);
+      this.updateSample();
     }
     // a new layout starts as the built-in one, parts and all
     const layout =
@@ -545,7 +547,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     this.pointed = undefined;
     this.overForm = null;
     this.openPart = null;
-    this.schedulePreview(0);
+    this.updateSample();
     this.usage = undefined;
     if (id === null) {
       this.usage = [];
@@ -562,10 +564,9 @@ export class SettingsView extends ErngElement.withStyles(styles) {
     }
   }
 
-  /** The sample is rendered by the real template, a moment after the last edit */
-  private schedulePreview(delay = 100) {
-    clearTimeout(this.#sampleTimer);
-    this.#sampleTimer = setTimeout(() => void this.renderSample(), delay);
+  /** The sample is rendered by the real template */
+  private updateSample() {
+    void this.#sample();
   }
 
   private async renderSample() {
@@ -2010,7 +2011,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
         hint="Zeichnet Linien an die Ränder des Inhalts und den druckbaren Bereich"
         @change="${(e: Event) => {
           this.setGuides((e.target as HTMLInputElement).checked);
-          this.schedulePreview(0);
+          this.updateSample();
         }}"
       >
         Hilfslinien in der Vorschau
@@ -2153,7 +2154,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
             .layout="${layout}"
             @change="${() => {
               this.requestUpdate();
-              this.schedulePreview();
+              this.updateSample();
             }}"
             .guides="${this.guides}"
             .hover="${this.overSample}"
@@ -2161,7 +2162,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
             .tab="${this.pointed && !this.pointed.first ? 'page' : 'first'}"
             @guides-change="${(e: CustomEvent<boolean>) => {
               this.setGuides(e.detail);
-              this.schedulePreview(0);
+              this.updateSample();
             }}"
             @part-focus="${(
               e: CustomEvent<{ first: boolean; hovered: number | null; opened: number | null }>
