@@ -120,7 +120,10 @@ fn make(
     }
     let total = totals(&invoice).gross;
     let customs = store.all_custom_layouts().map_err(failed)?;
-    let branding = Branding::for_document(Kind::Invoice, &stored.draft, settings, &customs);
+    let branding = Branding {
+        version: store.draft_exports(stored.id).map_err(failed)?,
+        ..Branding::for_document(Kind::Invoice, &stored.draft, settings, &customs)
+    };
     let layout = branding.custom.clone();
     let work = Work(
         tempfile::Builder::new()
@@ -167,7 +170,10 @@ fn make_offer(
         .map_err(|problems| ProduceError::Input { problems })?;
     let total = totals(&invoice).gross;
     let customs = store.all_custom_layouts().map_err(failed)?;
-    let branding = Branding::for_document(Kind::Offer, &draft, settings, &customs);
+    let branding = Branding {
+        version: store.draft_exports(stored.id).map_err(failed)?,
+        ..Branding::for_document(Kind::Offer, &draft, settings, &customs)
+    };
     let layout = branding.custom.clone();
     let work = Work(
         tempfile::Builder::new()

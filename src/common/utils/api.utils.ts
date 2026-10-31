@@ -240,6 +240,51 @@ export interface InvoiceDraft {
 
 export type Status = 'draft' | 'exported';
 
+/** A payment received on an invoice */
+export interface Payment {
+  id: number;
+  /** Gross, a decimal like the totals */
+  amount: string;
+  /** ISO date */
+  paid_on: string;
+}
+
+/** What the customer said to a created offer */
+export type Answer = 'accepted' | 'declined';
+
+export type EventKind =
+  | 'created'
+  | 'draft-exported'
+  | 'baked'
+  | 'payment'
+  | 'payment-removed'
+  | 'accepted'
+  | 'declined'
+  | 'answer-removed'
+  | 'archived'
+  | 'restored';
+
+/** One entry of a document's history */
+export interface DocumentEvent {
+  id: number;
+  invoice_id: number;
+  kind: EventKind;
+  /** When it was recorded, UTC */
+  at: string;
+  /** The day it is about, where it has one (paid on, accepted on, the date of a created document) */
+  on: string | null;
+  /** Draft exports: which one, from 1 */
+  version?: number;
+  /** Baked: the number it got */
+  number?: string;
+  /** Payments: the amount, gross */
+  amount?: string;
+  /** Created: the document it was made from */
+  from?: number;
+  /** The data of that version is kept, it can be compared */
+  has_snapshot: boolean;
+}
+
 export interface StoredInvoice {
   id: number;
   /** The context (issuer) it was made under, for good */
@@ -251,8 +296,13 @@ export interface StoredInvoice {
   draft: InvoiceDraft;
   total: string | null;
   exported_at: string | null;
-  /** ISO date the exported invoice was paid on */
+  /** ISO date it was paid completely on: the day of the payment that made it */
   paid_at: string | null;
+  /** What was received on it, oldest first */
+  payments: Payment[];
+  /** Offers: what the customer said, and on which day */
+  answer: Answer | null;
+  answered_on: string | null;
   updated_at: string;
   /** Taken out of the list, it can be put back */
   archived_at: string | null;
@@ -295,7 +345,12 @@ export interface ListEntry {
   /** Offers: the day it is valid until, the issue date plus the days of the draft */
   valid_until: string | null;
   total: string | null;
+  /** Paid completely on */
   paid_at: string | null;
+  /** What was received so far, none without payments */
+  paid: string | null;
+  answer: Answer | null;
+  answered_on: string | null;
   updated_at: string;
   archived_at: string | null;
   /** How many documents of the other kind it is linked to */
@@ -510,6 +565,10 @@ export interface Format {
   date: string;
   /** The same for the written out date: `D. MMMM YYYY` */
   date_long: string;
+  /** The headline of a created document: `{title}`, `{draft_title}`, `{number}`, `{version}` */
+  title: string;
+  /** The same for a draft */
+  draft_title: string;
 }
 
 /** A layout the user made, it starts as the built-in one */
@@ -728,8 +787,18 @@ export const api = {
     invoke<StoredInvoice>('invoice_save', { id, contextId, kind, draft }),
   invoiceArchive: (id: number) => invoke<null>('invoice_archive', { id }),
   invoiceUnarchive: (id: number) => invoke<StoredInvoice>('invoice_unarchive', { id }),
+  /** Pays what is open on a day, or takes all payments back (`null`) */
   invoiceSetPaid: (id: number, paidAt: string | null) =>
     invoke<StoredInvoice>('invoice_set_paid', { id, paidAt }),
+  invoiceAddPayment: (id: number, amount: string, paidOn: string) =>
+    invoke<StoredInvoice>('invoice_add_payment', { id, amount, paidOn }),
+  invoiceRemovePayment: (paymentId: number) =>
+    invoke<StoredInvoice>('invoice_remove_payment', { paymentId }),
+  /** Marks a created offer as accepted or declined on a day, or takes the answer back (`null`) */
+  offerSetAnswer: (id: number, answer: Answer | null, on: string | null) =>
+    invoke<StoredInvoice>('offer_set_answer', { id, answer, on }),
+  invoiceEvents: (id: number) => invoke<DocumentEvent[]>('invoice_events', { id }),
+  invoiceSnapshot: (eventId: number) => invoke<InvoiceDraft>('invoice_snapshot', { eventId }),
   invoiceDuplicate: (id: number) => invoke<StoredInvoice>('invoice_duplicate', { id }),
   invoiceDelete: (id: number) => invoke<null>('invoice_delete', { id }),
   /** A new invoice draft from a created offer, linked to it, with the layout and texts of invoices */

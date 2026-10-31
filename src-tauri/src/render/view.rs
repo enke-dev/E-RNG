@@ -46,6 +46,8 @@ pub struct Branding {
     pub offer_label: String,
     /// The label of each position's unit, by position: the lines are the positions in order
     pub unit_labels: Vec<String>,
+    /// How many times it was exported as a draft; a draft shows the version its next export is
+    pub version: u32,
 }
 
 /// The seller's fields that only layouts use: they are not part of the invoice data and not in
@@ -147,7 +149,49 @@ impl Branding {
             intro: pick(draft.intro.as_deref(), settings.intro(kind)),
             closing: pick(draft.closing.as_deref(), settings.closing(kind)),
             unit_labels: draft.positions.iter().map(Position::unit_label).collect(),
+            version: 0,
         }
+    }
+}
+
+/// The headline of a document: a credit note's is fixed, else the layout's pattern for a draft or
+/// a created one
+fn title_of(
+    credit: bool,
+    branding: &Branding,
+    format: &Format,
+    number: &str,
+    version: &str,
+) -> String {
+    if credit {
+        return "Gutschrift".to_owned();
+    }
+    let pattern = if branding.draft {
+        &format.draft_title
+    } else {
+        &format.title
+    };
+    headline(pattern, &branding.wording, branding.draft, number, version)
+}
+
+/// The headline as the layout's pattern writes it: `{title}`, `{draft_title}`, `{number}` and
+/// `{version}` are filled in. A pattern that comes out empty gives the plain wording.
+fn headline(pattern: &str, wording: &Wording, draft: bool, number: &str, version: &str) -> String {
+    let plain = if draft {
+        &wording.draft_title
+    } else {
+        &wording.title
+    };
+    let text = pattern
+        .replace("{title}", &wording.title)
+        .replace("{draft_title}", &wording.draft_title)
+        .replace("{number}", number)
+        .replace("{version}", version);
+    let text = text.trim();
+    if text.is_empty() {
+        plain.clone()
+    } else {
+        text.to_owned()
     }
 }
 
@@ -155,6 +199,8 @@ impl Branding {
 pub struct InvoiceView {
     pub title: String,
     pub number: String,
+    /// The version, for `{version}`; empty for a document never exported as a draft
+    pub version: String,
     pub issue: YearMonthDay,
     pub seller: PartyView,
     /// The seller's single fields, one text each, for the `{seller_*}` placeholders
@@ -741,15 +787,17 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         text.as_deref()
             .and_then(|text| with_validity(text, valid_until.as_deref()))
     };
-    let title = match (credit, branding.draft) {
-        (true, _) => "Gutschrift",
-        (false, false) => branding.wording.title.as_str(),
-        (false, true) => branding.wording.draft_title.as_str(),
+    let number = invoice.number.clone().unwrap_or_default();
+    let version = match branding.version {
+        0 => String::new(),
+        version => version.to_string(),
     };
+    let title = title_of(credit, branding, format, &number, &version);
 
     InvoiceView {
-        title: title.to_owned(),
-        number: invoice.number.clone().unwrap_or_default(),
+        title,
+        number,
+        version,
         issue: YearMonthDay {
             year: issue.year(),
             month: issue.month(),
@@ -1122,6 +1170,46 @@ mod tests {
         };
         let view = build(&invoice, &shown_as_draft, &Format::default());
         assert_eq!(view.title, "Offertenentwurf");
+    }
+
+    #[test]
+    fn the_headline_follows_the_layouts_patterns_with_number_and_version() {
+        let settings = crate::draft::fixtures::settings();
+        let (draft, invoice) = offer_document(&settings);
+        let branding = Branding {
+            draft: true,
+            version: 2,
+            ..Branding::for_document(Kind::Offer, &draft, &settings, &[])
+        };
+        let format = Format {
+            title: "Ihr {title} {number}".into(),
+            draft_title: "{draft_title} · Version {version}".into(),
+            ..Format::default()
+        };
+
+        let view = build(&invoice, &branding, &format);
+        assert_eq!(view.title, "Angebotsentwurf · Version 2");
+        assert_eq!(view.version, "2");
+
+        let created = Branding {
+            draft: false,
+            ..branding
+        };
+        let view = build(&invoice, &created, &format);
+        assert_eq!(view.title, format!("Ihr Angebot {}", view.number));
+
+        // a pattern that comes out empty is the plain wording, no version is empty
+        let empty = Format {
+            title: "{version}".into(),
+            ..Format::default()
+        };
+        let never_shown = Branding {
+            version: 0,
+            ..created
+        };
+        let view = build(&invoice, &never_shown, &empty);
+        assert_eq!(view.title, "Angebot");
+        assert_eq!(view.version, "");
     }
 
     #[test]

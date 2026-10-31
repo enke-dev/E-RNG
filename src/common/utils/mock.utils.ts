@@ -8,10 +8,13 @@ import { mockIPC } from '@tauri-apps/api/mocks';
 import unitNames from '../../../src-tauri/data/unit-names.json' with { type: 'json' };
 import type {
   Address,
+  Answer,
   CatalogEntry,
   Context,
   Customer,
   CustomLayout,
+  DocumentEvent,
+  EventKind,
   InvoiceDraft,
   Kind,
   Linked,
@@ -415,6 +418,8 @@ const builtinLayout = (): CustomLayout => ({
     website_bare: false,
     date: 'DD.MM.YYYY',
     date_long: 'D. MMMM YYYY',
+    title: '{title}',
+    draft_title: '{draft_title}',
   },
   archived: false,
 });
@@ -669,6 +674,9 @@ const invoices: StoredInvoice[] = [
     total: '1130.50',
     exported_at: '2026-10-02 08:00:00',
     paid_at: null,
+    payments: [],
+    answer: null,
+    answered_on: null,
     updated_at: '2026-10-02 08:00:00',
     archived_at: null,
     files: null,
@@ -683,6 +691,9 @@ const invoices: StoredInvoice[] = [
     total: '1130.50',
     exported_at: null,
     paid_at: null,
+    payments: [],
+    answer: null,
+    answered_on: null,
     updated_at: '2026-10-05 09:00:00',
     archived_at: null,
     files: null,
@@ -708,11 +719,72 @@ const invoices: StoredInvoice[] = [
     total: '1130.50',
     exported_at: o.number ? `${o.issued} 08:00:00` : null,
     paid_at: null,
+    payments: [],
+    answer: null,
+    answered_on: null,
     updated_at: `${o.issued} 08:00:00`,
     archived_at: null,
     files: null,
   })),
 ];
+
+/** What happened to the mock's documents, as the store records it */
+const events: DocumentEvent[] = invoices.flatMap((i): DocumentEvent[] => [
+  ...(i.exported_at
+    ? [
+        {
+          id: i.id * 100,
+          invoice_id: i.id,
+          kind: 'baked' as const,
+          at: i.exported_at,
+          on: i.draft.issue_date,
+          number: i.number ?? undefined,
+          has_snapshot: true,
+        },
+      ]
+    : []),
+]);
+
+/** Notes an event now */
+function event(
+  id: number,
+  kind: EventKind,
+  on: string | null,
+  detail: Partial<DocumentEvent> = {}
+) {
+  events.push({
+    id: Math.max(0, ...events.map(e => e.id)) + 1,
+    invoice_id: id,
+    kind,
+    at: new Date().toISOString(),
+    on,
+    has_snapshot: false,
+    ...detail,
+  });
+}
+
+/** Adds decimals as the store does, two places */
+const sum = (amounts: string[]) => amounts.reduce((total, a) => total + Number(a), 0).toFixed(2);
+
+function pay(stored: StoredInvoice, typed: string, paidOn: string) {
+  // the store reads `1.130,50` and `1130.50` alike
+  const amount = typed.includes(',') ? typed.replace(/\./g, '').replace(',', '.') : typed;
+  const id = Math.max(0, ...invoices.flatMap(i => i.payments.map(p => p.id))) + 1;
+  stored.payments = [...stored.payments, { id, amount, paid_on: paidOn }];
+  event(stored.id, 'payment', paidOn, { amount });
+}
+
+/** Paid completely on the day the payments reached the total */
+function settle(stored: StoredInvoice) {
+  let total = 0;
+  stored.paid_at = null;
+  for (const payment of stored.payments) {
+    total += Number(payment.amount);
+    if (stored.paid_at === null && total >= Number(stored.total ?? 0)) {
+      stored.paid_at = payment.paid_on;
+    }
+  }
+}
 
 /** Offer id and invoice id, the first offer was billed with the first invoice */
 let links: [number, number][] = [[3, 1]];
@@ -1252,8 +1324,18 @@ export function installMocks() {
           );
           return null;
         }
-        case 'invoice_draft_pdf':
+        case 'invoice_draft_pdf': {
+          if (args['id'] !== null) {
+            const version = events.filter(
+              e => e.invoice_id === args['id'] && e.kind === 'draft-exported'
+            ).length;
+            event(args['id'] as number, 'draft-exported', null, {
+              version: version + 1,
+              has_snapshot: true,
+            });
+          }
           return null;
+        }
         case 'preview_invoice': {
           const draft = args['draft'] as InvoiceDraft;
           const lines = draft.positions.map(
@@ -1289,22 +1371,76 @@ export function installMocks() {
               issue_date: i.draft.issue_date,
               total: i.total,
               paid_at: i.paid_at,
+              paid: i.payments.length > 0 ? sum(i.payments.map(p => p.amount)) : null,
+              answer: i.answer,
+              answered_on: i.answered_on,
               updated_at: i.updated_at,
               archived_at: i.archived_at,
               linked: links.filter(l => l.includes(i.id)).length,
             }));
         case 'invoice_archive':
           find(args['id']).archived_at = new Date().toISOString();
+          event(args['id'] as number, 'archived', null);
           return null;
         case 'invoice_unarchive': {
           const stored = find(args['id']);
           stored.archived_at = null;
+          event(stored.id, 'restored', null);
           return { ...stored };
         }
         case 'invoice_set_paid': {
           const stored = find(args['id']);
-          stored.paid_at = (args['paidAt'] as string | null) ?? null;
+          const paidOn = (args['paidAt'] as string | null) ?? null;
+          if (paidOn === null) {
+            stored.payments.forEach(p =>
+              event(stored.id, 'payment-removed', p.paid_on, { amount: p.amount })
+            );
+            stored.payments = [];
+          } else {
+            const open =
+              Number(stored.total ?? 0) - Number(sum(stored.payments.map(p => p.amount)));
+            if (open > 0) {
+              pay(stored, open.toFixed(2), paidOn);
+            }
+          }
+          settle(stored);
           return { ...stored };
+        }
+        case 'invoice_add_payment': {
+          const stored = find(args['id']);
+          pay(stored, String(args['amount']), String(args['paidOn']));
+          settle(stored);
+          return { ...stored };
+        }
+        case 'invoice_remove_payment': {
+          const stored = invoices.find(i => i.payments.some(p => p.id === args['paymentId']));
+          if (!stored) {
+            throw new Error('unknown payment');
+          }
+          const payment = stored.payments.find(p => p.id === args['paymentId']);
+          stored.payments = stored.payments.filter(p => p !== payment);
+          event(stored.id, 'payment-removed', payment?.paid_on ?? null, {
+            amount: payment?.amount,
+          });
+          settle(stored);
+          return { ...stored };
+        }
+        case 'offer_set_answer': {
+          const stored = find(args['id']);
+          const answer = (args['answer'] as Answer | null) ?? null;
+          const on = (args['on'] as string | null) ?? null;
+          if (answer !== null || stored.answer !== null) {
+            event(stored.id, answer ?? 'answer-removed', answer ? on : null);
+          }
+          stored.answer = answer;
+          stored.answered_on = answer ? on : null;
+          return { ...stored };
+        }
+        case 'invoice_events':
+          return events.filter(e => e.invoice_id === args['id']);
+        case 'invoice_snapshot': {
+          const found = events.find(e => e.id === args['eventId']);
+          return find(found?.invoice_id ?? 0).draft;
         }
         case 'invoice_get':
           return find(args['id']);
@@ -1337,6 +1473,9 @@ export function installMocks() {
             total: null,
             exported_at: null,
             paid_at: null,
+            payments: [],
+            answer: null,
+            answered_on: null,
             updated_at: '',
             archived_at: null,
             files: null,
@@ -1345,6 +1484,7 @@ export function installMocks() {
           stored.total = check(draft).totals?.gross ?? null;
           if (!existing) {
             invoices.push(stored);
+            event(stored.id, 'created', null);
           }
           return stored;
         }
@@ -1356,6 +1496,9 @@ export function installMocks() {
             status: 'draft',
             exported_at: null,
             paid_at: null,
+            payments: [],
+            answer: null,
+            answered_on: null,
             archived_at: null,
           };
           copy.draft.issue_date = today();
@@ -1363,6 +1506,7 @@ export function installMocks() {
           copy.draft.delivery_end = copy.draft.delivery_end === null ? null : today();
           copy.draft.frozen = null;
           invoices.push(copy);
+          event(copy.id, 'created', null, { from: args['id'] as number });
           return copy;
         }
         case 'invoice_delete':
@@ -1402,11 +1546,15 @@ export function installMocks() {
             total: check(draft).totals?.gross ?? null,
             exported_at: null,
             paid_at: null,
+            payments: [],
+            answer: null,
+            answered_on: null,
             updated_at: '',
             archived_at: null,
             files: null,
           };
           invoices.push(invoice);
+          event(invoice.id, 'created', null, { from: offer.id });
           links.push([offer.id, invoice.id]);
           return invoice;
         }
@@ -1466,6 +1614,10 @@ export function installMocks() {
           }
           stored.status = 'exported';
           stored.number = numberOf(stored);
+          event(stored.id, 'baked', stored.draft.issue_date, {
+            number: stored.number,
+            has_snapshot: true,
+          });
           stored.exported_at = `${today()} 12:00:00`;
           stored.draft.frozen = settings;
           stored.files = {

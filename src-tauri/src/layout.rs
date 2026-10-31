@@ -256,6 +256,11 @@ pub struct Format {
     pub date: String,
     /// The same for the written out date (infos part): `D. MMMM YYYY`
     pub date_long: String,
+    /// The headline of a created document; `{title}` and `{draft_title}` are the words of its kind,
+    /// `{number}` its number, `{version}` how many times it went out as a draft
+    pub title: String,
+    /// The same for a draft: `Angebotsentwurf · Version {version}`
+    pub draft_title: String,
 }
 
 impl Default for Format {
@@ -274,6 +279,8 @@ impl Default for Format {
             website_bare: false,
             date: "DD.MM.YYYY".into(),
             date_long: "D. MMMM YYYY".into(),
+            title: "{title}".into(),
+            draft_title: "{draft_title}".into(),
         }
     }
 }

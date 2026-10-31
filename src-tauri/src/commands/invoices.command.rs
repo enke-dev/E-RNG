@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::draft::{build_invoice, totals};
-use crate::model::{InvoiceDraft, Kind, Linked, ListEntry, StoredInvoice};
+use crate::model::{Answer, Event, InvoiceDraft, Kind, Linked, ListEntry, StoredInvoice};
 use crate::store::Store;
 use crate::utils::{today, CommandError, CommandResult};
 
@@ -43,6 +43,56 @@ pub fn invoice_set_paid(
     store
         .set_paid(id, paid_at.as_deref())
         .map_err(CommandError::from)
+}
+
+/// Notes a payment (gross amount, ISO date) received on an exported invoice
+#[tauri::command]
+pub fn invoice_add_payment(
+    store: State<'_, Store>,
+    id: i64,
+    amount: String,
+    paid_on: String,
+) -> CommandResult<StoredInvoice> {
+    store
+        .add_payment(id, &amount, &paid_on)
+        .map_err(CommandError::from)
+}
+
+/// Takes a payment back
+#[tauri::command]
+pub fn invoice_remove_payment(
+    store: State<'_, Store>,
+    payment_id: i64,
+) -> CommandResult<StoredInvoice> {
+    store.remove_payment(payment_id).map_err(CommandError::from)
+}
+
+/// Marks a created offer as accepted or declined on a day (ISO), or takes the answer back
+#[tauri::command]
+pub fn offer_set_answer(
+    store: State<'_, Store>,
+    id: i64,
+    answer: Option<Answer>,
+    on: Option<String>,
+) -> CommandResult<StoredInvoice> {
+    let answer = match (answer, on.as_deref()) {
+        (Some(answer), Some(on)) => Some((answer, on)),
+        (Some(_), None) => return Err("Das Datum der Antwort fehlt.".into()),
+        (None, _) => None,
+    };
+    store.set_answer(id, answer).map_err(CommandError::from)
+}
+
+/// The data a version of a document was exported or baked with, to compare versions
+#[tauri::command]
+pub fn invoice_snapshot(store: State<'_, Store>, event_id: i64) -> CommandResult<InvoiceDraft> {
+    store.snapshot(event_id).map_err(CommandError::from)
+}
+
+/// What happened to a document, in order
+#[tauri::command]
+pub fn invoice_events(store: State<'_, Store>, id: i64) -> CommandResult<Vec<Event>> {
+    store.events(id).map_err(CommandError::from)
 }
 
 /// Creates (`id` is `None`, under `context_id`, of `kind`) or updates a draft, which stays under the

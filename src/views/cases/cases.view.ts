@@ -43,13 +43,15 @@ const STAGES: [Stage, string][] = [
   ['draft', 'Entwürfe'],
   ['valid', 'Angebote gültig'],
   ['expired', 'Angebote abgelaufen'],
+  ['accepted', 'Angebote angenommen'],
+  ['declined', 'Angebote abgelehnt'],
   ['open', 'Rechnungen offen'],
   ['paid', 'Rechnungen bezahlt'],
 ];
 
 /** The stages a kind can be in; a draft is either */
 const STAGES_OF: Record<Kind, Stage[]> = {
-  offer: ['draft', 'valid', 'expired'],
+  offer: ['draft', 'valid', 'expired', 'accepted', 'declined'],
   invoice: ['draft', 'open', 'paid'],
 };
 

@@ -5,6 +5,7 @@ mod creation;
 mod draft;
 #[cfg(test)]
 mod end_to_end;
+mod history;
 mod invisible;
 mod invoice;
 mod layout;
@@ -182,6 +183,11 @@ pub fn run() {
             commands::invoices_command::invoice_get,
             commands::invoices_command::invoice_save,
             commands::invoices_command::invoice_set_paid,
+            commands::invoices_command::invoice_add_payment,
+            commands::invoices_command::invoice_remove_payment,
+            commands::invoices_command::invoice_events,
+            commands::invoices_command::invoice_snapshot,
+            commands::invoices_command::offer_set_answer,
             commands::invoices_command::invoices_list,
             commands::invoices_command::offer_to_invoice,
             commands::layouts_command::layout_delete,

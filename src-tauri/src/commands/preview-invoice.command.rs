@@ -52,11 +52,19 @@ pub(crate) fn shown(
         _ => None,
     };
 
+    // a draft shows the version its next export will be, a created document how many there were
+    let exports = id
+        .map(|id| store.draft_exports(id))
+        .transpose()?
+        .unwrap_or(0);
+    let version = exports + u32::from(is_draft);
+
     let customs = store.all_custom_layouts()?;
     Ok(
         build_invoice(&for_preview(draft), &current, &number).map(|invoice| {
             let mut branding = Branding {
                 draft: is_draft,
+                version,
                 ..Branding::for_document(kind, draft, &settings, &customs)
             };
             if let Some(offers) = offers {
@@ -126,5 +134,9 @@ pub async fn invoice_draft_pdf(
         Ok(())
     })
     .await??;
+    // a stored draft that went out is a version, as the PDF counted it
+    if let Some(id) = id {
+        store.record_draft_export(id, &draft)?;
+    }
     Ok(())
 }

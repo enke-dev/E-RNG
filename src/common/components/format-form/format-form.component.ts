@@ -144,6 +144,27 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
     `;
   }
 
+  /** The pattern of a headline, its placeholders said in the hint */
+  private headline(
+    label: string,
+    value: string,
+    placeholder: string,
+    apply: (value: string) => void
+  ) {
+    return html`
+      <wa-input
+        label="${label}"
+        placeholder="${placeholder}"
+        hint="{title} und {draft_title} sind die Bezeichnungen der Belegart, {number} die Nummer, {version} wie oft der Entwurf exportiert wurde"
+        .value="${value}"
+        @input="${(e: Event) => {
+          apply(text(e));
+          this.changed();
+        }}"
+      ></wa-input>
+    `;
+  }
+
   /** Which date fields show their own field although the value is one of the list */
   private customDate = new Set<string>();
 
@@ -199,6 +220,10 @@ export class FormatFormComponent extends ErngElement.withStyles(styles) {
         <div class="fields">
           ${this.pattern('Datum', f.date, DATES, v => (f.date = v))}
           ${this.pattern('Datum ausgeschrieben', f.date_long, LONG_DATES, v => (f.date_long = v))}
+        </div>
+        <div class="fields">
+          ${this.headline('Überschrift', f.title, '{title}', v => (f.title = v))}
+          ${this.headline('Überschrift eines Entwurfs', f.draft_title, '{draft_title}', v => (f.draft_title = v))}
         </div>
       </div>
     `;

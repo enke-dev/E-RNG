@@ -8,9 +8,9 @@ import { KINDS, otherKind } from './kind.utils.js';
 
 /**
  * Where a document stands: a draft, or created. An invoice is open until it is paid, an offer valid
- * until its day has passed.
+ * until its day has passed or the customer answered.
  */
-export type Stage = 'draft' | 'open' | 'paid' | 'valid' | 'expired';
+export type Stage = 'draft' | 'open' | 'paid' | 'valid' | 'expired' | 'accepted' | 'declined';
 
 export const STAGES: Record<Kind, [Stage, string][]> = {
   invoice: [
@@ -22,19 +22,24 @@ export const STAGES: Record<Kind, [Stage, string][]> = {
     ['draft', 'Entwürfe'],
     ['valid', 'Gültig'],
     ['expired', 'Abgelaufen'],
+    ['accepted', 'Angenommen'],
+    ['declined', 'Abgelehnt'],
   ],
 };
 
-/** A created offer whose day has passed; one without a validity never expires */
+/** A created offer whose day has passed unanswered; one without a validity never expires */
 export const expired = (entry: ListEntry) =>
-  entry.status === 'exported' && entry.valid_until !== null && entry.valid_until < today();
+  entry.status === 'exported' &&
+  entry.answer === null &&
+  entry.valid_until !== null &&
+  entry.valid_until < today();
 
 export const stageOf = (entry: ListEntry): Stage => {
   if (entry.status === 'draft') {
     return 'draft';
   }
   if (entry.kind === 'offer') {
-    return expired(entry) ? 'expired' : 'valid';
+    return entry.answer ?? (expired(entry) ? 'expired' : 'valid');
   }
   return entry.paid_at ? 'paid' : 'open';
 };
@@ -56,6 +61,14 @@ export function tagsOf(entry: ListEntry, mixed: boolean) {
     mixed ? html`<wa-tag variant="neutral" size="s">${contextName(entry)}</wa-tag>` : null,
     entry.archived_at ? html`<wa-tag variant="neutral" size="s">Archiviert</wa-tag>` : null,
     expired(entry) ? html`<wa-tag variant="neutral" size="s">Abgelaufen</wa-tag>` : null,
+    entry.answer === 'accepted'
+      ? html`<wa-tag variant="success" size="s">Angenommen</wa-tag>`
+      : entry.answer === 'declined'
+        ? html`<wa-tag variant="danger" size="s">Abgelehnt</wa-tag>`
+        : null,
+    entry.paid !== null && entry.paid_at === null
+      ? html`<wa-tag variant="warning" size="s">Teilweise bezahlt</wa-tag>`
+      : null,
     entry.status === 'exported'
       ? html`
           <wa-badge pill class="created" variant="brand" title="${created}">

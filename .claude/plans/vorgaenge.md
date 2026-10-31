@@ -58,7 +58,8 @@ from the history of its documents. Users who only want offers and invoices never
   received, accepted, declined, archived, added to a Vorgang. No event for edits (autosave); what
   changed shows in the diff of two versions. Undoing a mark (a payment, accepted) is an event of its
   own. Each event keeps the time it was recorded and, where it has one, the date it is about (paid on
-  a day in the past); the timeline orders by the latter. The backbone of every history view.
+  a day in the past, a backdated invoice); the timeline is in the order recorded and shows that date
+  with the event. The backbone of every history view.
 - **Payments**: an invoice gets payments (amount, date) instead of its single paid date. Paid
   completely when they add up to its gross total; the open amount is the rest. Each payment is an
   event. A new payment proposes the open amount and today. The Schlussrechnung later deducts what was

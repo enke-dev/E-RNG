@@ -14,9 +14,11 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::context::{Context, ContextUsage, Disposition, BRANDS};
 use crate::draft::{build_invoice, totals};
+use crate::history::record;
 use crate::model::{
-    CustomLayout, Customer, InvoiceDraft, InvoiceFiles, Kind, LayoutUsage, Linked, ListEntry,
-    Position, PositionTemplate, Settings, Status, StoredFile, StoredInvoice,
+    Answer, CustomLayout, Customer, EventDetail, EventKind, InvoiceDraft, InvoiceFiles, Kind,
+    LayoutUsage, Linked, ListEntry, Position, PositionTemplate, Settings, Status, StoredFile,
+    StoredInvoice,
 };
 use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
 use crate::rates::{self, Rate, RateDef, RateUsage};
@@ -39,9 +41,9 @@ pub struct Sequence {
 
 /// What `PRAGMA user_version` says of a database this app has migrated; a backup of an older one is
 /// migrated on restore, so no step of `migrate` may ever be dropped.
-pub const SCHEMA_VERSION: i32 = 11;
+pub const SCHEMA_VERSION: i32 = 12;
 
-fn migrate(conn: &Connection) -> Result<()> {
+pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version > SCHEMA_VERSION {
         bail!("the database was written by a newer version of the app");
@@ -110,6 +112,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 11 {
         migrate_to_rates(conn)?;
+    }
+    if version < 12 {
+        crate::history::migrate_to_history(conn)?;
     }
     ensure_app_state(conn)
 }
@@ -580,7 +585,7 @@ fn migrate_to_floors(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+pub(crate) fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name = ?2",
         [table, column],
@@ -847,6 +852,29 @@ fn follow_rate(
     Ok(())
 }
 
+/// A new draft row with its first event; `from` is the document it was made of
+fn insert_draft(
+    conn: &Connection,
+    context_id: i64,
+    kind: Kind,
+    json: &str,
+    total: Option<&str>,
+    from: Option<i64>,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO invoices (context_id, kind, status, draft, total, updated_at)
+         VALUES (?1, ?2, 'draft', ?3, ?4, datetime('now'))",
+        params![context_id, kind.as_str(), json, total],
+    )?;
+    let id = conn.last_insert_rowid();
+    let detail = EventDetail {
+        from,
+        ..EventDetail::default()
+    };
+    record(conn, id, EventKind::Created, None, &detail, None)?;
+    Ok(id)
+}
+
 fn new_uid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -920,7 +948,14 @@ fn stored(row: &Row) -> rusqlite::Result<StoredRow> {
             draft: InvoiceDraft::blank(""),
             total: row.get("total")?,
             exported_at: row.get("exported_at")?,
-            paid_at: row.get("paid_at")?,
+            // from the payments, read apart
+            paid_at: None,
+            payments: Vec::new(),
+            answer: row
+                .get::<_, Option<String>>("answer")?
+                .as_deref()
+                .and_then(Answer::from_column),
+            answered_on: row.get("answered_on")?,
             updated_at: row.get("updated_at")?,
             archived_at: row.get("archived_at")?,
             files: None,
@@ -965,6 +1000,12 @@ impl Store {
     #[cfg(test)]
     pub fn in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)
+    }
+
+    /// A store on a connection a test prepared, migrated
+    #[cfg(test)]
+    pub(crate) fn from_connection(conn: Connection) -> Result<Self> {
+        Self::init(conn)
     }
 
     #[cfg(test)]
@@ -1076,7 +1117,7 @@ impl Store {
         }
     }
 
-    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+    pub(crate) fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         // a panic elsewhere leaves SQLite itself consistent (it rolls back), so keep serving
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -1993,9 +2034,10 @@ impl Store {
             .filter_map(|c| Some((c.id?, c.settings.seller.name)))
             .collect();
         let conn = self.conn();
+        let payments = crate::history::all_payments(&conn)?;
         let mut statement = conn.prepare(
-            "SELECT id, context_id, kind, number, status, draft, total, exported_at, paid_at,
-                 updated_at, archived_at, files,
+            "SELECT id, context_id, kind, number, status, draft, total, exported_at, answer,
+                 answered_on, updated_at, archived_at, files,
                  (SELECT COUNT(*) FROM document_links
                   WHERE offer_id = invoices.id OR invoice_id = invoices.id) AS linked
              FROM invoices WHERE (?2 OR archived_at IS NULL) AND (?1 IS NULL OR context_id = ?1)
@@ -2017,6 +2059,10 @@ impl Store {
                 .or_else(|| sellers.get(&invoice.context_id).cloned())
                 .unwrap_or_default();
             let valid_until = draft.valid_until().filter(|_| invoice.kind == Kind::Offer);
+            let (paid, paid_at) = crate::history::settle(
+                invoice.total.as_deref(),
+                payments.get(&invoice.id).map_or(&[], Vec::as_slice),
+            );
             Ok(ListEntry {
                 id: invoice.id,
                 context_id: invoice.context_id,
@@ -2028,7 +2074,10 @@ impl Store {
                 issue_date: draft.issue_date,
                 valid_until,
                 total: invoice.total,
-                paid_at: invoice.paid_at,
+                paid_at,
+                paid,
+                answer: invoice.answer,
+                answered_on: invoice.answered_on,
                 updated_at: invoice.updated_at,
                 archived_at: invoice.archived_at,
                 linked,
@@ -2041,8 +2090,8 @@ impl Store {
         let conn = self.conn();
         let (mut invoice, draft, files) = conn
             .query_row(
-                "SELECT id, context_id, kind, number, status, draft, total, exported_at, paid_at,
-                     updated_at, archived_at, files
+                "SELECT id, context_id, kind, number, status, draft, total, exported_at, answer,
+                     answered_on, updated_at, archived_at, files
                  FROM invoices WHERE id = ?1",
                 [id],
                 stored,
@@ -2056,25 +2105,9 @@ impl Store {
             .map(Position::normalized)
             .collect();
         invoice.files = files.map(|f| serde_json::from_str(&f)).transpose()?;
+        invoice.payments = crate::history::payments_of(&conn, id)?;
+        invoice.paid_at = crate::history::settle(invoice.total.as_deref(), &invoice.payments).1;
         Ok(invoice)
-    }
-
-    /// Marks an exported invoice as paid on a date, or as open again (`None`). The invoice itself stays
-    /// locked, this is the one thing that happens to it afterwards. Offers are not paid.
-    pub fn set_paid(&self, id: i64, paid_at: Option<&str>) -> Result<StoredInvoice> {
-        if let Some(date) = paid_at {
-            en16931::Date::parse(date)
-                .with_context(|| format!("the date of payment {date:?} is not a date"))?;
-        }
-        let changed = self.conn().execute(
-            "UPDATE invoices SET paid_at = ?1 WHERE id = ?2 AND status = 'exported'
-                 AND kind = 'invoice'",
-            params![paid_at, id],
-        )?;
-        if changed == 0 {
-            bail!("only an exported invoice can be paid");
-        }
-        self.invoice(id)
     }
 
     /// Creates a draft of a kind under a context (`id` is `None`) or updates one, which stays under
@@ -2101,12 +2134,7 @@ impl Store {
                 }
                 id
             } else {
-                conn.execute(
-                    "INSERT INTO invoices (context_id, kind, status, draft, total, updated_at)
-                     VALUES (?1, ?2, 'draft', ?3, ?4, datetime('now'))",
-                    params![context_id, kind.as_str(), json, total],
-                )?;
-                conn.last_insert_rowid()
+                insert_draft(&conn, context_id, kind, &json, total, None)?
             }
         };
         self.invoice(id)
@@ -2127,6 +2155,7 @@ impl Store {
             "DELETE FROM document_links WHERE offer_id = ?1 OR invoice_id = ?1",
             [id],
         )?;
+        crate::history::forget(&tx, id)?;
         tx.commit()?;
         Ok(())
     }
@@ -2143,7 +2172,16 @@ impl Store {
         draft.frozen = None;
         draft.frozen_layout = None;
         draft.frozen_offers = Vec::new();
-        self.save_draft(None, source.context_id, source.kind, &draft, None)
+        let json = serde_json::to_string(&draft)?;
+        let copy = insert_draft(
+            &self.conn(),
+            source.context_id,
+            source.kind,
+            &json,
+            None,
+            Some(id),
+        )?;
+        self.invoice(copy)
     }
 
     /// A new invoice draft from a created offer, linked to it, in one step. It has the customer,
@@ -2174,12 +2212,15 @@ impl Store {
         let id = {
             let conn = self.conn();
             let tx = conn.unchecked_transaction()?;
-            tx.execute(
-                "INSERT INTO invoices (context_id, kind, status, draft, total, updated_at)
-                 VALUES (?1, 'invoice', 'draft', ?2, ?3, datetime('now'))",
-                params![offer.context_id, serde_json::to_string(&draft)?, total],
+            let json = serde_json::to_string(&draft)?;
+            let id = insert_draft(
+                &tx,
+                offer.context_id,
+                Kind::Invoice,
+                &json,
+                total.as_deref(),
+                Some(offer_id),
             )?;
-            let id = tx.last_insert_rowid();
             tx.execute(
                 "INSERT INTO document_links (offer_id, invoice_id, created_at)
                  VALUES (?1, ?2, ?3)",
@@ -2294,7 +2335,9 @@ impl Store {
     /// Takes an exported invoice out of the list, it stays as it is (and counts for its numbers).
     /// Drafts are deleted instead.
     pub fn archive_invoice(&self, id: i64) -> Result<()> {
-        let changed = self.conn().execute(
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let changed = tx.execute(
             "UPDATE invoices SET archived_at = ?1 WHERE id = ?2 AND status = 'exported'
                  AND archived_at IS NULL",
             params![now(), id],
@@ -2302,17 +2345,39 @@ impl Store {
         if changed == 0 {
             bail!("only an exported invoice can be archived");
         }
+        record(
+            &tx,
+            id,
+            EventKind::Archived,
+            None,
+            &EventDetail::default(),
+            None,
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
     /// Puts an archived invoice back into the list, as it was.
     pub fn unarchive_invoice(&self, id: i64) -> Result<StoredInvoice> {
-        let changed = self.conn().execute(
-            "UPDATE invoices SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL",
-            [id],
-        )?;
-        if changed == 0 {
-            bail!("the invoice is not archived");
+        {
+            let conn = self.conn();
+            let tx = conn.unchecked_transaction()?;
+            let changed = tx.execute(
+                "UPDATE invoices SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL",
+                [id],
+            )?;
+            if changed == 0 {
+                bail!("the invoice is not archived");
+            }
+            record(
+                &tx,
+                id,
+                EventKind::Restored,
+                None,
+                &EventDetail::default(),
+                None,
+            )?;
+            tx.commit()?;
         }
         self.invoice(id)
     }
@@ -2484,7 +2549,9 @@ impl Store {
         if kind == Kind::Invoice && draft.offer_reference {
             draft.frozen_offers = self.offer_numbers(id)?;
         }
-        let changed = self.conn().execute(
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let changed = tx.execute(
             "UPDATE invoices SET number = ?1, counter = ?2, issued_on = ?3, status = 'exported',
                  draft = ?4, total = ?5, files = ?6, exported_at = datetime('now'),
                  updated_at = datetime('now')
@@ -2500,7 +2567,17 @@ impl Store {
             ],
         );
         match changed {
-            Ok(1) => self.invoice(id),
+            Ok(1) => {
+                let detail = EventDetail {
+                    number: Some(sequence.next_number.clone()),
+                    ..EventDetail::default()
+                };
+                let on = Some(draft.issue_date.as_str());
+                record(&tx, id, EventKind::Baked, on, &detail, Some(&draft))?;
+                tx.commit()?;
+                drop(conn);
+                self.invoice(id)
+            }
             Ok(_) => bail!("the invoice is already exported"),
             Err(rusqlite::Error::SqliteFailure(e, _))
                 if e.code == rusqlite::ErrorCode::ConstraintViolation =>
@@ -4029,8 +4106,12 @@ mod tests {
     fn a_version_six_database_gets_floors_counters_and_keeps_what_its_patterns_wrote() {
         let conn = Connection::open_in_memory().unwrap();
         migrate(&conn).unwrap();
-        conn.execute_batch("DROP TABLE number_floors; PRAGMA user_version = 6;")
-            .unwrap();
+        // a version six database still had the paid date as a column
+        conn.execute_batch(
+            "DROP TABLE number_floors; ALTER TABLE invoices ADD COLUMN paid_at TEXT;
+             PRAGMA user_version = 6;",
+        )
+        .unwrap();
         let body = |pattern: &str| {
             serde_json::json!({
                 "brand": "blue",

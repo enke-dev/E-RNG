@@ -1,0 +1,41 @@
+.payments {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--wa-space-2xs) var(--wa-space-m);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: contents;
+  }
+
+  .amount {
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+
+  .open {
+    color: var(--wa-color-text-quiet);
+  }
+
+  .paid {
+    color: var(--wa-color-success-on-quiet);
+  }
+}
+
+/* amount and day side by side, what to do with them below */
+.form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  align-items: start;
+  gap: var(--wa-space-s);
+}
+
+.actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: var(--wa-space-s);
+}

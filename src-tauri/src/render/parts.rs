@@ -354,6 +354,8 @@ fn placeholder(view: &InvoiceView, name: &str) -> Option<String> {
     let fields = &view.seller_fields;
     match name {
         "seller_name" => Some(view.seller.name.clone()),
+        // how many times the document went out as a draft, empty before the first
+        "version" => Some(view.version.clone()),
         // single fields: the plain value, empty when it is not set
         "seller_street" => Some(fields.street.clone()),
         "seller_postcode_city" => Some(fields.postcode_city.clone()),

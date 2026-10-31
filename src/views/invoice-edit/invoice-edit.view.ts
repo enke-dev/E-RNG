@@ -16,8 +16,11 @@ import '@awesome.me/webawesome/dist/components/tag/tag.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '../../common/components/customer-form/customer-form.component.js';
 import '../../common/components/filter-bar/filter-bar.component.js';
+import '../../common/components/history/history.component.js';
 import '../../common/components/list/list/list.component.js';
 import '../../common/components/list/list-item/list-item.component.js';
+import '../../common/components/offer-answer/offer-answer.component.js';
+import '../../common/components/payments/payments.component.js';
 import '../../common/components/sheet/sheet.component.js';
 import '../../common/layouts/editor/editor.layout.js';
 
@@ -101,6 +104,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   });
 
   @state() private stored: StoredInvoice | undefined;
+  /** Counts what may have happened to the document, its history is read again on each */
+  @state() private revision = 0;
   @state() private draft: InvoiceDraft | undefined;
   @state() private settings: Settings | undefined;
   /** The context the invoice is made under: its own when stored, else the active one */
@@ -186,6 +191,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
 
   /** Tells the list around us that invoices changed, so it can reload */
   private announce(options: { id?: number | null; deleted?: boolean; restored?: boolean } = {}) {
+    this.revision++;
     this.dispatchEvent(
       new CustomEvent('invoice-changed', {
         bubbles: true,
@@ -594,6 +600,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       this.outputting = true;
       await api.invoiceDraftPdf(this.draft, stored.id, this.contextId as number, this.kind, target);
       notify('Der Entwurf ist als PDF gespeichert.');
+      // a version went out: the history has it, the preview shows the next one
+      this.revision++;
+      void this.#preview();
     } catch (error) {
       notifyError(error);
     } finally {
@@ -777,45 +786,32 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
   }
 
-  /** Marks an exported invoice as paid on a date or as open again, the one change it allows */
-  private async setPaid(paidAt: string | null) {
-    const id = this.stored?.id;
-    if (id === undefined) {
-      return;
-    }
-    try {
-      this.stored = await api.invoiceSetPaid(id, paidAt);
-      this.announce();
-    } catch (error) {
-      notifyError(error);
-    }
+  /** Payments and answers are the changes a created document allows: the store has the new state */
+  private storedChanged(event: CustomEvent<StoredInvoice>) {
+    this.stored = event.detail;
+    this.announce();
   }
 
-  private renderPayment() {
-    const paidAt = this.stored?.paid_at ?? null;
+  private renderPayment(stored: StoredInvoice) {
     return html`
       <wa-card>
         <div slot="header">Zahlung</div>
-        <div class="payment">
-          <wa-switch
-            ?checked="${paidAt !== null}"
-            @change="${(e: Event) => void this.setPaid((e.target as WaSwitch).checked ? today() : null)}"
-          >
-            Bezahlt
-          </wa-switch>
-          ${
-            paidAt === null
-              ? nothing
-              : html`
-                  <wa-input
-                    type="date"
-                    label="Bezahlt am"
-                    .value="${paidAt}"
-                    @change="${(e: Event) => text(e) && void this.setPaid(text(e))}"
-                  ></wa-input>
-                `
-          }
-        </div>
+        <erng-payments
+          .invoice="${stored}"
+          @invoice-updated="${this.storedChanged}"
+        ></erng-payments>
+      </wa-card>
+    `;
+  }
+
+  private renderAnswer(stored: StoredInvoice) {
+    return html`
+      <wa-card>
+        <div slot="header">Antwort</div>
+        <erng-offer-answer
+          .offer="${stored}"
+          @invoice-updated="${this.storedChanged}"
+        ></erng-offer-answer>
       </wa-card>
     `;
   }
@@ -1376,6 +1372,18 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         ${
           stored.paid_at
             ? html`<wa-tag variant="success">Bezahlt am ${formatDate(stored.paid_at)}</wa-tag>`
+            : stored.payments.length > 0
+              ? html`<wa-tag variant="warning">Teilweise bezahlt</wa-tag>`
+              : nothing
+        }
+        ${
+          stored.answer
+            ? html`
+                <wa-tag variant="${stored.answer === 'accepted' ? 'success' : 'danger'}">
+                  ${stored.answer === 'accepted' ? 'Angenommen' : 'Abgelehnt'} am
+                  ${formatDate(stored.answered_on ?? '')}
+                </wa-tag>
+              `
             : nothing
         }
         ${
@@ -1416,7 +1424,13 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                 `
               : nothing
           }
-          ${locked && this.kind === 'invoice' ? this.renderPayment() : nothing}
+          ${
+            locked && stored
+              ? this.kind === 'invoice'
+                ? this.renderPayment(stored)
+                : this.renderAnswer(stored)
+              : nothing
+          }
 
           <wa-card>
             <div slot="header">${this.texts.noun}</div>
@@ -1508,6 +1522,19 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
 
           ${this.renderLinks()} ${this.createError ? this.renderFailure(this.createError) : nothing}
           ${this.renderCheck()}
+          ${
+            stored
+              ? html`
+                  <wa-card>
+                    <div slot="header">Verlauf</div>
+                    <erng-history
+                      invoice-id="${stored.id}"
+                      revision="${this.revision}"
+                    ></erng-history>
+                  </wa-card>
+                `
+              : nothing
+          }
         </section>
 
         ${this.renderPreviewSheet()}

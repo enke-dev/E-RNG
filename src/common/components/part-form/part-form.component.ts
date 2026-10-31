@@ -88,6 +88,7 @@ const PLACEHOLDERS: [string, [string, string][]][] = [
       ['valid_until', 'Gültig bis (Angebote)'],
     ],
   ],
+  ['Beleg', [['version', 'Version (wie oft der Entwurf exportiert wurde)']]],
 ];
 
 /** Presets of the color picker: black, the letterhead's black and the greys the parts have by default */

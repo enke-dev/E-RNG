@@ -1,0 +1,56 @@
+/* a line down the left, a dot per entry on it */
+ol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-m);
+  margin: 0;
+  padding: 0 0 0 var(--wa-space-l);
+  list-style: none;
+  border-inline-start: var(--wa-border-width-m) solid var(--wa-color-surface-border);
+}
+
+li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-3xs);
+
+  &::before {
+    position: absolute;
+    inset-block-start: 0.35em;
+    inset-inline-start: calc(
+      -1 * var(--wa-space-l) - var(--wa-border-width-m) / 2 - var(--dot) / 2
+    );
+    --dot: 0.75rem;
+    inline-size: var(--dot);
+    block-size: var(--dot);
+    border-radius: 50%;
+    background: var(--wa-color-neutral-fill-loud);
+    content: '';
+  }
+}
+
+/* what changes the document's standing stands out: created, paid, answered */
+.baked::before {
+  background: var(--wa-color-brand-fill-loud);
+}
+
+.payment::before,
+.accepted::before {
+  background: var(--wa-color-success-fill-loud);
+}
+
+.declined::before {
+  background: var(--wa-color-danger-fill-loud);
+}
+
+.payment-removed::before,
+.answer-removed::before,
+.archived::before {
+  background: var(--wa-color-neutral-fill-normal);
+}
+
+.when {
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+}

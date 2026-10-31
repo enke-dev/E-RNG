@@ -613,6 +613,130 @@ pub struct InvoiceFiles {
     pub regenerated: bool,
 }
 
+/// A payment received on an invoice; several add up to what it comes to
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Payment {
+    pub id: i64,
+    /// Gross, a decimal like the totals (`1130.50`)
+    pub amount: String,
+    /// ISO date it was received on
+    pub paid_on: String,
+}
+
+/// What the customer said to a created offer
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Answer {
+    Accepted,
+    Declined,
+}
+
+impl Answer {
+    /// As the `answer` column spells it
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Declined => "declined",
+        }
+    }
+
+    pub fn from_column(text: &str) -> Option<Self> {
+        match text {
+            "accepted" => Some(Self::Accepted),
+            "declined" => Some(Self::Declined),
+            _ => None,
+        }
+    }
+}
+
+/// What happened to a document, see `history`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EventKind {
+    Created,
+    /// A draft was exported as a PDF to show it around: a version
+    DraftExported,
+    /// Created for good, it got its number
+    Baked,
+    Payment,
+    PaymentRemoved,
+    Accepted,
+    Declined,
+    /// The answer to an offer was taken back
+    AnswerRemoved,
+    Archived,
+    Restored,
+}
+
+impl EventKind {
+    /// As the `kind` column of `document_events` spells it
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::DraftExported => "draft-exported",
+            Self::Baked => "baked",
+            Self::Payment => "payment",
+            Self::PaymentRemoved => "payment-removed",
+            Self::Accepted => "accepted",
+            Self::Declined => "declined",
+            Self::AnswerRemoved => "answer-removed",
+            Self::Archived => "archived",
+            Self::Restored => "restored",
+        }
+    }
+
+    pub fn from_column(text: &str) -> Option<Self> {
+        [
+            Self::Created,
+            Self::DraftExported,
+            Self::Baked,
+            Self::Payment,
+            Self::PaymentRemoved,
+            Self::Accepted,
+            Self::Declined,
+            Self::AnswerRemoved,
+            Self::Archived,
+            Self::Restored,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == text)
+    }
+}
+
+/// What an event says beyond its kind, kept as JSON; each kind uses what fits it
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EventDetail {
+    /// Draft exports: which one it was, from 1
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
+    /// Baked: the number it got
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number: Option<String>,
+    /// Payments: the amount, gross
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount: Option<String>,
+    /// Created: the document it was made from (a copy, an invoice from an offer)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<i64>,
+}
+
+/// One entry of a document's history
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Event {
+    pub id: i64,
+    pub invoice_id: i64,
+    pub kind: EventKind,
+    /// When it was recorded, UTC
+    pub at: String,
+    /// The day it is about, where that is not the day it was recorded (paid on, accepted on)
+    pub on: Option<String>,
+    #[serde(flatten)]
+    pub detail: EventDetail,
+    /// A version can be compared with others: the data it was exported with is kept
+    pub has_snapshot: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StoredInvoice {
     pub id: i64,
@@ -626,8 +750,13 @@ pub struct StoredInvoice {
     pub draft: InvoiceDraft,
     pub total: Option<String>,
     pub exported_at: Option<String>,
-    /// ISO date the invoice was paid on, set by hand after the export
+    /// ISO date it was paid completely on: the day of the payment that made it, none while open
     pub paid_at: Option<String>,
+    /// What was received on it, oldest first
+    pub payments: Vec<Payment>,
+    /// Offers: what the customer said, and on which day
+    pub answer: Option<Answer>,
+    pub answered_on: Option<String>,
     pub updated_at: String,
     /// Taken out of the list, it stays as it is and can be put back
     pub archived_at: Option<String>,
@@ -649,7 +778,12 @@ pub struct ListEntry {
     /// Offers: the day it is valid until
     pub valid_until: Option<String>,
     pub total: Option<String>,
+    /// Paid completely on, see `StoredInvoice::paid_at`
     pub paid_at: Option<String>,
+    /// What was received on it so far, none without payments
+    pub paid: Option<String>,
+    pub answer: Option<Answer>,
+    pub answered_on: Option<String>,
     pub updated_at: String,
     pub archived_at: Option<String>,
     /// How many documents of the other kind it is linked to
