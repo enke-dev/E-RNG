@@ -1607,6 +1607,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                     <erng-history
                       invoice-id="${stored.id}"
                       revision="${this.revision}"
+                      .current="${stored.status === 'draft' ? this.draft : undefined}"
                     ></erng-history>
                   </wa-card>
                 `

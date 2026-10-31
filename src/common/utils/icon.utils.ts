@@ -2,6 +2,7 @@ import { registerIconLibrary } from '@awesome.me/webawesome/dist/components/icon
 import check from '@fortawesome/fontawesome-free/svgs/solid/check.svg?url';
 import info from '@fortawesome/fontawesome-free/svgs/solid/circle-info.svg?url';
 import placeholder from '@fortawesome/fontawesome-free/svgs/solid/code.svg?url';
+import compare from '@fortawesome/fontawesome-free/svgs/solid/code-compare.svg?url';
 import save from '@fortawesome/fontawesome-free/svgs/solid/floppy-disk.svg?url';
 import link from '@fortawesome/fontawesome-free/svgs/solid/link.svg?url';
 import unlink from '@fortawesome/fontawesome-free/svgs/solid/link-slash.svg?url';
@@ -15,6 +16,7 @@ import warning from '@fortawesome/fontawesome-free/svgs/solid/triangle-exclamati
  */
 const ICONS: Record<string, string> = {
   check,
+  compare,
   info,
   link,
   placeholder,

@@ -594,14 +594,15 @@ mod tests {
         assert_eq!(events[2].detail.version, Some(2));
         assert_eq!(events[3].detail.number.as_deref(), Some("RE-2026-001"));
         assert_eq!(events[3].on.as_deref(), Some(draft().issue_date.as_str()));
-        // the versions keep what was exported, without the frozen settings
-        assert!(events[1].has_snapshot && events[3].has_snapshot && !events[0].has_snapshot);
+        // the versions keep what was created and exported, without the frozen settings
+        assert!(events[..4].iter().all(|e| e.has_snapshot) && !events[4].has_snapshot);
         assert_eq!(
             store.snapshot(events[1].id).unwrap().note.as_deref(),
             Some("Erste Fassung")
         );
         assert_eq!(store.snapshot(events[3].id).unwrap().frozen, None);
-        assert!(store.snapshot(events[0].id).is_err());
+        assert!(store.snapshot(events[0].id).is_ok());
+        assert!(store.snapshot(events[4].id).is_err());
         assert_eq!(store.draft_exports(id).unwrap(), 2);
     }
 

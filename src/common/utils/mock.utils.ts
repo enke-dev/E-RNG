@@ -751,22 +751,30 @@ const events: DocumentEvent[] = invoices.flatMap((i): DocumentEvent[] => [
     : []),
 ]);
 
-/** Notes an event now */
+/** The versions kept with draft exports and baking, by event; the seeded ones fall back to the document */
+const snapshots = new Map<number, InvoiceDraft>();
+
+/** Notes an event now, with the version it keeps */
 function event(
   id: number,
   kind: EventKind,
   on: string | null,
-  detail: Partial<DocumentEvent> = {}
+  detail: Partial<DocumentEvent> = {},
+  snapshot?: InvoiceDraft
 ) {
+  const eventId = Math.max(0, ...events.map(e => e.id)) + 1;
   events.push({
-    id: Math.max(0, ...events.map(e => e.id)) + 1,
+    id: eventId,
     invoice_id: id,
     kind,
     at: new Date().toISOString(),
     on,
-    has_snapshot: false,
+    has_snapshot: snapshot !== undefined,
     ...detail,
   });
+  if (snapshot) {
+    snapshots.set(eventId, structuredClone({ ...snapshot, frozen: null }));
+  }
 }
 
 /** Adds decimals as the store does, two places */
@@ -1439,10 +1447,13 @@ export function installMocks() {
             const version = events.filter(
               e => e.invoice_id === args['id'] && e.kind === 'draft-exported'
             ).length;
-            event(args['id'] as number, 'draft-exported', null, {
-              version: version + 1,
-              has_snapshot: true,
-            });
+            event(
+              args['id'] as number,
+              'draft-exported',
+              null,
+              { version: version + 1 },
+              args['draft'] as InvoiceDraft
+            );
           }
           return null;
         }
@@ -1550,8 +1561,9 @@ export function installMocks() {
         case 'invoice_events':
           return events.filter(e => e.invoice_id === args['id']);
         case 'invoice_snapshot': {
-          const found = events.find(e => e.id === args['eventId']);
-          return find(found?.invoice_id ?? 0).draft;
+          const id = args['eventId'] as number;
+          const found = events.find(e => e.id === id);
+          return snapshots.get(id) ?? find(found?.invoice_id ?? 0).draft;
         }
         case 'invoice_get':
           return find(args['id']);
@@ -1600,7 +1612,7 @@ export function installMocks() {
           stored.total = check(draft).totals?.gross ?? null;
           if (!existing) {
             invoices.push(stored);
-            event(stored.id, 'created', null);
+            event(stored.id, 'created', null, {}, draft);
           }
           return stored;
         }
@@ -1625,7 +1637,7 @@ export function installMocks() {
           copy.draft.delivery_end = copy.draft.delivery_end === null ? null : today();
           copy.draft.frozen = null;
           invoices.push(copy);
-          event(copy.id, 'created', null, { from: args['id'] as number });
+          event(copy.id, 'created', null, { from: args['id'] as number }, copy.draft);
           return copy;
         }
         case 'invoice_delete': {
@@ -1725,7 +1737,7 @@ export function installMocks() {
             files: null,
           };
           invoices.push(invoice);
-          event(invoice.id, 'created', null, { from: offer.id });
+          event(invoice.id, 'created', null, { from: offer.id }, invoice.draft);
           links.push([offer.id, invoice.id]);
           return invoice;
         }
@@ -1785,10 +1797,13 @@ export function installMocks() {
           }
           stored.status = 'exported';
           stored.number = numberOf(stored);
-          event(stored.id, 'baked', stored.draft.issue_date, {
-            number: stored.number,
-            has_snapshot: true,
-          });
+          event(
+            stored.id,
+            'baked',
+            stored.draft.issue_date,
+            { number: stored.number },
+            stored.draft
+          );
           stored.exported_at = `${today()} 12:00:00`;
           stored.draft.frozen = settings;
           stored.files = {

@@ -1,0 +1,81 @@
+:host {
+  display: contents;
+}
+
+wa-dialog {
+  --width: min(48rem, 90vw);
+}
+
+.pick {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--wa-space-s);
+}
+
+h3 {
+  margin: 0 0 var(--wa-space-xs);
+  font-size: var(--wa-font-size-m);
+}
+
+/* a field and its change side by side, a long text wraps in its column */
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--wa-space-2xs) var(--wa-space-m);
+  margin: 0;
+
+  dt {
+    color: var(--wa-color-text-quiet);
+  }
+
+  dd {
+    margin: 0;
+  }
+
+  /* a text keeps its line breaks */
+  .text {
+    white-space: pre-wrap;
+  }
+}
+
+/* what went is struck through, what came is marked, both in the colours of loss and gain */
+del {
+  background: var(--wa-color-danger-fill-quiet);
+  color: var(--wa-color-danger-on-quiet);
+}
+
+ins {
+  background: var(--wa-color-success-fill-quiet);
+  color: var(--wa-color-success-on-quiet);
+  text-decoration: none;
+}
+
+.to {
+  margin-inline: var(--wa-space-2xs);
+  color: var(--wa-color-text-quiet);
+}
+
+.positions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-s);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-3xs);
+    margin: 0;
+  }
+
+  .what {
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-s);
+  }
+
+  dl {
+    margin-block-start: var(--wa-space-2xs);
+  }
+}

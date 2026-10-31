@@ -1,6 +1,6 @@
 # Vorgänge – Plan
 
-**Status (2026-10-31): phases 1–3 done and reviewed in rounds, not pushed yet; phase 4 next.**
+**Status (2026-10-31): phases 1–4 done, not pushed yet; phase 5 next.**
 Details of what is built are in `docs/development.md`. A living plan: decisions are edited in place,
 what is dropped is removed, not kept as history.
 
@@ -75,7 +75,7 @@ from the history of its documents. Users who only want offers and invoices never
   event. `Zahlung erfassen` proposes the open amount and today and takes no more than is open (the
   store refuses it too); less is a part payment. No paid switch. The Schlussrechnung later deducts what was
   paid on the Abschläge.
-- **Snapshots** only at draft exports and baking, never on autosave. A diff compares two snapshots.
+- **Snapshots** only when a document is created, at draft exports and at baking, never on autosave. A diff compares two snapshots.
 - The Vorgang's timeline is the merged history of its documents; a document's own history (detail
   view, later) reuses the same view.
 
@@ -191,8 +191,10 @@ others.
    (offered, accepted, invoiced, open, paid) through one function. Migration: one Vorgang per group of
    linked documents (union over the links, split where the customers differ), numbered per context in
    the order of the issue dates.
-4. **Next. Versions compared**: diff of two snapshots.
-5. **Offer → offer**: Nachtrag, Alternativangebot (lapsing), Ersatzangebot.
+4. **Done. Versions compared**: a compare button on each kept version in the history (with the next
+   newer one, the newest of a draft with the draft now, only where they differ), any two versions
+   picked in the dialog, the fields, positions and totals that differ.
+5. **Next. Offer → offer**: Nachtrag, Alternativangebot (lapsing), Ersatzangebot.
 6. **Position references, final**: Rechnung (today's "invoice from offer"), Teilrechnung,
    Sammelrechnung within a Vorgang; the open amount per offer and position. The offer ↔ invoice
    links go (their grouping lives on in the Vorgang since phase 3, the printed offer numbers in

@@ -869,7 +869,8 @@ fn follow_rate(
     Ok(())
 }
 
-/// A new draft row in a Vorgang with its first event; `from` is the document it was made of
+/// A new draft row in a Vorgang with its first event, which keeps the draft as it started; `from` is
+/// the document it was made of
 fn insert_draft(
     conn: &Connection,
     context_id: i64,
@@ -889,7 +890,9 @@ fn insert_draft(
         from,
         ..EventDetail::default()
     };
-    record(conn, id, EventKind::Created, None, &detail, None)?;
+    // what it started as is a version too, so the first change can be compared with it
+    let draft: InvoiceDraft = serde_json::from_str(json)?;
+    record(conn, id, EventKind::Created, None, &detail, Some(&draft))?;
     Ok(id)
 }
 
