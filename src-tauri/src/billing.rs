@@ -4,10 +4,11 @@
 //! an offer position is its quantity less what created invoices billed. Which offers an invoice
 //! bills follows from its positions, there is no table of links.
 //!
-//! A Rechnung bills everything that is open of an offer, a Teilrechnung some positions or less of
-//! them, a Sammelrechnung positions of several offers of its Vorgang; all of them bill for good.
+//! A Rechnung bills everything of an offer, a Teilrechnung some positions or less of them (`partial`,
+//! whatever was billed before), a Sammelrechnung positions of several offers of its Vorgang; all of
+//! them bill for good.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -77,7 +78,13 @@ fn references(conn: &Connection, offer: Option<i64>) -> Result<Vec<Reference>> {
              json_extract(p.value, '$.source.index'), json_extract(p.value, '$.quantity')
          FROM invoices i, json_each(i.draft, '$.positions') p
          WHERE i.kind = 'invoice' AND json_extract(p.value, '$.source.offer_id') IS NOT NULL
-             AND (?1 IS NULL OR json_extract(p.value, '$.source.offer_id') = ?1)",
+             AND (?1 IS NULL OR json_extract(p.value, '$.source.offer_id') = ?1)
+             -- a cancelled invoice bills nothing any more
+             AND NOT EXISTS (
+                 SELECT 1 FROM invoices s
+                 WHERE s.status = 'exported' AND json_extract(s.draft, '$.corrects.kind') = 'cancel'
+                     AND json_extract(s.draft, '$.corrects.invoice_id') = i.id
+             )",
     )?;
     let rows = statement.query_map([offer], |r| {
         Ok((
@@ -104,20 +111,49 @@ fn references(conn: &Connection, offer: Option<i64>) -> Result<Vec<Reference>> {
     .collect()
 }
 
-/// For every document with references, how many documents of the other kind it is billed with:
-/// an invoice the offers it bills, an offer the invoices that bill it
-pub(crate) fn reference_counts(conn: &Connection) -> Result<HashMap<i64, u32>> {
-    let pairs: std::collections::BTreeSet<(i64, i64)> = references(conn, None)?
-        .into_iter()
-        .map(|r| (r.invoice_id, r.offer_id))
+/// Whether an invoice bills only part of an offer it refers to, less of a position or not all of
+/// them: a Teilrechnung. An invoice on account, a Schlussrechnung and a correction are none.
+pub(crate) fn partial(conn: &Connection, draft: &InvoiceDraft) -> Result<bool> {
+    if draft.on_account.is_some() || draft.is_closing() || draft.corrects.is_some() {
+        return Ok(false);
+    }
+    let offers: std::collections::BTreeSet<i64> = draft
+        .positions
+        .iter()
+        .filter_map(|p| p.source.map(|s| s.offer_id))
         .collect();
-    Ok(pairs
-        .into_iter()
-        .flat_map(|(invoice, offer)| [invoice, offer])
-        .fold(HashMap::new(), |mut counts, id| {
-            *counts.entry(id).or_insert(0) += 1;
-            counts
-        }))
+    offers.into_iter().try_fold(false, |any, offer| {
+        if any {
+            return Ok(true);
+        }
+        let Some(json) = conn
+            .query_row(
+                "SELECT draft FROM invoices WHERE id = ?1 AND kind = 'offer'",
+                [offer],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+        else {
+            return Ok(false);
+        };
+        let offered: InvoiceDraft = serde_json::from_str(&json)?;
+        Ok(offered
+            .positions
+            .iter()
+            .enumerate()
+            .any(|(index, position)| {
+                let here: Decimal = draft
+                    .positions
+                    .iter()
+                    .filter(|p| {
+                        p.source
+                            .is_some_and(|s| s.offer_id == offer && s.index == index)
+                    })
+                    .map(quantity)
+                    .sum();
+                here < quantity(position)
+            }))
+    })
 }
 
 /// A document as the other end of a reference names it
@@ -404,9 +440,13 @@ impl Store {
         if offer.status != Status::Exported {
             bail!("only a created offer can become an invoice");
         }
-        // out of the running: the replacement or the accepted alternative is billed instead
+        // out of the running: the replacement or the accepted alternative is billed instead, and
+        // what was declined is not billed at all
         if offer.superseded || offer.lapsed {
-            bail!("Ein ersetztes oder entfallenes Angebot wird nicht in Rechnung gestellt.");
+            bail!("Ein ersetztes Angebot oder eines, zu dem eine Alternative angenommen ist, wird nicht in Rechnung gestellt.");
+        }
+        if offer.answer == Some(crate::model::Answer::Declined) {
+            bail!("Ein abgelehntes Angebot wird nicht in Rechnung gestellt.");
         }
         let positions: Vec<Position> = self
             .billing(offer_id, None)?
@@ -527,6 +567,8 @@ mod tests {
                 ),
             ]
         );
+        // all of the offer: no Teilrechnung
+        assert!(!store.invoice(first.id).unwrap().partial);
         // a draft does not bill yet, it shows apart
         let billing = store.billing(offer.id, None).unwrap();
         assert_eq!(billing.positions[0].open, "10");
@@ -541,6 +583,7 @@ mod tests {
             .save_draft(Some(first.id), 1, Kind::Invoice, &part, None)
             .unwrap();
         bake(&store, first.id, "RE-1", "238");
+        assert!(store.invoice(first.id).unwrap().partial);
         let billing = store.billing(offer.id, None).unwrap();
         assert_eq!(
             billing
@@ -558,6 +601,9 @@ mod tests {
         assert_eq!(second.draft.positions[0].quantity.as_deref(), Some("6"));
         assert_eq!(second.draft.positions.len(), 2);
         bake(&store, second.id, "RE-2", "500");
+        // the rest is a part of the offer as well, the list says so too
+        let listed = store.invoices(None, Some(Kind::Invoice), false).unwrap();
+        assert!(listed.iter().all(|e| e.partial));
         assert!(store
             .invoice_from_offer(offer.id, "2026-11-04", &settings())
             .is_err());
@@ -572,10 +618,6 @@ mod tests {
             .collect();
         assert_eq!(invoices, [second.id, first.id]);
         assert_eq!(store.links(first.id).unwrap()[0].id, offer.id);
-        let counts = reference_counts(&store.conn()).unwrap();
-        assert_eq!((counts[&offer.id], counts[&first.id]), (2, 1));
-        let listed = store.invoices(None, None, false).unwrap();
-        assert_eq!(listed.iter().find(|e| e.id == offer.id).unwrap().linked, 2);
     }
 
     #[test]

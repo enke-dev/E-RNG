@@ -25,8 +25,6 @@ export interface KindTexts {
   cancelTitle: string;
   cancelText: string;
   missingContext: string;
-  /** What the badge of the list says of the documents of this kind an entry is billed with */
-  linkedTo: (count: number) => string;
 }
 
 /** The kind a document of `kind` is linked to */
@@ -52,8 +50,6 @@ export const KINDS: Record<Kind, KindTexts> = {
     cancelTitle: 'Neue Rechnung abbrechen',
     cancelText: 'Die Eingaben dieser Rechnung gehen verloren.',
     missingContext: 'Für die Rechnung fehlt der Kontext.',
-    linkedTo: count =>
-      count === 1 ? 'In einer Rechnung berechnet' : `In ${count} Rechnungen berechnet`,
   },
   offer: {
     list: 'Angebote',
@@ -74,7 +70,6 @@ export const KINDS: Record<Kind, KindTexts> = {
     cancelTitle: 'Neues Angebot abbrechen',
     cancelText: 'Die Eingaben dieses Angebots gehen verloren.',
     missingContext: 'Für das Angebot fehlt der Kontext.',
-    linkedTo: count => (count === 1 ? 'Berechnet ein Angebot' : `Berechnet ${count} Angebote`),
   },
 };
 

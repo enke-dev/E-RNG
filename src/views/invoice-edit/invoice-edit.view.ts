@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import '@awesome.me/webawesome/dist/components/card/card.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
+import '@awesome.me/webawesome/dist/components/divider/divider.js';
 import '@awesome.me/webawesome/dist/components/dropdown/dropdown.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -24,7 +25,6 @@ import '../../common/components/payments/payments.component.js';
 import '../../common/components/placeholders/placeholders.component.js';
 import '../../common/components/sheet/sheet.component.js';
 import '../../common/layouts/editor/editor.layout.js';
-import '../../common/components/billing/billing.component.js';
 import '../../common/components/offer-pick/offer-pick.component.js';
 import '../../common/components/offer-share/offer-share.component.js';
 import '../../common/components/deductions/deductions.component.js';
@@ -36,7 +36,7 @@ import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { ask, choose } from '../../common/components/ask/ask.component.js';
+import { ask } from '../../common/components/ask/ask.component.js';
 import type {
   Case,
   Check,
@@ -60,10 +60,19 @@ import type {
 } from '../../common/utils/api.utils.js';
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
-import { amount, quantityOf, sourceName } from '../../common/utils/billing.utils.js';
+import {
+  amount,
+  deductionOf,
+  isClosing,
+  parsed,
+  partlyBilled,
+  quantityOf,
+  sourceName,
+} from '../../common/utils/billing.utils.js';
+import { caseRoute } from '../../common/utils/cases.utils.js';
 import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
-import { RELATIONS } from '../../common/utils/documents.utils.js';
-import { nullable, text, today } from '../../common/utils/form.utils.js';
+import { detailTags, RELATIONS, standingOf, statusOf } from '../../common/utils/documents.utils.js';
+import { nullable, text } from '../../common/utils/form.utils.js';
 import { formatDate, percent } from '../../common/utils/format.utils.js';
 import {
   draftTitle,
@@ -157,6 +166,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   @state() private picking = false;
   /** An invoice draft in a Vorgang: the created invoices on account it may deduct */
   @state() private onAccountInvoices: OnAccountInvoice[] = [];
+  /** The history has two versions to compare, its card offers to */
+  @state() private comparable = false;
   /** While a share of an offer is being taken on account */
   @state() private sharing = false;
   /** An invoice draft is being made from this offer */
@@ -486,7 +497,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
   }
 
-  private async duplicate() {
+  /** A copy, in this Vorgang or a new one of its own */
+  private async duplicate(here: boolean) {
     if (!this.stored) {
       return;
     }
@@ -495,19 +507,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       if (this.#dirty) {
         await this.persist({ updateUrl: false });
       }
-      const where = await choose(
-        'Die Kopie kann einen eigenen Vorgang bekommen oder zu diesem gehören.',
-        {
-          title: `${this.texts.noun} duplizieren`,
-          okLabel: 'Neuer Vorgang',
-          altLabel: 'In diesem Vorgang',
-          cancelLabel: 'Abbrechen',
-        }
-      );
-      if (where === null) {
-        return;
-      }
-      const copy = await api.invoiceDuplicate(this.stored.id, where === 'alt');
+      const copy = await api.invoiceDuplicate(this.stored.id, here);
       this.#dirty = false;
       this.announce({ id: copy.id });
       goto(this.route(this.kind, copy.id));
@@ -551,36 +551,104 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
   }
 
-  /** A created offer: a Nachtrag, an alternative or a replacement of it, made in its Vorgang */
-  private renderRelate() {
+  /**
+   * Duplizieren: a plain copy, here or in a new Vorgang; a created offer also gets a Nachtrag, an
+   * alternative or a replacement in its Vorgang, or a Folgeangebot in a Vorgang that follows
+   */
+  private renderDuplicate(locked: boolean) {
     const relations = Object.entries(RELATIONS) as [Relation, (typeof RELATIONS)[Relation]][];
+    const related = locked && this.kind === 'offer';
     return html`
       <wa-dropdown
         placement="top-end"
-        @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) =>
-          void this.relate(e.detail.item.value as Relation | 'follow')}"
+        @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) => {
+          const value = e.detail.item.value;
+          if (value === 'here' || value === 'apart') {
+            void this.duplicate(value === 'here');
+          } else {
+            void this.relate(value as Relation | 'follow');
+          }
+        }}"
       >
-        <wa-button slot="trigger" appearance="outlined" with-caret>Angebot dazu</wa-button>
-        ${relations.map(([relation, { noun, hint }]) => {
-          const refused = this.relationRefused(relation);
-          return html`
-            <wa-dropdown-item
-              value="${relation}"
-              ?disabled="${refused !== ''}"
-              title="${refused || hint}"
-            >
-              ${noun}
-            </wa-dropdown-item>
-          `;
-        })}
-        <wa-dropdown-item
-          value="follow"
-          title="Ein Folgeauftrag in einem neuen Vorgang, der diesem folgt"
-        >
-          Folgeangebot
-        </wa-dropdown-item>
+        <wa-button slot="trigger" appearance="outlined" with-caret>Duplizieren</wa-button>
+        <wa-dropdown-item value="here">Kopie in diesem Vorgang</wa-dropdown-item>
+        <wa-dropdown-item value="apart">Kopie in neuem Vorgang</wa-dropdown-item>
+        ${
+          related
+            ? html`
+                <wa-divider></wa-divider>
+                ${relations.map(([relation, { noun, hint }]) => {
+                  const refused = this.relationRefused(relation);
+                  return html`
+                    <wa-dropdown-item
+                      value="${relation}"
+                      ?disabled="${refused !== ''}"
+                      title="${refused || hint}"
+                    >
+                      ${noun}
+                    </wa-dropdown-item>
+                  `;
+                })}
+                <wa-dropdown-item
+                  value="follow"
+                  title="Ein Folgeauftrag in einem neuen Vorgang, der diesem folgt"
+                >
+                  Folgeangebot (Folgevorgang)
+                </wa-dropdown-item>
+              `
+            : nothing
+        }
       </wa-dropdown>
     `;
+  }
+
+  /** A Stornorechnung for this created invoice, or an Ersatzrechnung once it is cancelled */
+  private async correct(kind: 'cancel' | 'replace') {
+    if (!this.stored) {
+      return;
+    }
+    try {
+      const made =
+        kind === 'cancel'
+          ? await api.invoiceCancel(this.stored.id)
+          : await api.invoiceReplace(this.stored.id);
+      this.announce({ id: made.id });
+      goto(this.route('invoice', made.id));
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+
+  /** Stornieren a created invoice, or replace it once it is; a Stornorechnung is corrected by neither */
+  private renderCorrect(stored: StoredInvoice) {
+    if (stored.draft.corrects?.kind === 'cancel') {
+      return nothing;
+    }
+    return stored.cancelled
+      ? html`
+          <wa-button appearance="outlined" @click="${() => void this.correct('replace')}">
+            Ersatzrechnung
+          </wa-button>
+        `
+      : stored.cancel_draft
+        ? html`
+            <wa-button
+              appearance="outlined"
+              title="Storniert ist sie erst, wenn die Stornorechnung erstellt ist"
+              @click="${() => goto(this.route('invoice', stored.cancel_draft ?? 0))}"
+            >
+              Storno-Entwurf öffnen
+            </wa-button>
+          `
+        : html`
+            <wa-button
+              appearance="outlined"
+              title="Eine Stornorechnung, die diese Rechnung aufhebt; danach eine Ersatzrechnung"
+              @click="${() => void this.correct('cancel')}"
+            >
+              Stornieren
+            </wa-button>
+          `;
   }
 
   /** Puts the invoice away; edits of a draft are kept as a draft, like when another invoice opens */
@@ -793,14 +861,30 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   }
 
   /** What an invoice position refers to, and whether it bills more than is open of it */
+  /** What a position bills of an offer, or the share of an offer it is */
   private renderSource(position: Position) {
-    const source = position.source;
+    const { source, share } = position;
+    const numberOf = (id: number) =>
+      this.billings.find(b => b.offer_id === id)?.number ??
+      this.links.find(l => l.id === id)?.number ??
+      '';
+    if (share) {
+      return html`
+        <wa-tag
+          class="source"
+          size="s"
+          appearance="outlined"
+          title="Ein Pauschalbetrag: Menge und Einheit stehen fest"
+        >
+          ${share.percent} % von ${numberOf(share.offer_id)}
+        </wa-tag>
+      `;
+    }
     if (!source) {
       return nothing;
     }
-    const billing = this.billings.find(b => b.offer_id === source.offer_id);
-    const number = billing?.number ?? this.links.find(l => l.id === source.offer_id)?.number ?? '';
-    const open = billing?.positions[source.index]?.open;
+    const open = this.billings.find(b => b.offer_id === source.offer_id)?.positions[source.index]
+      ?.open;
     const over = !this.locked && open !== undefined && quantityOf(position) > Number(open);
     return html`
       <wa-tag
@@ -808,9 +892,16 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         size="s"
         appearance="outlined"
         variant="${over ? 'warning' : 'neutral'}"
-        title="${over ? `Mehr als offen: ${amount(open ?? '0')}` : 'Aus dem Angebot übernommen'}"
+        title="${
+          over
+            ? `Diese Position berechnet mehr, als im Angebot noch offen ist (${amount(open ?? '0')})`
+            : 'Diese Position berechnet eine Position des Angebots'
+        }"
       >
-        ${sourceName(number, source.index)}${over ? ` · offen ${amount(open ?? '0')}` : ''}
+        aus
+        ${sourceName(numberOf(source.offer_id), source.index)}${
+          over ? ` · nur ${amount(open ?? '0')} offen` : ''
+        }
       </wa-tag>
     `;
   }
@@ -872,8 +963,14 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   /** Why a created offer cannot be billed (any more), nothing when it can */
   private get cannotBill(): string {
     const { stored, billing } = this;
-    if (stored?.superseded || stored?.lapsed) {
-      return 'Ein ersetztes oder entfallenes Angebot wird nicht in Rechnung gestellt.';
+    if (stored?.superseded) {
+      return 'Ein ersetztes Angebot wird nicht in Rechnung gestellt, sein Ersatzangebot schon.';
+    }
+    if (stored?.lapsed) {
+      return 'Angenommen ist eine Alternative; sie wird in Rechnung gestellt.';
+    }
+    if (stored?.answer === 'declined') {
+      return 'Ein abgelehntes Angebot wird nicht in Rechnung gestellt.';
     }
     return billing?.positions.every(p => Number(p.open) <= 0)
       ? 'Dieses Angebot ist vollständig in Rechnung gestellt.'
@@ -965,17 +1062,49 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     `;
   }
 
-  /** What an invoice says about the service and the file format; an offer has neither */
-  /** An invoice, one on account, or a Schlussrechnung by what it deducts */
+  /** The created invoices on account of the Vorgang no created invoice deducts yet */
+  private get openOnAccount() {
+    return this.onAccountInvoices.filter(
+      i => i.deducted_by === null || i.deducted_by === 'Entwurf'
+    );
+  }
+
+  /** An invoice, one on account, or a Schlussrechnung, which starts deducting all that is open */
   private setOnAccount(value: string) {
     this.edit(d => {
       d.on_account = value === 'prepayment' || value === 'progress' ? value : null;
+      d.settles = value === 'closing';
       if (d.on_account) {
         // on account nothing is billed for good and nothing deducted
         d.positions = d.positions.map(p => ({ ...p, source: null }));
-        d.deductions = [];
       }
+      d.deductions =
+        value === 'closing'
+          ? d.deductions?.length
+            ? d.deductions
+            : this.openOnAccount.map(deductionOf)
+          : [];
     });
+  }
+
+  /** What the kind of an invoice means for it */
+  private kindHint(draft: InvoiceDraft): string {
+    if (draft.on_account === 'prepayment') {
+      return 'Vor der Leistung, ohne Leistungsdatum. Die Schlussrechnung zieht sie ab.';
+    }
+    if (draft.on_account === 'progress') {
+      return 'Für die Leistung bis jetzt. Die Schlussrechnung zieht sie ab.';
+    }
+    if (isClosing(draft)) {
+      return 'Zieht die Abschläge und Anzahlungen unten ab.';
+    }
+    const partly = partlyBilled(draft.positions, this.billings);
+    if (partly.length > 0) {
+      return `Eine Teilrechnung: berechnet nur einen Teil von ${partly.join(', ')}.`;
+    }
+    return this.openOnAccount.length > 0
+      ? 'Im Vorgang sind Abschläge offen; eine Schlussrechnung zieht sie ab.'
+      : '';
   }
 
   private renderService(draft: InvoiceDraft, locked: boolean) {
@@ -984,33 +1113,37 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         label="Art der Rechnung"
         size="s"
         ?disabled="${locked}"
-        .value="${draft.on_account ?? 'final'}"
-        hint="${
-          draft.on_account === 'prepayment'
-            ? 'Vor der Leistung, ohne Leistungsdatum. Die Schlussrechnung zieht sie ab.'
-            : draft.on_account === 'progress'
-              ? 'Für die Leistung bis jetzt. Die Schlussrechnung zieht sie ab.'
-              : (draft.deductions?.length ?? 0) > 0
-                ? 'Eine Schlussrechnung: sie zieht die Abschläge unten ab.'
-                : ''
-        }"
+        .value="${draft.on_account ?? (isClosing(draft) ? 'closing' : 'final')}"
+        hint="${this.kindHint(draft)}"
         @change="${(e: Event) => this.setOnAccount(String((e.target as WaSelect).value))}"
       >
         <wa-option value="final">Rechnung</wa-option>
         <wa-option value="prepayment">Anzahlungsrechnung</wa-option>
         <wa-option value="progress">Abschlagsrechnung</wa-option>
+        <wa-option
+          value="closing"
+          ?disabled="${!isClosing(draft) && this.openOnAccount.length === 0}"
+        >
+          Schlussrechnung
+        </wa-option>
       </wa-select>
     `;
+    // a Stornorechnung or an Ersatzrechnung is what the invoice it corrects was
+    const shownKind = draft.corrects ? nothing : kind;
     if (draft.on_account === 'prepayment') {
-      return html`${kind}${this.renderProfile(draft, locked)}`;
+      return html`${shownKind}${this.renderProfile(draft, locked)}`;
     }
+    // a Stornorechnung takes back the same service, at the time it was done
+    const cancels = draft.corrects?.kind === 'cancel';
+    const fixed = locked || cancels;
     return html`
-      ${kind}
+      ${shownKind}
       <div class="grid">
         <wa-input
           type="date"
           label="${draft.delivery_end === null ? 'Leistungsdatum' : 'Leistungszeitraum vom'}"
-          ?disabled="${locked}"
+          hint="${cancels && !locked ? `Wie in ${draft.corrects?.number ?? 'der Rechnung'}` : ''}"
+          ?disabled="${fixed}"
           required
           .value="${draft.delivery_date}"
           @input="${(e: Event) => this.edit(d => (d.delivery_date = text(e)))}"
@@ -1022,7 +1155,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                 <wa-input
                   type="date"
                   label="bis"
-                  ?disabled="${locked}"
+                  ?disabled="${fixed}"
                   required
                   .value="${draft.delivery_end}"
                   @input="${(e: Event) => this.edit(d => (d.delivery_end = text(e)))}"
@@ -1031,7 +1164,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         }
       </div>
       <wa-switch
-        ?disabled="${locked}"
+        ?disabled="${fixed}"
         ?checked="${draft.delivery_end !== null}"
         @change="${(e: Event) =>
           this.edit(d => {
@@ -1043,6 +1176,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       >
         Zeitraum
       </wa-switch>
+
       ${this.renderProfile(draft, locked)}
     `;
   }
@@ -1219,18 +1353,25 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                 .value="${p.description}"
                 @input="${(e: Event) => this.editPosition(i, pos => (pos.description = text(e)))}"
               >
-                ${p.source ? html`<span slot="hint">${this.renderSource(p)}</span>` : nothing}
+                ${
+                  p.source || p.share
+                    ? html`<span slot="hint">${this.renderSource(p)}</span>`
+                    : this.billing
+                      ? html`<span slot="hint">${this.renderBilled(i)}</span>`
+                      : nothing
+                }
               </wa-textarea>
               <wa-input
                 label="Menge"
                 placeholder="1"
                 inputmode="decimal"
                 size="s"
-                ?disabled="${locked}"
+                ?disabled="${locked || Boolean(p.share)}"
                 .value="${p.quantity ?? ''}"
                 @input="${(e: Event) => this.editPosition(i, pos => (pos.quantity = nullable(text(e))))}"
               ></wa-input>
-              ${this.unitSelect(p, i, locked)} ${taxed ? this.rateSelect(p, i, locked) : nothing}
+              ${this.unitSelect(p, i, locked || Boolean(p.share))}
+              ${taxed ? this.rateSelect(p, i, locked) : nothing}
               <wa-input
                 label="Preis (netto)"
                 inputmode="decimal"
@@ -1356,10 +1497,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   private renderDeductions() {
     const draft = this.draft;
     const deductions = draft?.deductions ?? [];
-    const shown =
-      this.kind === 'invoice' &&
-      !draft?.on_account &&
-      (deductions.length > 0 || this.onAccountInvoices.length > 0);
+    // a Schlussrechnung only; a Stornorechnung takes back what its invoice deducted
+    const shown = this.kind === 'invoice' && draft !== undefined && isClosing(draft);
     if (!draft || !shown) {
       return nothing;
     }
@@ -1377,6 +1516,40 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   }
 
   /** The offers an invoice bills, the invoices billing an offer and what is billed of it: read from the positions */
+  /** How much of a created offer is billed, its positions say the details */
+  private billedSummary(billing: OfferBilling): string {
+    const open = billing.positions.filter(p => parsed(p.open) > 0).length;
+    const all = billing.positions.length;
+    if (open === 0) {
+      return 'Alles ist in Rechnung gestellt.';
+    }
+    return open === all && billing.positions.every(p => parsed(p.billed) === 0)
+      ? 'Noch nichts in Rechnung gestellt.'
+      : `${open} von ${all} Positionen ${open === 1 ? 'ist' : 'sind'} noch offen.`;
+  }
+
+  /** What is billed of a position of a created offer, said once anything is */
+  private renderBilled(index: number) {
+    const billed = this.billing?.positions.find(p => p.index === index);
+    if (!billed || (parsed(billed.billed) === 0 && parsed(billed.drafted) === 0)) {
+      return nothing;
+    }
+    const done = parsed(billed.open) <= 0;
+    return html`
+      <wa-tag
+        class="source"
+        size="s"
+        appearance="outlined"
+        variant="${done ? 'success' : 'neutral'}"
+      >
+        berechnet ${amount(billed.billed)} von
+        ${amount(billed.position.quantity ?? '1')}${
+          done ? '' : ` · offen ${amount(billed.open)}`
+        }${parsed(billed.drafted) > 0 ? ` · ${amount(billed.drafted)} in Entwürfen` : ''}
+      </wa-tag>
+    `;
+  }
+
   private renderLinks() {
     const other = KINDS[otherKind(this.kind)];
     return html`
@@ -1384,36 +1557,33 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         <div slot="header">${this.links.length === 1 ? other.noun : other.list}</div>
         <div class="stack">
           ${
-            // a created offer says what is billed of it below
-            this.links.length === 0 && this.billing
-              ? nothing
-              : this.links.length === 0
-                ? html`
-                    <span class="muted">
-                      ${
-                        this.kind === 'offer'
-                          ? 'Noch keine Rechnung dazu.'
-                          : 'Bezieht sich auf kein Angebot. Positionen „aus Angebot“ übernehmen.'
-                      }
-                    </span>
-                  `
-                : html`
-                    <erng-list>
-                      ${this.links.map(
-                        l => html`
-                          <div class="link">
-                            <erng-list-item @click="${() => goto(this.route(l.kind, l.id))}">
-                              ${l.customer_name || '–'}
-                              <span slot="sub">
-                                ${l.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
-                              </span>
-                              <span slot="sub-end">${formatDate(l.issue_date)}</span>
-                            </erng-list-item>
-                          </div>
-                        `
-                      )}
-                    </erng-list>
-                  `
+            this.links.length === 0
+              ? html`
+                  <span class="muted">
+                    ${
+                      this.kind === 'offer'
+                        ? 'Noch keine Rechnung dazu.'
+                        : 'Bezieht sich auf kein Angebot. Positionen „aus Angebot“ übernehmen.'
+                    }
+                  </span>
+                `
+              : html`
+                  <erng-list>
+                    ${this.links.map(
+                      l => html`
+                        <div class="link">
+                          <erng-list-item @click="${() => goto(this.route(l.kind, l.id))}">
+                            ${l.customer_name || '–'}
+                            <span slot="sub">
+                              ${l.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
+                            </span>
+                            <span slot="sub-end">${formatDate(l.issue_date)}</span>
+                          </erng-list-item>
+                        </div>
+                      `
+                    )}
+                  </erng-list>
+                `
           }
           ${
             this.kind === 'invoice' && this.draft?.positions.some(p => p.source)
@@ -1430,7 +1600,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                 `
               : nothing
           }
-          ${this.billing ? html`<erng-billing .billing="${this.billing}"></erng-billing>` : nothing}
+          ${this.billing ? html`<span class="muted">${this.billedSummary(this.billing)}</span>` : nothing}
         </div>
       </wa-card>
     `;
@@ -1520,60 +1690,31 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     `;
   }
 
-  /** What the document is: a draft, or created (numbered, checked) and perhaps paid, an offer valid until a day */
+  /** What the document is (its Vorgang, a draft or its number) and where it stands, as a row of the list says it */
   private renderStatus() {
     const stored = this.stored;
     if (!stored) {
       return html`<div class="status"><wa-tag appearance="outlined">Neu</wa-tag></div>`;
     }
-    const vorgang = this.case
-      ? html`<wa-tag appearance="outlined" title="Vorgang">${this.case.number}</wa-tag>`
-      : nothing;
-    // the offer it refers to, as the document names it
-    const related = stored.relation
-      ? html`
-          <wa-tag appearance="outlined" title="${RELATIONS[stored.relation].hint}">
-            ${RELATIONS[stored.relation].of(stored.related_number ?? '')}
-          </wa-tag>
-        `
-      : nothing;
-    if (stored.status === 'draft') {
-      return html`<div class="status">${vorgang}${related}<wa-tag>Entwurf</wa-tag></div>`;
-    }
-    const until = validUntil(stored.draft.issue_date, stored.draft.validity_days);
+    const vorgang = this.case;
     return html`
       <div class="status">
-        ${vorgang} ${related}
-        <wa-tag>${stored.number}</wa-tag>
-        ${stored.superseded ? html`<wa-tag variant="neutral">Ersetzt</wa-tag>` : nothing}
-        ${stored.lapsed ? html`<wa-tag variant="neutral">Entfallen</wa-tag>` : nothing}
-        ${stored.archived_at ? html`<wa-tag variant="neutral">Archiviert</wa-tag>` : nothing}
         ${
-          stored.paid_at
-            ? html`<wa-tag variant="success">Bezahlt am ${formatDate(stored.paid_at)}</wa-tag>`
-            : stored.payments.length > 0
-              ? html`<wa-tag variant="warning">Teilweise bezahlt</wa-tag>`
-              : nothing
-        }
-        ${
-          stored.answer
+          vorgang
             ? html`
-                <wa-tag variant="${stored.answer === 'accepted' ? 'success' : 'danger'}">
-                  ${stored.answer === 'accepted' ? 'Angenommen' : 'Abgelehnt'} am
-                  ${formatDate(stored.answered_on ?? '')}
+                <wa-tag
+                  appearance="outlined"
+                  class="ref"
+                  title="Zum Vorgang"
+                  @click="${() => goto(caseRoute(vorgang.id))}"
+                >
+                  ${vorgang.number}
                 </wa-tag>
               `
             : nothing
         }
-        ${
-          this.kind === 'offer' && until && !stored.superseded && !stored.lapsed
-            ? html`
-                <wa-tag variant="${until < today() ? 'warning' : 'neutral'}">
-                  Gültig bis ${formatDate(until)}
-                </wa-tag>
-              `
-            : nothing
-        }
+        <wa-tag>${stored.number ?? 'Entwurf'}</wa-tag>
+        ${detailTags(statusOf(standingOf(stored)), (kind, id) => goto(this.route(kind, id)))}
       </div>
     `;
   }
@@ -1604,9 +1745,12 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
               : nothing
           }
           ${
+            // a cancelled invoice and a Stornorechnung are paid on no more
             locked && stored
               ? this.kind === 'invoice'
-                ? this.renderPayment(stored)
+                ? stored.cancelled || stored.draft.corrects?.kind === 'cancel'
+                  ? nothing
+                  : this.renderPayment(stored)
                 : this.renderAnswer(stored)
               : nothing
           }
@@ -1667,7 +1811,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
 
           <wa-card id="positions">
             <div slot="header">Positionen</div>
-            <div class="stack">${this.renderPositions(locked)}</div>
+            <div class="stack">
+              ${this.renderPositions(locked || draft.corrects?.kind === 'cancel')}
+            </div>
           </wa-card>
 
           <wa-card>
@@ -1711,9 +1857,26 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
               ? html`
                   <wa-card>
                     <div slot="header">Verlauf</div>
+                    ${
+                      this.comparable
+                        ? html`
+                            <wa-button
+                              slot="header-actions"
+                              appearance="plain"
+                              size="s"
+                              @click="${() => this.renderRoot.querySelector('erng-history')?.compareNewest()}"
+                            >
+                              <wa-icon slot="start" name="compare"></wa-icon>
+                              Versionen vergleichen
+                            </wa-button>
+                          `
+                        : nothing
+                    }
                     <erng-history
+                      @comparable-change="${(e: CustomEvent<boolean>) => (this.comparable = e.detail)}"
                       invoice-id="${stored.id}"
                       revision="${this.revision}"
+                      .route="${this.route}"
                       .current="${stored.status === 'draft' ? this.draft : undefined}"
                     ></erng-history>
                   </wa-card>
@@ -1743,10 +1906,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
             stored
               ? html`
                   <wa-button-group label="${this.texts.noun}">
-                    <wa-button appearance="outlined" @click="${this.duplicate}">
-                      Duplizieren
-                    </wa-button>
-                    ${locked && this.kind === 'offer' ? this.renderRelate() : nothing}
+                    ${this.renderDuplicate(locked)}
+                    ${locked && this.kind === 'invoice' ? this.renderCorrect(stored) : nothing}
                     ${
                       locked
                         ? stored.archived_at

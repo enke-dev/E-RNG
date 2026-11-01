@@ -120,6 +120,7 @@ pub fn invoice_save(
     // what the deducted invoices came to comes from them, before the total is worked out
     let mut draft = draft;
     store.fill_deductions(&mut draft)?;
+    store.fill_correction(&mut draft);
     let total = build_invoice(&draft, &settings, "ENTWURF")
         .ok()
         .map(|invoice| totals(&invoice).due);
@@ -202,6 +203,22 @@ pub fn case_billing(
 ) -> CommandResult<Vec<OfferBilling>> {
     store
         .case_billing(case_id, except)
+        .map_err(CommandError::from)
+}
+
+/// A Stornorechnung for the created invoice `id`: a draft that mirrors it
+#[tauri::command]
+pub fn invoice_cancel(store: State<'_, Store>, id: i64) -> CommandResult<StoredInvoice> {
+    store
+        .cancel_invoice(id, &today())
+        .map_err(CommandError::from)
+}
+
+/// An Ersatzrechnung for the cancelled invoice `id`: a draft of what it said
+#[tauri::command]
+pub fn invoice_replace(store: State<'_, Store>, id: i64) -> CommandResult<StoredInvoice> {
+    store
+        .replace_invoice(id, &today())
         .map_err(CommandError::from)
 }
 

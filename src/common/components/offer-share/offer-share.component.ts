@@ -11,9 +11,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type { OfferBilling, OnAccount, Position } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
-import { sharePositions } from '../../utils/billing.utils.js';
+import { sharePositions, typedMoney } from '../../utils/billing.utils.js';
 import { text } from '../../utils/form.utils.js';
-import { money } from '../../utils/format.utils.js';
 import styles from './offer-share.component.css';
 
 /**
@@ -93,7 +92,7 @@ export class OfferShareComponent extends ErngElement.withStyles(styles) {
                       p => html`
                         <li>
                           <span>${p.description}</span>
-                          <span class="amount">${money(p.price)}</span>
+                          <span class="amount">${typedMoney(p.price)}</span>
                         </li>
                       `
                     )}

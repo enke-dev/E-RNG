@@ -25,6 +25,10 @@ pub struct OnAccountInvoice {
     pub gross: String,
     /// The number of the created invoice that deducts it, or `Entwurf` for a draft that does
     pub deducted_by: Option<String>,
+    /// What was received on it so far (none without payments), and the day it was paid completely:
+    /// a Schlussrechnung deducts it as invoiced and warns while it is not
+    pub paid: Option<String>,
+    pub paid_at: Option<String>,
 }
 
 /// A created invoice on account as a deduction names it: number, day, net, VAT, gross
@@ -46,12 +50,25 @@ fn figures(conn: &Connection, id: i64) -> Result<Option<OnAccountInvoice>> {
     if kind != Kind::Invoice.as_str() || status != "exported" {
         return Ok(None);
     }
+    // a cancelled one is deducted by nothing
+    let cancelled: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM invoices
+         WHERE status = 'exported' AND json_extract(draft, '$.corrects.kind') = 'cancel'
+             AND json_extract(draft, '$.corrects.invoice_id') = ?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    if cancelled {
+        return Ok(None);
+    }
     // a created invoice froze its settings, so it is built again exactly as it was
     let settings = context_settings(conn, context).unwrap_or_default();
     let Ok(invoice) = build_invoice(&draft, &settings, &number) else {
         bail!("Die Abschlagsrechnung {number} lässt sich nicht mehr berechnen.");
     };
     let t = totals(&invoice);
+    let (paid, paid_at) =
+        crate::history::settle(Some(&t.gross), &crate::history::payments_of(conn, id)?);
     Ok(Some(OnAccountInvoice {
         id,
         number,
@@ -61,17 +78,26 @@ fn figures(conn: &Connection, id: i64) -> Result<Option<OnAccountInvoice>> {
         vat: t.vat,
         gross: t.gross,
         deducted_by: None,
+        paid,
+        paid_at,
     }))
 }
+
+/// SQL over an invoice `i` whose deductions count: no Stornorechnung (it takes them back) and not
+/// cancelled by a created one (they are free again for its Ersatzrechnung)
+const DEDUCTING: &str = "json_extract(i.draft, '$.corrects.kind') IS NOT 'cancel'
+     AND NOT EXISTS (SELECT 1 FROM invoices s WHERE s.status = 'exported'
+         AND json_extract(s.draft, '$.corrects.kind') = 'cancel'
+         AND json_extract(s.draft, '$.corrects.invoice_id') = i.id)";
 
 /// Who deducts the invoice on account `id`, leaving `except` out: a created invoice by its
 /// number, else a draft
 fn deducted_by(conn: &Connection, id: i64, except: Option<i64>) -> Result<Option<String>> {
-    let mut statement = conn.prepare(
+    let mut statement = conn.prepare(&format!(
         "SELECT i.id, i.number FROM invoices i, json_each(i.draft, '$.deductions') d
-         WHERE i.kind = 'invoice' AND json_extract(d.value, '$.invoice_id') = ?1
-         ORDER BY i.number IS NULL, i.id",
-    )?;
+         WHERE i.kind = 'invoice' AND json_extract(d.value, '$.invoice_id') = ?1 AND {DEDUCTING}
+         ORDER BY i.number IS NULL, i.id"
+    ))?;
     let rows = statement
         .query_map([id], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?))
@@ -99,6 +125,10 @@ pub(crate) fn check_deductions(
     if kind != Kind::Invoice || draft.on_account.is_some() {
         bail!("Nur eine Schlussrechnung zieht Abschlags- und Anzahlungsrechnungen ab.");
     }
+    // a Stornorechnung takes back what its invoice deducted, `check_correction` holds it to that
+    if crate::draft::cancels(draft) {
+        return Ok(());
+    }
     let mut seen = std::collections::BTreeSet::new();
     for deduction in &draft.deductions {
         if !seen.insert(deduction.invoice_id) {
@@ -117,9 +147,11 @@ pub(crate) fn check_deductions(
         }
         // a draft that deducts it too is fine until one of them is created
         let created_elsewhere: bool = conn.query_row(
-            "SELECT COUNT(*) > 0 FROM invoices i, json_each(i.draft, '$.deductions') d
-             WHERE i.status = 'exported' AND i.id IS NOT ?2
-                 AND json_extract(d.value, '$.invoice_id') = ?1",
+            &format!(
+                "SELECT COUNT(*) > 0 FROM invoices i, json_each(i.draft, '$.deductions') d
+                 WHERE i.status = 'exported' AND i.id IS NOT ?2
+                     AND json_extract(d.value, '$.invoice_id') = ?1 AND {DEDUCTING}"
+            ),
             params![deduction.invoice_id, id],
             |r| r.get(0),
         )?;
@@ -229,7 +261,11 @@ mod tests {
             None => store.save_draft(None, 1, Kind::Invoice, &on_account, None),
         }
         .unwrap();
-        bake(store, saved.id, number, "0");
+        // stored as what it asks for, 19 % on the net
+        let gross = (crate::draft::decimal(net).unwrap() * rust_decimal::Decimal::new(119, 2))
+            .round_dp(2)
+            .to_string();
+        bake(store, saved.id, number, &gross);
         store.invoice(saved.id).unwrap()
     }
 
@@ -248,6 +284,20 @@ mod tests {
             })
             .collect();
         closing
+    }
+
+    #[test]
+    fn a_schlussrechnung_is_one_once_picked() {
+        let mut picked = draft();
+        assert!(!picked.is_closing());
+        // before it deducts anything
+        picked.settles = true;
+        assert!(picked.is_closing());
+        picked.on_account = Some(OnAccount::Progress);
+        assert!(!picked.is_closing());
+        // deducting makes one too
+        let deducting = deducting(&[1]);
+        assert!(deducting.is_closing());
     }
 
     #[test]
@@ -299,6 +349,14 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("RE-1", "300.00", "357.00"), ("RE-2", "200.00", "238.00")]
         );
+        // what was received on them, for the warning on what is not paid yet
+        store.add_payment(first.id, "100", "2026-11-05").unwrap();
+        let listed = store.case_on_account(first.case_id, None).unwrap();
+        assert_eq!(
+            (listed[0].paid.as_deref(), listed[0].paid_at.as_deref()),
+            (Some("100"), None)
+        );
+        assert_eq!(listed[1].paid, None);
 
         let mut closing = deducting(&[first.id, second.id]);
         store.fill_deductions(&mut closing).unwrap();

@@ -215,6 +215,14 @@ export interface Position {
   price: string;
   /** Invoices: the position of a created offer of its Vorgang it bills */
   source?: PositionSource | null;
+  /** Invoices on account: the share of an offer this lump sum is */
+  share?: PositionShare | null;
+}
+
+/** A share of a created offer, the percent as typed */
+export interface PositionShare {
+  offer_id: number;
+  percent: string;
 }
 
 /** A position of a created offer, by the offer and its place in it */
@@ -315,8 +323,23 @@ export interface InvoiceDraft {
   frozen: Settings | null;
   /** Invoices: billed on account, provisional */
   on_account?: OnAccount | null;
+  /** Invoices: a Schlussrechnung picked as such, even before it deducts one */
+  settles?: boolean;
   /** Invoices: the invoices on account of its Vorgang it deducts, a Schlussrechnung */
   deductions?: Deduction[];
+  /** Invoices: the created invoice it cancels (Stornorechnung) or replaces (Ersatzrechnung) */
+  corrects?: Correction | null;
+}
+
+/** How an invoice corrects a created one: it cancels it, or replaces a cancelled one */
+export type CorrectionKind = 'cancel' | 'replace';
+
+/** The created invoice another corrects; the store fills in its number and date */
+export interface Correction {
+  invoice_id: number;
+  kind: CorrectionKind;
+  number: string;
+  issue_date: string;
 }
 
 /** An invoice on account: money before any work (Anzahlung) or for the work so far (Abschlag) */
@@ -343,6 +366,9 @@ export interface OnAccountInvoice {
   gross: string;
   /** The number of the created invoice deducting it, or `Entwurf` for a draft that does */
   deducted_by: string | null;
+  /** What was received on it so far (none without payments), and the day it was paid completely */
+  paid: string | null;
+  paid_at: string | null;
 }
 
 export type Status = 'draft' | 'exported';
@@ -366,14 +392,32 @@ export type Answer = 'accepted' | 'declined';
 export type Relation = 'supplement' | 'alternative' | 'replacement';
 
 /** What an offer has from its relations, read from the data (`relations.rs`) */
+/** Another document by its id and number */
+export interface DocumentRef {
+  id: number;
+  number: string | null;
+}
+
+/** How a document stands to others: the offer it refers to, what supersedes or cancels it */
 export interface Related {
   relation: Relation | null;
-  /** The number of the offer it refers to */
+  /** The offer it refers to, see `relation` */
+  related_id: number | null;
   related_number: string | null;
   /** Another offer of its alternative group is accepted, it is out of the running */
   lapsed: boolean;
-  /** An Ersatzangebot for it is created */
+  /** The other offer of its alternative group that is accepted */
+  taken_by?: DocumentRef | null;
+  /** An Ersatzangebot for it is created, and which */
   superseded: boolean;
+  superseded_by?: DocumentRef | null;
+  /** Invoices: a Stornorechnung for it is created, and which */
+  cancelled: boolean;
+  cancelled_by?: DocumentRef | null;
+  /** Invoices: the draft of a Stornorechnung for it, not created yet */
+  cancel_draft?: number | null;
+  /** Invoices: bills only part of an offer, a Teilrechnung */
+  partial: boolean;
 }
 
 export type EventKind =
@@ -434,8 +478,6 @@ export interface StoredInvoice extends Related {
   archived_at: string | null;
   /** The originals made when it was created, none for a draft and for an invoice from before */
   files: InvoiceFiles | null;
-  /** The offer it refers to, see `relation` */
-  related_id: number | null;
 }
 
 export interface StoredFile {
@@ -464,6 +506,8 @@ export interface ListEntry extends Related {
   /** Invoices: on account, or a Schlussrechnung deducting such */
   on_account: OnAccount | null;
   closing: boolean;
+  /** Invoices: the invoice it corrects */
+  corrects: Correction | null;
   id: number;
   context_id: number;
   kind: Kind;
@@ -484,8 +528,6 @@ export interface ListEntry extends Related {
   answered_on: string | null;
   updated_at: string;
   archived_at: string | null;
-  /** How many documents of the other kind it is linked to */
-  linked: number;
   /** The Vorgang it is in */
   case_id: number;
 }
@@ -973,6 +1015,10 @@ export const api = {
   /** What is billed of a created offer; `except` leaves an invoice draft out */
   offerBilling: (id: number, except: number | null = null) =>
     invoke<OfferBilling>('offer_billing', { id, except }),
+  /** A Stornorechnung for a created invoice: a draft that mirrors it */
+  invoiceCancel: (id: number) => invoke<StoredInvoice>('invoice_cancel', { id }),
+  /** An Ersatzrechnung for a cancelled invoice: a draft of what it said */
+  invoiceReplace: (id: number) => invoke<StoredInvoice>('invoice_replace', { id }),
   /** The created invoices on account of a Vorgang; `except` leaves the asking draft out */
   caseOnAccount: (caseId: number, except: number | null = null) =>
     invoke<OnAccountInvoice[]>('case_on_account', { caseId, except }),

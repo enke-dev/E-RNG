@@ -1,5 +1,6 @@
 import type { Address, InvoiceDraft, Position } from './api.utils.js';
-import { formatDate, money, percent } from './format.utils.js';
+import { typedMoney } from './billing.utils.js';
+import { formatDate, percent } from './format.utils.js';
 
 /** A piece of a compared text: in both, or only in the newer (`added`) or older one (`removed`) */
 export interface Segment {
@@ -149,7 +150,7 @@ const FIELDS: Field<InvoiceDraft>[] = [
 const POSITION_FIELDS: Field<Position>[] = [
   ['Beschreibung', p => p.description, 'words'],
   ['Menge', p => [p.quantity ?? '', p.unit_label ?? p.unit ?? ''].filter(Boolean).join(' ')],
-  ['Preis (netto)', p => money(p.price)],
+  ['Preis (netto)', p => typedMoney(p.price)],
   ['USt.', p => p.tax_label ?? (p.tax_rate === null ? 'Standard' : percent(p.tax_rate))],
 ];
 

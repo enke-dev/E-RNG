@@ -406,6 +406,15 @@ impl Store {
         if value <= Decimal::ZERO {
             bail!("a payment is above zero");
         }
+        let target = self.invoice(invoice_id)?;
+        if target.cancelled
+            || target
+                .draft
+                .corrects
+                .is_some_and(|c| c.kind == crate::model::CorrectionKind::Cancel)
+        {
+            bail!("Auf eine stornierte Rechnung oder eine Stornorechnung wird nichts gezahlt.");
+        }
         let stored = self.invoice(invoice_id)?;
         if stored.kind != Kind::Invoice || stored.status != Status::Exported {
             bail!("only an exported invoice can be paid");

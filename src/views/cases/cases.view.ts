@@ -13,6 +13,7 @@ import '../../common/components/filter-bar/filter-bar.component.js';
 import '../../common/components/list/list/list.component.js';
 import '../../common/components/list/list-group/list-group.component.js';
 import '../../common/components/list/list-item/list-item.component.js';
+import '../../common/components/collect/collect.component.js';
 import '../../common/components/new-case/new-case.component.js';
 import '../../common/layouts/split/split.layout.js';
 import '../invoice-edit/invoice-edit.view.js';
@@ -50,15 +51,16 @@ const STAGES: [Stage, string][] = [
   ['accepted', 'Angebote angenommen'],
   ['declined', 'Angebote abgelehnt'],
   ['superseded', 'Angebote ersetzt'],
-  ['lapsed', 'Angebote entfallen'],
+  ['lapsed', 'Alternative angenommen'],
   ['open', 'Rechnungen offen'],
   ['paid', 'Rechnungen bezahlt'],
+  ['cancelled', 'Rechnungen storniert'],
 ];
 
 /** The stages a kind can be in; a draft is either */
 const STAGES_OF: Record<Kind, Stage[]> = {
   offer: ['draft', 'valid', 'expired', 'accepted', 'declined', 'superseded', 'lapsed'],
-  invoice: ['draft', 'open', 'paid'],
+  invoice: ['draft', 'open', 'paid', 'cancelled'],
 };
 
 /** What a document is called in the list: its kind and number, or the kind's draft */
@@ -99,6 +101,8 @@ export class CasesView extends ErngElement.withStyles(styles) {
   @state() private created: number | undefined;
   /** The dialog that starts a Vorgang is open */
   @state() private starting = false;
+  /** The Sammelrechnung dialog is open */
+  @state() private collecting = false;
   /** Counts the changes of documents, a Vorgang on show reads itself again */
   @state() private revision = 0;
 
@@ -392,6 +396,8 @@ export class CasesView extends ErngElement.withStyles(styles) {
           const value = e.detail.item.value;
           if (value === 'case') {
             this.starting = true;
+          } else if (value === 'collect') {
+            this.collecting = true;
           } else {
             this.create(value as Kind);
           }
@@ -404,6 +410,7 @@ export class CasesView extends ErngElement.withStyles(styles) {
         <wa-dropdown-item value="invoice">${KINDS.invoice.newLabel}</wa-dropdown-item>
         <wa-divider></wa-divider>
         <wa-dropdown-item value="case">Neuer Vorgang …</wa-dropdown-item>
+        <wa-dropdown-item value="collect">Sammelrechnung …</wa-dropdown-item>
       </wa-dropdown>
     `;
   }
@@ -560,6 +567,11 @@ export class CasesView extends ErngElement.withStyles(styles) {
             `
           : nothing
       }
+      <erng-collect
+        ?open="${this.collecting}"
+        @close="${() => (this.collecting = false)}"
+        @case-changed="${() => void this.load()}"
+      ></erng-collect>
     `;
   }
 }

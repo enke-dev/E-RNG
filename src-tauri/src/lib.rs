@@ -4,6 +4,7 @@ mod case_links;
 mod cases;
 mod commands;
 mod context;
+mod corrections;
 mod creation;
 mod draft;
 #[cfg(test)]
@@ -186,6 +187,8 @@ pub fn run() {
             commands::invoices_command::offer_billing,
             commands::invoices_command::case_billing,
             commands::invoices_command::case_on_account,
+            commands::invoices_command::invoice_cancel,
+            commands::invoices_command::invoice_replace,
             commands::invoice_files_command::invoice_create,
             commands::invoice_files_command::invoice_next_number,
             commands::invoice_files_command::invoice_output,

@@ -118,7 +118,7 @@ fn make(
             findings: vec![finding],
         });
     }
-    // what is due: a Schlussrechnung keeps what is left after its deductions
+    // what is due: a Schlussrechnung keeps what is left after its deductions, a Storno is negative
     let total = totals(&invoice).due;
     let customs = store.all_custom_layouts().map_err(failed)?;
     let branding = Branding {
@@ -655,6 +655,57 @@ mod tests {
                     < crate::history::decimal(abschlag.total.as_deref().unwrap())
                         * rust_decimal::Decimal::TEN
             );
+
+            // its Storno takes the deduction back too, negative throughout
+            let storno = store.cancel_invoice(schluss.id, "2026-11-02").unwrap();
+            let storno = create(
+                &sidecars,
+                &store,
+                &Creating::default(),
+                data.path(),
+                storno.id,
+            )
+            .unwrap()
+            .invoice;
+            let xml = xml_of(data.path(), &storno);
+            assert!(xml.contains("<ram:TypeCode>384</ram:TypeCode>"), "{xml}");
+            assert!(xml.contains("TotalPrepaidAmount>-"), "{xml}");
+            assert_eq!(
+                storno.total.as_deref().map(crate::history::decimal),
+                schluss
+                    .total
+                    .as_deref()
+                    .map(|t| -crate::history::decimal(t))
+            );
+        }
+
+        #[test]
+        #[ignore = "needs the sidecars: bun run generate:sidecars"]
+        fn a_stornorechnung_and_an_ersatzrechnung_pass_the_validators() {
+            let (store, context, data) = setup();
+            let sidecars = Sidecars::in_repo();
+            let create_now = |id: i64| {
+                create(&sidecars, &store, &Creating::default(), data.path(), id)
+                    .unwrap()
+                    .invoice
+            };
+            let id = store
+                .save_draft(None, context, Kind::Invoice, &draft(), None)
+                .unwrap()
+                .id;
+            let original = create_now(id);
+            let storno = create_now(store.cancel_invoice(original.id, "2026-11-02").unwrap().id);
+            let xml = xml_of(data.path(), &storno);
+            assert!(xml.contains("<ram:TypeCode>384</ram:TypeCode>"), "{xml}");
+            assert!(xml.contains(original.number.as_deref().unwrap()));
+            assert!(storno.total.as_deref().unwrap().starts_with('-'));
+            assert!(store.invoice(original.id).unwrap().cancelled);
+
+            let replacement =
+                create_now(store.replace_invoice(original.id, "2026-11-02").unwrap().id);
+            let xml = xml_of(data.path(), &replacement);
+            assert!(xml.contains("<ram:TypeCode>380</ram:TypeCode>"));
+            assert!(xml.contains("InvoiceReferencedDocument"));
         }
 
         #[test]

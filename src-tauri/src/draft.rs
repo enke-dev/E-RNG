@@ -16,7 +16,9 @@ use rust_decimal::Decimal;
 use serde::Serialize;
 
 use crate::invoice::{line_from_unit_price, Invoice, ProfileKind};
-use crate::model::{Address, Customer, InvoiceDraft, OnAccount, Position, Seller, Settings};
+use crate::model::{
+    Address, CorrectionKind, Customer, InvoiceDraft, OnAccount, Position, Seller, Settings,
+};
 use crate::rates;
 
 /// The Peppol business process `XRechnung` asks for (BT-23)
@@ -381,6 +383,8 @@ fn reconciled(
             .iter()
             .map(|d| crate::history::decimal(&d.gross))
             .sum();
+        // a Storno of a Schlussrechnung takes the deductions back with the rest
+        let deducted = if cancels(draft) { -deducted } else { deducted };
         let paid = InvoiceAmount::parse(&deducted.round_dp(2).to_string()).map_err(|e| {
             vec![problem(
                 "deductions",
@@ -403,7 +407,26 @@ fn reconciled(
             issue_date: Date::parse(&d.issue_date).ok(),
         })
         .collect();
+    // a Stornorechnung corrects the invoice it cancels (384), an Ersatzrechnung names the cancelled
+    // one it replaces; both as a preceding invoice
+    if let Some(correction) = &draft.corrects {
+        invoice.preceding_invoices.push(PrecedingInvoice {
+            reference: DocumentReference::new(correction.number.clone()),
+            issue_date: Date::parse(&correction.issue_date).ok(),
+        });
+        if correction.kind == CorrectionKind::Cancel {
+            invoice.type_code = Some(en16931::invoice::Code::new("384"));
+        }
+    }
     Ok(invoice)
+}
+
+/// Whether a draft is a Stornorechnung
+pub(crate) fn cancels(draft: &InvoiceDraft) -> bool {
+    draft
+        .corrects
+        .as_ref()
+        .is_some_and(|c| c.kind == CorrectionKind::Cancel)
 }
 
 /// BT-3: an invoice, or one on account. `XRechnung` knows no prepayment invoice (386), an Anzahlung
@@ -564,6 +587,7 @@ pub(crate) mod fixtures {
                     tax_label: None,
                     price: "95,00".into(),
                     source: None,
+                    share: None,
                 },
                 Position {
                     description: "Reisekosten".into(),
@@ -574,6 +598,7 @@ pub(crate) mod fixtures {
                     tax_label: None,
                     price: "42.50".into(),
                     source: None,
+                    share: None,
                 },
             ],
             profile: ProfileKind::En16931,
@@ -587,7 +612,9 @@ pub(crate) mod fixtures {
             offer_reference: false,
             frozen_offers: Vec::new(),
             on_account: None,
+            settles: false,
             deductions: Vec::new(),
+            corrects: None,
         }
     }
 }
@@ -953,6 +980,7 @@ mod tests {
                 tax_label: None,
                 price: price.into(),
                 source: None,
+                share: None,
             }];
             let invoice = build_invoice(&d, &settings(), "RE-1").unwrap();
             crate::invoice::validate(&invoice, ProfileKind::En16931)

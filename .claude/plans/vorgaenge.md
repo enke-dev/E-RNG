@@ -1,6 +1,6 @@
 # Vorgänge – Plan
 
-**Status (2026-11-01): phases 1–8 done, not pushed yet; phase 9 next.**
+**Status (2026-11-03): phases 1–9 done and reviewed, the decisions below settled, not pushed yet.**
 Details of what is built are in `docs/development.md`. A living plan: decisions are edited in place,
 what is dropped is removed, not kept as history.
 
@@ -155,8 +155,8 @@ printable one could come later.
   Anzahlung goes as 326 there; Mustang accepts 386 under EN 16931.
 - In the XML the Schlussrechnung states its full amounts, refers to the invoices on account as
   preceding invoices (BG-3) and puts what they came to gross in BT-113 (paid amount), instead of
-  negative lines; the document lists each with its net and VAT. Mustang accepts it; whether BT-113
-  should hold what was invoiced or only what was received is open (see review).
+  negative lines; the document lists each with its net and VAT. Mustang accepts it; BT-113 holds what
+  was invoiced (see the decisions below).
 
 "Final" decides the open amount: a final position bills its part for good, an Abschlag or Anzahlung
 is only a payment on account until the Schlussrechnung settles it. So the difference between Abschlag
@@ -208,7 +208,7 @@ others.
    newer one, the newest of a draft with the draft now, only where they differ), any two versions
    picked in the dialog, the fields, positions and totals that differ.
 5. **Done. Offer → offer**: Nachtrag, Alternativangebot (lapsing), Ersatzangebot (superseding),
-   `Angebot dazu`, the row on the document, stages and tags. Schema 14, no data to migrate.
+   `Duplizieren`, the row on the document, stages and tags. Schema 14, no data to migrate.
 6. **Done. Position references, final**: an invoice position refers to a position of a created
    offer of its Vorgang and bills its own quantity of it; what is open per position is the rest
    after created invoices. `Rechnung erstellen` bills all that is open (less of it: Teilrechnung),
@@ -219,8 +219,20 @@ others.
    offer per VAT rate), the Schlussrechnung deducting them (BG-3, BT-113, a row per deduction with
    its VAT). Checked with Mustang: 386 (EN 16931) and 326 (XRechnung) for an Anzahlung, 326 for an
    Abschlag, 380 with BG-3 and BT-113 for the Schlussrechnung. Construction codes (875–877) unused.
-8. **Done. Vorgang → Vorgang**: Folgeangebot in a Folgevorgang (`Angebot dazu`), Sammelrechnung across
+8. **Done. Vorgang → Vorgang**: Folgeangebot in a Folgevorgang (`Duplizieren`), Sammelrechnung across
    Vorgänge of one customer (a collecting Vorgang, its invoice bills their offers), the references on
-   the Vorgang's page. Schema 16. Not done: the status of a collected Vorgang does not follow its
-   references yet.
-9. **Next. Corrections**: Rechnungskorrektur, Stornorechnung, Ersatzrechnung (`to_credit_note` exists).
+   the Vorgang's page. Schema 16. A collected Vorgang stands as its part of the collecting invoice.
+9. **Done. Corrections**: Stornorechnung (a corrected invoice, 384, mirroring the invoice with
+   negative quantities and its deductions, keeping its time of service) and Ersatzrechnung (a new
+   invoice for the cancelled one, BG-3); a Rechnungskorrektur is the two. A cancelled invoice is no
+   longer open, billed or deducted; what it deducted is free again.
+
+## Decisions (settled 2026-11-03)
+
+- Anzahlung: 386 under EN 16931, 326 under XRechnung.
+- BT-113 of a Schlussrechnung: the Abschläge as invoiced, not as received (§ 14 Abs. 5: "vereinnahmte");
+  the editor warns when a deducted one is not paid completely, its rest stays open on it.
+- The fixed headlines (Anzahlungs-, Abschlags-, Schluss-, Stornorechnung) win over an own wording.
+- The stored total of a Schlussrechnung is what is left to pay.
+- A Teilrechnung bills only part of an offer, whatever was billed before; so the invoice billing the
+  rest is one too.

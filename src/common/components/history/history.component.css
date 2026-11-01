@@ -103,3 +103,8 @@ li {
   block-size: 1lh;
   padding: 0 var(--wa-space-2xs);
 }
+
+/* a tag naming a document opens it */
+wa-tag.ref {
+  cursor: pointer;
+}

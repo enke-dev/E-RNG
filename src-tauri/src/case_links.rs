@@ -156,6 +156,12 @@ impl Store {
         if cases.len() < 2 {
             bail!("Eine Sammelrechnung fasst mindestens zwei Vorgänge zusammen.");
         }
+        if cases
+            .iter()
+            .any(|c| c.sources.iter().any(|s| s.link == CaseLink::Collect))
+        {
+            bail!("Ein Vorgang, der andere zusammenfasst, wird nicht noch einmal gesammelt.");
+        }
         if first.customer_id.is_none()
             || cases
                 .iter()
@@ -234,6 +240,7 @@ mod tests {
     use crate::cases::tests::bake;
     use crate::context::Context;
     use crate::draft::fixtures::{draft, settings};
+    use crate::model::CaseStage;
 
     fn store() -> Store {
         let store = Store::in_memory().unwrap();
@@ -317,10 +324,33 @@ mod tests {
         assert_eq!(store.case_billing(invoice.case_id, None).unwrap().len(), 2);
         assert_eq!(store.offer_numbers(invoice.id).unwrap(), ["AN-1", "AN-2"]);
 
+        // the collecting Vorgang is not collected again
+        let c = offer(&store, 7, "AN-4");
+        assert!(store
+            .collect(&[invoice.case_id, c.case_id], "2026-11-02")
+            .is_err());
+
         // once created, nothing is open any more
         bake(&store, invoice.id, "RE-1", "200");
         assert!(store
             .collect(&[a.case_id, b.case_id], "2026-11-03")
             .is_err());
+        // and each collected Vorgang stands as its part of the invoice says, half of it here
+        let collected = store.case(a.case_id).unwrap();
+        assert_eq!(
+            (
+                collected.stage,
+                collected.invoiced.as_str(),
+                collected.documents
+            ),
+            (CaseStage::Invoiced, "100", 1)
+        );
+        store.add_payment(invoice.id, "200", "2026-11-04").unwrap();
+        let collected = store.case(b.case_id).unwrap();
+        assert_eq!(
+            (collected.stage, collected.open.as_str()),
+            (CaseStage::Paid, "0")
+        );
+        assert_eq!(store.case(invoice.case_id).unwrap().invoiced, "200");
     }
 }

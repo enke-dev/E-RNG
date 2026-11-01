@@ -1,10 +1,21 @@
-import type { OfferBilling, OnAccount, Position } from './api.utils.js';
+import type {
+  Deduction,
+  InvoiceDraft,
+  OfferBilling,
+  OnAccount,
+  OnAccountInvoice,
+  Position,
+} from './api.utils.js';
+import { money } from './format.utils.js';
 
 /** A typed price or quantity as a number, either way it is written (`1.130,50`, `1130.50`) */
 export const parsed = (typed: string) => {
   const text = typed.trim();
   return Number(text.includes(',') ? text.replace(/\./g, '').replace(',', '.') : text) || 0;
 };
+
+/** A price as typed, as money: `95,00` is `95,00 €`, not `95,00,00 €` */
+export const typedMoney = (typed: string) => money(String(parsed(typed)));
 
 /** How many of a position: its quantity as typed, a blank one is one (`billing::quantity`) */
 export const quantityOf = (position: Position) =>
@@ -14,7 +25,7 @@ export const quantityOf = (position: Position) =>
 export const amount = (quantity: string) => quantity.replace('.', ',');
 
 /** How an offer position is named where an invoice position refers to it */
-export const sourceName = (number: string, index: number) => `${number} · Pos. ${index + 1}`;
+export const sourceName = (number: string, index: number) => `${number}, Pos. ${index + 1}`;
 
 /**
  * What a picked offer position becomes on an invoice: its data and `quantity` of it, referring to
@@ -51,10 +62,13 @@ export function sharePositions(
   }, new Map<string, { net: number; position: Position }>());
   const what = onAccount === 'prepayment' ? 'Anzahlung' : 'Abschlag';
   const several = groups.size > 1;
+  const typed = String(percent).replace('.', ',');
   return [...groups.values()].map(({ net, position }) => ({
     description:
-      `${what} ${String(percent).replace('.', ',')} % auf Angebot ${billing.number}` +
+      `${what} ${typed} % auf Angebot ${billing.number}` +
       (several ? ` (USt. ${position.tax_label ?? 'Standard'})` : ''),
+    // one lump sum: quantity and unit are fixed (`share`)
+    share: { offer_id: billing.offer_id, percent: typed },
     quantity: null,
     unit: 'LS',
     unit_label: 'pauschal',
@@ -64,4 +78,38 @@ export function sharePositions(
     price: (Math.round(net * percent) / 100).toFixed(2).replace('.', ','),
     source: null,
   }));
+}
+
+/** Whether a draft is a Schlussrechnung: picked or deducting, no Storno (`InvoiceDraft::is_closing`) */
+export const isClosing = (draft: InvoiceDraft): boolean =>
+  !draft.on_account &&
+  draft.corrects?.kind !== 'cancel' &&
+  (Boolean(draft.settles) || (draft.deductions ?? []).length > 0);
+
+/** A created invoice on account as a Schlussrechnung deducts it */
+export const deductionOf = (invoice: OnAccountInvoice): Deduction => ({
+  invoice_id: invoice.id,
+  number: invoice.number,
+  issue_date: invoice.issue_date,
+  net: invoice.net,
+  vat: invoice.vat,
+  gross: invoice.gross,
+});
+
+/**
+ * The offers an invoice bills only part of, less of a position or not all of them: a Teilrechnung
+ * of them, whatever was billed before (as `billing::partial`)
+ */
+export function partlyBilled(positions: Position[], billings: OfferBilling[]): string[] {
+  return billings
+    .filter(billing => positions.some(p => p.source?.offer_id === billing.offer_id))
+    .filter(billing =>
+      billing.positions.some(({ index, position }) => {
+        const here = positions
+          .filter(p => p.source?.offer_id === billing.offer_id && p.source.index === index)
+          .reduce((sum, p) => sum + quantityOf(p), 0);
+        return here < quantityOf(position);
+      })
+    )
+    .map(billing => billing.number);
 }

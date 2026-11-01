@@ -13,8 +13,7 @@
 
 /* round marks the size of a tag: the badge pads its inside for text, an icon needs none */
 .created,
-.payed,
-.linked {
+.payed {
   justify-content: center;
   align-items: center;
   inline-size: 1.75em;
@@ -23,8 +22,7 @@
 }
 
 .created::part(base),
-.payed::part(base),
-.linked::part(base) {
+.payed::part(base) {
   padding: 0;
 }
 

@@ -1,9 +1,8 @@
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/card/card.js';
-import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
-import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/tag/tag.js';
+import '../collect/collect.component.js';
 import '../history/history.component.js';
 import '../page/page.component.js';
 
@@ -14,13 +13,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 import type { Case, CaseRef, Kind } from '../../utils/api.utils.js';
 import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
-import {
-  CASE_STAGES,
-  caseName,
-  caseRoute,
-  casesRoute,
-  STAGE_VARIANTS,
-} from '../../utils/cases.utils.js';
+import { parsed } from '../../utils/billing.utils.js';
+import { CASE_STAGES, caseRoute, casesRoute, STAGE_VARIANTS } from '../../utils/cases.utils.js';
 import { text } from '../../utils/form.utils.js';
 import { formatDate, money } from '../../utils/format.utils.js';
 import { KINDS } from '../../utils/kind.utils.js';
@@ -43,9 +37,9 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
   @property({ type: Number }) revision = 0;
 
   @state() private case: Case | undefined;
-  /** Other Vorgänge of the customer, while the Sammelrechnung picks from them */
-  @state() private others: Case[] | undefined;
-  @state() private picked = new Set<number>();
+  /** Something is open in its offers, a Sammelrechnung could take it */
+  @state() private billable = false;
+  @state() private collecting = false;
 
   protected override willUpdate(changed: PropertyValues<this>) {
     if (changed.has('caseId') || changed.has('revision')) {
@@ -55,7 +49,12 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
 
   private async load() {
     try {
-      this.case = await api.caseGet(this.caseId);
+      [this.case, this.billable] = await Promise.all([
+        api.caseGet(this.caseId),
+        api
+          .caseBilling(this.caseId)
+          .then(billings => billings.some(b => b.positions.some(p => parsed(p.open) > 0))),
+      ]);
     } catch (error) {
       notifyError(error);
     }
@@ -88,34 +87,6 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
     goto(casesRoute(kind, 'new', this.caseId));
   }
 
-  /** The Vorgänge of the customer a Sammelrechnung can take besides this one, not archived ones */
-  private async openCollect() {
-    const vorgang = this.case;
-    if (!vorgang) {
-      return;
-    }
-    try {
-      const all = await api.casesList(vorgang.context_id);
-      this.others = all.filter(
-        c => c.id !== vorgang.id && c.customer_id !== null && c.customer_id === vorgang.customer_id
-      );
-      this.picked = new Set();
-    } catch (error) {
-      notifyError(error);
-    }
-  }
-
-  private async collect() {
-    try {
-      const invoice = await api.casesCollect([this.caseId, ...this.picked]);
-      this.others = undefined;
-      this.announce();
-      goto(casesRoute('invoice', invoice.id));
-    } catch (error) {
-      notifyError(error);
-    }
-  }
-
   /** Vorgänge it refers to or that refer to it, each opens by its number */
   private renderRefs(label: string, refs: CaseRef[]) {
     return refs.length === 0
@@ -137,55 +108,6 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
             )}
           </span>
         `;
-  }
-
-  private renderCollect() {
-    const others = this.others ?? [];
-    return html`
-      <wa-dialog
-        label="Sammelrechnung"
-        ?open="${this.others !== undefined}"
-        @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.others = undefined)}"
-      >
-        <div class="stack">
-          <p class="muted">
-            Ein neuer Vorgang fasst diesen und die gewählten zusammen, mit einer Rechnung über
-            alles, was in ihren Angeboten noch offen ist.
-          </p>
-          ${
-            others.length === 0
-              ? html`<p>Der Kunde hat keinen weiteren Vorgang.</p>`
-              : others.map(
-                  c => html`
-                    <wa-checkbox
-                      ?checked="${this.picked.has(c.id)}"
-                      @change="${(e: Event) => {
-                        const picked = new Set(this.picked);
-                        if ((e.target as HTMLInputElement).checked) {
-                          picked.add(c.id);
-                        } else {
-                          picked.delete(c.id);
-                        }
-                        this.picked = picked;
-                      }}"
-                    >
-                      ${c.number} · ${caseName(c)}
-                      <span class="muted">${CASE_STAGES[c.stage]}</span>
-                    </wa-checkbox>
-                  `
-                )
-          }
-        </div>
-        <div slot="footer" class="dialog-footer">
-          <wa-button appearance="outlined" @click="${() => (this.others = undefined)}"
-            >Abbrechen</wa-button
-          >
-          <wa-button variant="brand" ?disabled="${this.picked.size === 0}" @click="${this.collect}">
-            Sammelrechnung anlegen
-          </wa-button>
-        </div>
-      </wa-dialog>
-    `;
   }
 
   override render() {
@@ -256,7 +178,11 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
 
         <wa-card>
           <div slot="header">Verlauf</div>
-          <erng-history case-id="${vorgang.id}" revision="${this.revision}"></erng-history>
+          <erng-history
+            case-id="${vorgang.id}"
+            revision="${this.revision}"
+            .route="${casesRoute}"
+          ></erng-history>
         </wa-card>
 
         ${
@@ -274,9 +200,16 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
             : nothing
         }
         ${
-          vorgang.customer_id !== null && vorgang.documents > 0
+          // a Vorgang that collects others is not collected again
+          vorgang.customer_id !== null &&
+          this.billable &&
+          !vorgang.sources.some(r => r.link === 'collect')
             ? html`
-                <wa-button slot="actions" appearance="outlined" @click="${this.openCollect}">
+                <wa-button
+                  slot="actions"
+                  appearance="outlined"
+                  @click="${() => (this.collecting = true)}"
+                >
                   Sammelrechnung…
                 </wa-button>
               `
@@ -289,7 +222,11 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
           ${KINDS.invoice.newLabel}
         </wa-button>
       </erng-page>
-      ${this.renderCollect()}
+      <erng-collect
+        case-id="${vorgang.id}"
+        ?open="${this.collecting}"
+        @close="${() => (this.collecting = false)}"
+      ></erng-collect>
     `;
   }
 }

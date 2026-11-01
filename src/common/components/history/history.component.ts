@@ -6,13 +6,14 @@ import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { DocumentEvent, InvoiceDraft, StoredInvoice } from '../../utils/api.utils.js';
+import type { DocumentEvent, InvoiceDraft, Kind, StoredInvoice } from '../../utils/api.utils.js';
 import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { diffDrafts } from '../../utils/diff.utils.js';
 import { RELATIONS } from '../../utils/documents.utils.js';
 import { formatDate, formatMoment, money } from '../../utils/format.utils.js';
-import { KINDS } from '../../utils/kind.utils.js';
+import { kindRoute, KINDS } from '../../utils/kind.utils.js';
+import { goto } from '../../utils/routing.utils.js';
 import type { VersionKey } from '../compare/compare.component.js';
 import { versionLabel } from '../compare/compare.component.js';
 import styles from './history.component.css';
@@ -31,7 +32,10 @@ const nameOf = (document: StoredInvoice | undefined) =>
  * day, the day it is about first (a payment received earlier). In a Vorgang each entry says which
  * kind of document it was about ("Angebot angelegt") and shows the document's number as a tag.
  * In the history of one document each kept version can be compared with the next newer one, the
- * newest of a draft with the draft as it is now; only where they differ.
+ * newest of a draft with the draft as it is now; only where they differ. `compareNewest` opens the
+ * comparison of the two newest, for a button beside the history.
+ *
+ * @fires comparable-change - whether two versions can be compared (`detail`), after each read
  */
 @customElement('erng-history')
 export class HistoryComponent extends ErngElement.withStyles(styles) {
@@ -42,6 +46,9 @@ export class HistoryComponent extends ErngElement.withStyles(styles) {
 
   /** Raised by the editor whenever something may have happened, the history is read again */
   @property({ type: Number }) revision = 0;
+
+  /** Where a document named by an entry opens, in the list it is shown in */
+  @property({ attribute: false }) route: (kind: Kind, id: number) => string = kindRoute;
 
   /** The draft as it is now, to compare the kept versions with; none for a created document */
   @property({ attribute: false }) current: InvoiceDraft | undefined;
@@ -59,6 +66,28 @@ export class HistoryComponent extends ErngElement.withStyles(styles) {
   protected override willUpdate(changed: PropertyValues<this>) {
     if (changed.has('invoiceId') || changed.has('caseId') || changed.has('revision')) {
       void this.load();
+    }
+  }
+
+  // untyped: `events` is private
+  protected override updated(changed: PropertyValues) {
+    if (changed.has('events') || changed.has('current')) {
+      this.dispatchEvent(
+        new CustomEvent<boolean>('comparable-change', { detail: this.keys.length >= 2 })
+      );
+    }
+  }
+
+  /** What can be compared, oldest first: the kept versions and, while a draft, the draft now */
+  private get keys(): VersionKey[] {
+    return [...this.versions.map(v => v.id), ...(this.current ? ['current' as const] : [])];
+  }
+
+  /** Compares the two newest versions, the dialog picks any others */
+  compareNewest() {
+    const [from, to] = this.keys.slice(-2);
+    if (from !== undefined && to !== undefined) {
+      this.comparing = [from, to];
     }
   }
 
@@ -114,22 +143,43 @@ export class HistoryComponent extends ErngElement.withStyles(styles) {
     }
   }
 
+  /** A document an entry names, opening it; a deleted draft as gone */
+  private named(id: number) {
+    const document = this.sources.get(id);
+    return document
+      ? html`
+          <a
+            class="ref"
+            href="${this.route(document.kind, document.id)}"
+            @click="${(e: Event) => {
+              e.preventDefault();
+              goto(this.route(document.kind, document.id));
+            }}"
+          >
+            ${nameOf(document)}
+          </a>
+        `
+      : nameOf(document);
+  }
+
   /** What happened; in a Vorgang with the kind of the document it happened to */
-  private label(event: DocumentEvent): string {
+  private label(event: DocumentEvent) {
     const inCase = this.caseId !== null;
     const document = this.sources.get(event.invoice_id);
-    const noun = document ? KINDS[document.kind].noun : 'Beleg';
-    const from = event.from === undefined ? '' : ` aus ${nameOf(this.sources.get(event.from))}`;
+    const noun = document ? KINDS[document.kind].noun : 'Dokument';
+    const from = event.from === undefined ? '' : html` aus ${this.named(event.from)}`;
     // an offer made for another says how it refers to it
     const relation = (inCase ? document : this.invoice)?.relation;
     switch (event.kind) {
       case 'created':
         if (relation && event.from !== undefined) {
           const { noun: as, to } = RELATIONS[relation];
-          const source = nameOf(this.sources.get(event.from));
-          return inCase ? `${as} angelegt ${to} ${source}` : `Angelegt als ${as} ${to} ${source}`;
+          const source = this.named(event.from);
+          return inCase
+            ? html`${as} angelegt ${to} ${source}`
+            : html`Angelegt als ${as} ${to} ${source}`;
         }
-        return inCase ? `${noun} angelegt${from}` : `Angelegt${from}`;
+        return inCase ? html`${noun} angelegt${from}` : html`Angelegt${from}`;
       case 'draft-exported': {
         const what = inCase && document ? KINDS[document.kind].draftTitle : 'Entwurf';
         return `${what} exportiert · Version ${event.version ?? '?'}`;
@@ -153,11 +203,24 @@ export class HistoryComponent extends ErngElement.withStyles(styles) {
     }
   }
 
-  /** In a Vorgang: which document, by its number, a draft as such, a deleted one as gone */
+  /** In a Vorgang: which document, by its number, a draft as such, opening it; a deleted one as gone */
   private tag(event: DocumentEvent) {
     const document = this.sources.get(event.invoice_id);
-    const text = document ? (document.number ?? 'Entwurf') : 'gelöscht';
-    return html`<wa-tag size="small" variant="neutral" appearance="outlined">${text}</wa-tag>`;
+    if (!document) {
+      return html`<wa-tag size="small" variant="neutral" appearance="outlined">gelöscht</wa-tag>`;
+    }
+    return html`
+      <wa-tag
+        size="small"
+        variant="neutral"
+        appearance="outlined"
+        class="ref"
+        title="${nameOf(document)} öffnen"
+        @click="${() => goto(this.route(document.kind, document.id))}"
+      >
+        ${document.number ?? 'Entwurf'}
+      </wa-tag>
+    `;
   }
 
   /** The events that keep a version of the document, oldest first */

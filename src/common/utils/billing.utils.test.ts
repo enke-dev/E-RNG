@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import type { OfferBilling, Position } from './api.utils.js';
-import { amount, billedPosition, quantityOf, sharePositions, sourceName } from './billing.utils.js';
+import {
+  amount,
+  billedPosition,
+  partlyBilled,
+  quantityOf,
+  sharePositions,
+  sourceName,
+} from './billing.utils.js';
 
 const position = (quantity: string | null): Position => ({
   description: 'Montage',
@@ -29,7 +36,7 @@ describe('billing', () => {
     expect(quantityOf(position(null))).toBe(1);
     expect(quantityOf(position(' 3 '))).toBe(3);
     expect(quantityOf(position('2,5'))).toBe(2.5);
-    expect(sourceName('AN-2026-001', 1)).toBe('AN-2026-001 · Pos. 2');
+    expect(sourceName('AN-2026-001', 1)).toBe('AN-2026-001, Pos. 2');
   });
 
   it('makes a picked offer position an invoice position referring to it', () => {
@@ -51,6 +58,7 @@ describe('billing', () => {
       unit_label: 'pauschal',
       price: '165,00',
       source: null,
+      share: { offer_id: 7, percent: '30' },
     });
     const mixed: OfferBilling = {
       ...billing,
@@ -70,5 +78,20 @@ describe('billing', () => {
       ['Anzahlung 12,5 % auf Angebot AN-2026-001 (USt. Standard)', '68,75', null],
       ['Anzahlung 12,5 % auf Angebot AN-2026-001 (USt. 7%)', '2,63', '7'],
     ]);
+  });
+
+  it('names the offers an invoice bills only part of', () => {
+    const billed = (index: number, quantity: string | null): Position => ({
+      ...position(quantity),
+      source: { offer_id: 7, index },
+    });
+    // all of both positions
+    expect(partlyBilled([billed(0, '10'), billed(1, null)], [billing])).toEqual([]);
+    // what is open only, four hours were billed before: a Teilrechnung all the same
+    expect(partlyBilled([billed(0, '6'), billed(1, null)], [billing])).toEqual(['AN-2026-001']);
+    // the hours without the material
+    expect(partlyBilled([billed(0, '10')], [billing])).toEqual(['AN-2026-001']);
+    // an offer it does not bill is none of its business
+    expect(partlyBilled([position('1')], [billing])).toEqual([]);
   });
 });

@@ -452,6 +452,16 @@ pub struct Position {
     /// Invoices: the offer position it bills (see `billing`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<PositionSource>,
+    /// Invoices on account: the share of an offer this lump sum is (see `on_account`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<PositionShare>,
+}
+
+/// A share of a created offer, as typed (`30`, `12,5`)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PositionShare {
+    pub offer_id: i64,
+    pub percent: String,
 }
 
 /// A position of a created offer, by the offer and its place in it
@@ -587,9 +597,37 @@ pub struct InvoiceDraft {
     /// Invoices: billed on account, provisional (see `on_account`); none bills for good
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_account: Option<OnAccount>,
+    /// Invoices: a Schlussrechnung, picked as such, that settles the invoices on account of its
+    /// Vorgang, even before it deducts one
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub settles: bool,
     /// Invoices: the invoices on account of its Vorgang it deducts, a Schlussrechnung
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deductions: Vec<Deduction>,
+    /// Invoices: the created invoice it cancels (a Stornorechnung) or replaces (an Ersatzrechnung)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corrects: Option<Correction>,
+}
+
+/// How an invoice corrects a created one: it cancels it or it replaces a cancelled one
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CorrectionKind {
+    /// A Stornorechnung, a credit note that mirrors the invoice
+    Cancel,
+    /// An Ersatzrechnung, a new invoice for a cancelled one
+    Replace,
+}
+
+/// The created invoice another corrects; the store fills in its number and date
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Correction {
+    pub invoice_id: i64,
+    pub kind: CorrectionKind,
+    #[serde(default)]
+    pub number: String,
+    #[serde(default)]
+    pub issue_date: String,
 }
 
 /// What an invoice on account is: money asked before any work (Anzahlung) or for the work done so
@@ -621,6 +659,15 @@ pub struct Deduction {
 }
 
 impl InvoiceDraft {
+    /// Whether it is a Schlussrechnung: picked as one or deducting, but no Storno of one
+    pub fn is_closing(&self) -> bool {
+        let cancels = self
+            .corrects
+            .as_ref()
+            .is_some_and(|c| c.kind == CorrectionKind::Cancel);
+        !cancels && self.on_account.is_none() && (self.settles || !self.deductions.is_empty())
+    }
+
     /// The day an offer is valid until, ISO date: its date plus the validity days. None without
     /// days or with no date to count from.
     pub fn valid_until(&self) -> Option<String> {
@@ -649,7 +696,9 @@ impl InvoiceDraft {
             offer_reference: false,
             frozen_offers: Vec::new(),
             on_account: None,
+            settles: false,
             deductions: Vec::new(),
+            corrects: None,
         }
     }
 }
@@ -839,8 +888,25 @@ pub struct StoredInvoice {
     pub related_number: Option<String>,
     /// Offers: another offer of its alternative group is accepted, it is out of the running
     pub lapsed: bool,
-    /// Offers: an Ersatzangebot for it is created
+    /// Offers: the other offer of its alternative group that is accepted
+    pub taken_by: Option<DocumentRef>,
+    /// Offers: an Ersatzangebot for it is created, and which
     pub superseded: bool,
+    pub superseded_by: Option<DocumentRef>,
+    /// Invoices: a Stornorechnung for it is created, and which
+    pub cancelled: bool,
+    pub cancelled_by: Option<DocumentRef>,
+    /// Invoices: the draft of a Stornorechnung for it, not created yet
+    pub cancel_draft: Option<i64>,
+    /// Invoices: bills only part of an offer, a Teilrechnung (see `billing::partial`)
+    pub partial: bool,
+}
+
+/// Another document by its id and number
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentRef {
+    pub id: i64,
+    pub number: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -865,18 +931,25 @@ pub struct ListEntry {
     pub answered_on: Option<String>,
     pub updated_at: String,
     pub archived_at: Option<String>,
-    /// How many documents of the other kind it is linked to
-    pub linked: u32,
     /// The Vorgang it is in
     pub case_id: i64,
     /// Invoices: on account, or a Schlussrechnung deducting such
     pub on_account: Option<OnAccount>,
     pub closing: bool,
-    /// See `StoredInvoice`
+    /// Invoices: a Teilrechnung, see `StoredInvoice`
+    pub partial: bool,
+    /// Invoices: the invoice it corrects; the rest see `StoredInvoice`
+    pub corrects: Option<Correction>,
+    pub cancelled: bool,
+    pub cancelled_by: Option<DocumentRef>,
+    pub cancel_draft: Option<i64>,
     pub relation: Option<Relation>,
+    pub related_id: Option<i64>,
     pub related_number: Option<String>,
     pub lapsed: bool,
+    pub taken_by: Option<DocumentRef>,
     pub superseded: bool,
+    pub superseded_by: Option<DocumentRef>,
 }
 
 /// Where a Vorgang stands, read from its documents (see `cases::status`)

@@ -11,7 +11,7 @@ use anyhow::{anyhow, bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Answer, Kind, Status, StoredInvoice};
+use crate::model::{Answer, DocumentRef, Kind, Status, StoredInvoice};
 use crate::store::{insert_draft, Store};
 
 /// How an offer refers to the created offer it was made for
@@ -73,27 +73,50 @@ pub(crate) fn migrate_to_relations(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// The columns a read of `invoices` adds for the relations: the number of the offer referred to,
-/// whether the row is superseded and whether another offer of its group is accepted (`taken`, an
-/// unanswered offer of a taken group lapsed, see `lapsed`). An alternative's group is the offer it
-/// refers to (`related_id`), every other offer is the head of its own.
+/// The columns a read of `invoices` adds for the relations (and the Stornorechnung that cancels an
+/// invoice, created or drafted, see `corrections`): the number of the offer referred to, the created
+/// Ersatzangebot superseding the row and the other offer of its group that is accepted (`taken_by`;
+/// an unanswered offer of a taken group lapsed, see `lapsed`). Documents named come as JSON of
+/// their id and number (see `reference`). An
+/// alternative's group is the offer it refers to (`related_id`), every other offer is the head of
+/// its own.
 pub(crate) const RELATION_COLUMNS: &str = "
     relation, related_id,
     (SELECT r.number FROM invoices r WHERE r.id = invoices.related_id) AS related_number,
-    EXISTS (
-        SELECT 1 FROM invoices r
+    (SELECT json_object('id', r.id, 'number', r.number) FROM invoices r
         WHERE r.related_id = invoices.id AND r.relation = 'replacement' AND r.status = 'exported'
-    ) AS superseded,
-    (invoices.kind = 'offer' AND EXISTS (
-        SELECT 1 FROM invoices m
-        WHERE m.id <> invoices.id AND m.answer = 'accepted' AND (
+        LIMIT 1
+    ) AS superseded_by,
+    (SELECT json_object('id', m.id, 'number', m.number) FROM invoices m
+        WHERE invoices.kind = 'offer' AND m.id <> invoices.id AND m.answer = 'accepted' AND (
             m.id = (CASE WHEN invoices.relation = 'alternative'
                          THEN invoices.related_id ELSE invoices.id END)
             OR (m.relation = 'alternative' AND m.related_id = (CASE
                 WHEN invoices.relation = 'alternative' THEN invoices.related_id
                 ELSE invoices.id END))
         )
-    )) AS taken";
+        LIMIT 1
+    ) AS taken_by,
+    (SELECT json_object('id', s.id, 'number', s.number) FROM invoices s
+        WHERE s.status = 'exported' AND json_extract(s.draft, '$.corrects.kind') = 'cancel'
+            AND json_extract(s.draft, '$.corrects.invoice_id') = invoices.id
+        LIMIT 1
+    ) AS cancelled_by,
+    (SELECT s.id FROM invoices s
+        WHERE s.status = 'draft' AND json_extract(s.draft, '$.corrects.kind') = 'cancel'
+            AND json_extract(s.draft, '$.corrects.invoice_id') = invoices.id
+        LIMIT 1
+    ) AS cancel_draft";
+
+/// A document a row's column names, as `RELATION_COLUMNS` reads it
+pub(crate) fn reference(
+    row: &rusqlite::Row,
+    column: &str,
+) -> rusqlite::Result<Option<DocumentRef>> {
+    Ok(row
+        .get::<_, Option<String>>(column)?
+        .and_then(|json| serde_json::from_str(&json).ok()))
+}
 
 /// A created offer nobody answered whose group has another offer accepted is out of the running
 pub(crate) fn lapsed(kind: Kind, status: Status, answer: Option<Answer>, taken: bool) -> bool {
@@ -105,7 +128,12 @@ fn standing(conn: &Connection, id: i64) -> Result<(bool, bool)> {
     Ok(conn.query_row(
         &format!("SELECT {RELATION_COLUMNS} FROM invoices WHERE id = ?1"),
         [id],
-        |r| Ok((r.get("superseded")?, r.get("taken")?)),
+        |r| {
+            Ok((
+                reference(r, "superseded_by")?.is_some(),
+                reference(r, "taken_by")?.is_some(),
+            ))
+        },
     )?)
 }
 
@@ -344,6 +372,14 @@ mod tests {
             .unwrap();
         assert!(lapsed(main.id));
         assert!(!lapsed(alternative.id));
+        // it names the one accepted instead
+        assert_eq!(
+            store.invoice(main.id).unwrap().taken_by,
+            Some(DocumentRef {
+                id: alternative.id,
+                number: Some("AN-2".into())
+            })
+        );
         // a Nachtrag is no alternative, it stays
         assert!(!lapsed(supplement.id));
         let listed = store.invoices(None, Some(Kind::Offer), false).unwrap();
@@ -367,6 +403,10 @@ mod tests {
             .set_answer(main.id, Some((Answer::Accepted, "2026-11-03")))
             .is_err());
         assert!(!lapsed(main.id));
+        // declined, it is not billed either
+        assert!(store
+            .invoice_from_offer(main.id, "2026-11-03", &settings())
+            .is_err());
 
         // the Vorgang counts what was accepted, the lapsed offer is not offered any more
         let case = store.case(main.case_id).unwrap();
@@ -382,7 +422,9 @@ mod tests {
         let replacement = related(&store, old.id, Relation::Replacement);
         assert!(!store.invoice(old.id).unwrap().superseded);
         bake(&store, replacement.id, "AN-2", "120");
-        assert!(store.invoice(old.id).unwrap().superseded);
+        let superseded = store.invoice(old.id).unwrap();
+        assert!(superseded.superseded);
+        assert_eq!(superseded.superseded_by.unwrap().id, replacement.id);
         assert!(store
             .set_answer(old.id, Some((Answer::Accepted, "2026-11-03")))
             .is_err());

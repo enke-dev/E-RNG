@@ -37,12 +37,12 @@ export class OfferAnswerComponent extends ErngElement {
   }
 
   override render() {
-    const { answer, answered_on, superseded, lapsed } = this.offer;
+    const { answer, answered_on, superseded, lapsed, taken_by } = this.offer;
     // out of the running: what is accepted is the replacement, or the other offer of the group
     const why = superseded
       ? 'Ersetzt, angenommen wird das Ersatzangebot.'
       : lapsed
-        ? 'Ein anderes Angebot dieser Gruppe ist angenommen.'
+        ? `Angenommen ist die Alternative ${taken_by?.number ?? ''}.`
         : '';
     return html`
       <div class="grid">

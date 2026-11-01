@@ -15,6 +15,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use crate::billing::check_sources;
 use crate::cases::{case_of, new_case};
 use crate::context::{Context, ContextUsage, Disposition, BRANDS};
+use crate::corrections::check_correction;
 use crate::history::record;
 use crate::model::{
     Answer, CustomLayout, Customer, EventDetail, EventKind, InvoiceDraft, InvoiceFiles, Kind,
@@ -24,7 +25,7 @@ use crate::model::{
 use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
 use crate::on_account::{check_deductions, check_on_account};
 use crate::rates::{self, Rate, RateDef, RateUsage};
-use crate::relations::{lapsed, Relation, RELATION_COLUMNS};
+use crate::relations::{lapsed, reference, Relation, RELATION_COLUMNS};
 use crate::units::{self, DraftRef, TemplateRef, Unit, UnitDef, UnitUsage};
 
 pub struct Store(Mutex<Connection>);
@@ -1001,8 +1002,15 @@ fn stored(row: &Row) -> rusqlite::Result<StoredRow> {
                 .and_then(Relation::from_column),
             related_id: row.get("related_id")?,
             related_number: row.get("related_number")?,
-            lapsed: lapsed(kind, status, answer, row.get("taken")?),
-            superseded: row.get("superseded")?,
+            lapsed: lapsed(kind, status, answer, reference(row, "taken_by")?.is_some()),
+            taken_by: reference(row, "taken_by")?,
+            superseded: reference(row, "superseded_by")?.is_some(),
+            superseded_by: reference(row, "superseded_by")?,
+            cancelled: reference(row, "cancelled_by")?.is_some(),
+            cancelled_by: reference(row, "cancelled_by")?,
+            cancel_draft: row.get("cancel_draft")?,
+            // read with the offers it bills, by `Store::invoice` and the list
+            partial: false,
         },
         draft,
         files,
@@ -2098,8 +2106,6 @@ impl Store {
             .collect();
         let conn = self.conn();
         let payments = crate::history::all_payments(&conn)?;
-        // what bills what is read once for the whole list
-        let counts = crate::billing::reference_counts(&conn)?;
         let mut statement = conn.prepare(&format!(
             "SELECT id, context_id, kind, number, status, draft, total, exported_at, answer,
                  answered_on, updated_at, archived_at, files, case_id, {RELATION_COLUMNS}
@@ -2113,7 +2119,6 @@ impl Store {
         )?;
         rows.map(|row| {
             let (invoice, draft, _) = row?;
-            let linked = counts.get(&invoice.id).copied().unwrap_or(0);
             let draft: InvoiceDraft = serde_json::from_str(&draft)?;
             // an exported invoice shows the seller it was made with
             let seller_name = draft
@@ -2123,6 +2128,8 @@ impl Store {
                 .or_else(|| sellers.get(&invoice.context_id).cloned())
                 .unwrap_or_default();
             let valid_until = draft.valid_until().filter(|_| invoice.kind == Kind::Offer);
+            let closing = draft.is_closing();
+            let partial = crate::billing::partial(&conn, &draft)?;
             let (paid, paid_at) = crate::history::settle(
                 invoice.total.as_deref(),
                 payments.get(&invoice.id).map_or(&[], Vec::as_slice),
@@ -2144,14 +2151,21 @@ impl Store {
                 answered_on: invoice.answered_on,
                 updated_at: invoice.updated_at,
                 archived_at: invoice.archived_at,
-                linked,
                 case_id: invoice.case_id,
                 on_account: draft.on_account,
-                closing: !draft.deductions.is_empty(),
+                closing,
+                partial,
+                corrects: draft.corrects,
+                cancelled: invoice.cancelled,
+                cancelled_by: invoice.cancelled_by,
+                cancel_draft: invoice.cancel_draft,
                 relation: invoice.relation,
+                related_id: invoice.related_id,
                 related_number: invoice.related_number,
                 lapsed: invoice.lapsed,
+                taken_by: invoice.taken_by,
                 superseded: invoice.superseded,
+                superseded_by: invoice.superseded_by,
             })
         })
         .collect()
@@ -2181,6 +2195,7 @@ impl Store {
         invoice.files = files.map(|f| serde_json::from_str(&f)).transpose()?;
         invoice.payments = crate::history::payments_of(&conn, id)?;
         invoice.paid_at = crate::history::settle(invoice.total.as_deref(), &invoice.payments).1;
+        invoice.partial = crate::billing::partial(&conn, &invoice.draft)?;
         Ok(invoice)
     }
 
@@ -2218,6 +2233,7 @@ impl Store {
                 check_sources(&tx, case, stored_kind, draft)?;
                 check_deductions(&tx, case, Some(id), stored_kind, draft)?;
                 check_on_account(draft)?;
+                check_correction(&tx, case, Some(id), stored_kind, draft, false)?;
                 id
             } else {
                 // a plain new document makes its own Vorgang
@@ -2225,6 +2241,7 @@ impl Store {
                 check_sources(&tx, case, kind, draft)?;
                 check_deductions(&tx, case, None, kind, draft)?;
                 check_on_account(draft)?;
+                check_correction(&tx, case, None, kind, draft, false)?;
                 insert_draft(&tx, context_id, kind, &json, total, None, case)?
             };
             tx.commit()?;
@@ -2259,6 +2276,7 @@ impl Store {
             check_sources(&tx, case_id, kind, draft)?;
             check_deductions(&tx, case_id, Some(id), kind, draft)?;
             check_on_account(draft)?;
+            check_correction(&tx, case_id, Some(id), kind, draft, false)?;
             tx.commit()?;
             id
         };
@@ -2578,6 +2596,7 @@ impl Store {
         let tx = conn.unchecked_transaction()?;
         // another Schlussrechnung may have been created since this one was saved
         check_deductions(&tx, stored.case_id, Some(id), kind, &draft)?;
+        check_correction(&tx, stored.case_id, Some(id), kind, &draft, true)?;
         let changed = tx.execute(
             "UPDATE invoices SET number = ?1, counter = ?2, issued_on = ?3, status = 'exported',
                  draft = ?4, total = ?5, files = ?6, exported_at = datetime('now'),
@@ -2774,6 +2793,7 @@ mod tests {
                 tax_label: None,
                 price: price.into(),
                 source: None,
+                share: None,
             },
         };
         let first = store.save_template(&template("Beratung", "95")).unwrap();
@@ -2805,6 +2825,7 @@ mod tests {
                 tax_label: None,
                 price: "95,00".into(),
                 source: None,
+                share: None,
             },
         };
         let b = store.save_template(&template("Beratung")).unwrap();
@@ -3541,6 +3562,7 @@ mod tests {
                 tax_label: None,
                 price: "10".into(),
                 source: None,
+                share: None,
             },
         };
         store.save_template(&template("Beratung", None)).unwrap();
@@ -3580,6 +3602,7 @@ mod tests {
                     tax_label: None,
                     price: "1".into(),
                     source: None,
+                    share: None,
                 },
             })
             .unwrap();
@@ -4562,10 +4585,6 @@ mod tests {
             store.invoice(1).unwrap().number.as_deref(),
             Some("AN-2026-001")
         );
-        assert_eq!(
-            store.invoices(None, Some(Kind::Offer), true).unwrap()[0].linked,
-            0
-        );
         assert_eq!(store.links(2).unwrap(), Vec::new());
     }
 
@@ -4776,10 +4795,6 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].id, offer.id);
         assert_eq!(links[0].number.as_deref(), Some("AN-2026-001"));
-        assert_eq!(
-            store.invoices(None, Some(Kind::Offer), true).unwrap()[0].linked,
-            1
-        );
 
         // again: a draft bills nothing yet, so one more draft has all of it as well
         let second = store
@@ -4824,6 +4839,7 @@ mod tests {
             tax_label: None,
             price: "1".into(),
             source: None,
+            share: None,
         }
     }
 

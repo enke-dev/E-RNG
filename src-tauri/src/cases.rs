@@ -16,7 +16,7 @@ use rust_decimal::Decimal;
 
 use crate::model::{Answer, Case, CaseStage, Event, InvoiceDraft, Kind, Payment, Settings, Status};
 use crate::numbering::{Given, Pattern, DEFAULT_CASE_PATTERN};
-use crate::relations::{lapsed, Relation, RELATION_COLUMNS};
+use crate::relations::{lapsed, reference, Relation, RELATION_COLUMNS};
 use crate::store::{context_settings, now, Sequence, Store};
 
 /// The Vorgänge table and every document's Vorgang. What older versions stored gets one Vorgang
@@ -356,8 +356,8 @@ fn decimal(text: Option<&str>) -> Decimal {
     text.map(crate::history::decimal).unwrap_or_default()
 }
 
-/// Where a Vorgang stands and what its sums are, read from its documents alone. The one place that
-/// decides it; Vorgänge that refer to others would be followed here.
+/// Where a Vorgang stands and what its sums are, read from its documents and, for a collected one,
+/// its part of the invoices collecting it (`collected_parts`). The one place that decides it.
 pub(crate) fn status(documents: &[Standing]) -> (CaseStage, [Decimal; 5]) {
     let created = |kind: Kind| {
         documents
@@ -488,8 +488,8 @@ fn documents_of(
                     .get::<_, Option<String>>("relation")?
                     .as_deref()
                     .and_then(Relation::from_column),
-                lapsed: lapsed(kind, status, answer, r.get("taken")?),
-                superseded: r.get("superseded")?,
+                lapsed: lapsed(kind, status, answer, reference(r, "taken_by")?.is_some()),
+                superseded: reference(r, "superseded_by")?.is_some(),
             };
             let archived = r.get::<_, Option<String>>("archived_at")?.is_some();
             Ok((standing, r.get::<_, String>("draft")?, archived))
@@ -506,6 +506,75 @@ fn documents_of(
         newest_customer,
         archived,
     ))
+}
+
+/// The part of each created invoice of a Vorgang collecting `id` that bills the offers of `id`, as
+/// an invoice of its own: total and payments in the share its positions have of the invoice's net.
+/// A cancelled invoice counts for none (its Storno mirrors it without referring to offers).
+fn collected_parts(
+    conn: &Connection,
+    id: i64,
+    payments: &HashMap<i64, Vec<Payment>>,
+) -> Result<Vec<Standing>> {
+    let mut statement = conn.prepare(
+        "SELECT i.id, i.total, i.draft FROM invoices i
+             JOIN case_links l ON l.follower_id = i.case_id AND l.kind = 'collect'
+         WHERE l.source_id = ?1 AND i.kind = 'invoice' AND i.status = 'exported'
+             AND NOT EXISTS (SELECT 1 FROM invoices s WHERE s.status = 'exported'
+                 AND json_extract(s.draft, '$.corrects.kind') = 'cancel'
+                 AND json_extract(s.draft, '$.corrects.invoice_id') = i.id)",
+    )?;
+    let rows = statement
+        .query_map([id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let offers: Vec<i64> = conn
+        .prepare("SELECT id FROM invoices WHERE case_id = ?1 AND kind = 'offer'")?
+        .query_map([id], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let net = |p: &crate::model::Position| {
+        crate::billing::quantity(p) * crate::draft::decimal(&p.price).unwrap_or_default()
+    };
+    let parts = rows
+        .into_iter()
+        .map(|(invoice, total, draft)| -> Result<Option<Standing>> {
+            let draft: InvoiceDraft = serde_json::from_str(&draft)?;
+            let all: Decimal = draft.positions.iter().map(net).sum();
+            let ours: Decimal = draft
+                .positions
+                .iter()
+                .filter(|p| p.source.is_some_and(|s| offers.contains(&s.offer_id)))
+                .map(net)
+                .sum();
+            if all.is_zero() || ours.is_zero() {
+                return Ok(None);
+            }
+            let share = ours / all;
+            let paid: Decimal = payments
+                .get(&invoice)
+                .map(|p| p.iter().map(|p| decimal(Some(&p.amount))).sum())
+                .unwrap_or_default();
+            Ok(Some(Standing {
+                kind: Kind::Invoice,
+                status: Status::Exported,
+                total: Some((decimal(total.as_deref()) * share).round_dp(2).to_string()),
+                paid: (paid * share).round_dp(2),
+                answer: None,
+                relation: None,
+                lapsed: false,
+                superseded: false,
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(parts.into_iter().flatten().collect())
 }
 
 /// A Vorgang with what its documents say, `payments` of all documents by document
@@ -544,6 +613,11 @@ fn read_case(conn: &Connection, id: i64, payments: &HashMap<i64, Vec<Payment>>) 
             .and_then(|json| json["name"].as_str().map(str::to_owned))
             .unwrap_or_default(),
     };
+    let documents = u32::try_from(standings.len()).unwrap_or(u32::MAX);
+    let standings: Vec<Standing> = standings
+        .into_iter()
+        .chain(collected_parts(conn, id, payments)?)
+        .collect();
     let (stage, [offered, accepted, invoiced, paid, open]) = status(&standings);
     Ok(Case {
         id,
@@ -554,7 +628,7 @@ fn read_case(conn: &Connection, id: i64, payments: &HashMap<i64, Vec<Payment>>) 
         title,
         created_at,
         locked: locked(conn, id)?,
-        documents: u32::try_from(standings.len()).unwrap_or(u32::MAX),
+        documents,
         stage,
         offered: money(offered),
         accepted: money(accepted),

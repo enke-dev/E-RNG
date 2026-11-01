@@ -35,12 +35,13 @@ import type {
   Seller,
   Sequence,
   Settings,
+  Status,
   StoredInvoice,
   Unit,
   UnitDef,
   UnitUsage,
 } from './api.utils.js';
-import { billedPosition, quantityOf } from './billing.utils.js';
+import { billedPosition, isClosing, quantityOf } from './billing.utils.js';
 import { today } from './form.utils.js';
 import { cleanInvisible, cleanInvisibleLine } from './invisible.utils.js';
 import { validUntil } from './kind.utils.js';
@@ -679,6 +680,8 @@ const UNRELATED = {
   related_number: null,
   lapsed: false,
   superseded: false,
+  cancelled: false,
+  partial: false,
 } as const;
 
 const invoices: StoredInvoice[] = [
@@ -771,6 +774,50 @@ const events: DocumentEvent[] = invoices.flatMap((i): DocumentEvent[] => [
 
 /** The versions kept with draft exports and baking, by event; the seeded ones fall back to the document */
 const snapshots = new Map<number, InvoiceDraft>();
+
+/**
+ * Sample versions to compare: the offer AN-2026-001 went out as a draft once before it was created
+ * at a lower price, the invoice draft went out once with fewer hours and another closing text
+ */
+[
+  {
+    id: 3,
+    versions: [
+      { at: '2026-08-28 10:00:00', kind: 'created' as const, hours: '8', price: '90,00' },
+      { at: '2026-08-30 15:30:00', kind: 'draft-exported' as const, hours: '10', price: '90,00' },
+    ],
+  },
+  {
+    id: 2,
+    versions: [
+      { at: '2026-10-01 09:00:00', kind: 'created' as const, hours: '6', price: '95,00' },
+      { at: '2026-10-03 11:15:00', kind: 'draft-exported' as const, hours: '8', price: '95,00' },
+    ],
+  },
+].forEach(({ id, versions }) => {
+  const document = invoices.find(i => i.id === id) as StoredInvoice;
+  versions.forEach((v, index) => {
+    const eventId = id * 100 + index + 1;
+    events.push({
+      id: eventId,
+      invoice_id: id,
+      kind: v.kind,
+      at: v.at,
+      on: null,
+      has_snapshot: true,
+      ...(v.kind === 'draft-exported' ? { version: index } : {}),
+    });
+    const [first, ...rest] = document.draft.positions;
+    snapshots.set(eventId, {
+      ...structuredClone(document.draft),
+      frozen: null,
+      closing: index === 0 ? 'Wir freuen uns auf Ihre Rückmeldung.' : document.draft.closing,
+      positions: [{ ...(first as Position), quantity: v.hours, price: v.price }, ...rest],
+    });
+  });
+});
+// oldest first, as the store hands them out
+events.sort((a, b) => a.at.localeCompare(b.at));
 
 /** Notes an event now, with the version it keeps */
 function event(
@@ -892,15 +939,48 @@ const refsOf = (id: number, sources: boolean): CaseRef[] =>
       return { id: other, number: caseRow(other).number, link: l.link };
     });
 
-/** What the store reads from a Vorgang's documents */
+/** As `cases::collected_parts`: the share of each invoice collecting a Vorgang that bills its offers, by net */
+function collectedParts(id: number): { total: number; paid: number }[] {
+  const offers = new Set(
+    invoices.filter(i => i.case_id === id && i.kind === 'offer').map(i => i.id)
+  );
+  const net = (p: Position) => (number(p.quantity) || 1) * number(p.price);
+  return invoices
+    .filter(
+      i =>
+        i.kind === 'invoice' &&
+        i.status === 'exported' &&
+        !isCancelled(i.id) &&
+        caseLinks.some(l => l.source === id && l.follower === i.case_id && l.link === 'collect')
+    )
+    .flatMap(i => {
+      const all = i.draft.positions.reduce((s, p) => s + net(p), 0);
+      const ours = i.draft.positions
+        .filter(p => p.source && offers.has(p.source.offer_id))
+        .reduce((s, p) => s + net(p), 0);
+      const share = all === 0 ? 0 : ours / all;
+      const paid = i.payments.reduce((t, p) => t + Number(p.amount), 0);
+      return share === 0 ? [] : [{ total: Number(i.total ?? 0) * share, paid: paid * share }];
+    });
+}
+
+/** What the store reads from a Vorgang's documents, and a collected one from the invoices collecting it */
 function caseView(row: CaseRow): Case {
   const documents = invoices.filter(i => i.case_id === row.id);
   const created = documents.filter(i => i.status === 'exported');
   const total = (list: StoredInvoice[]) => list.reduce((s, i) => s + Number(i.total ?? 0), 0);
   const offers = created.filter(i => i.kind === 'offer');
-  const bills = created.filter(i => i.kind === 'invoice');
-  const invoiced = total(bills);
-  const paid = bills.reduce((s, i) => s + i.payments.reduce((t, p) => t + Number(p.amount), 0), 0);
+  const bills = [
+    ...created
+      .filter(i => i.kind === 'invoice')
+      .map(i => ({
+        total: Number(i.total ?? 0),
+        paid: i.payments.reduce((t, p) => t + Number(p.amount), 0),
+      })),
+    ...collectedParts(row.id),
+  ];
+  const invoiced = bills.reduce((s, b) => s + b.total, 0);
+  const paid = bills.reduce((s, b) => s + b.paid, 0);
   const open = Math.max(0, invoiced - paid);
   const stage: CaseStage =
     bills.length > 0
@@ -941,6 +1021,142 @@ function caseView(row: CaseRow): Case {
 let interrupted: string[] = [];
 let lastBackup: string | null = null;
 
+/** As `billing::partial`: an invoice billing only part of an offer it refers to */
+function partial(draft: InvoiceDraft): boolean {
+  if (draft.on_account || isClosing(draft) || draft.corrects) {
+    return false;
+  }
+  const offers = new Set(draft.positions.flatMap(p => (p.source ? [p.source.offer_id] : [])));
+  return [...offers].some(id =>
+    (invoices.find(o => o.id === id && o.kind === 'offer')?.draft.positions ?? []).some(
+      (position, index) =>
+        draft.positions
+          .filter(p => p.source?.offer_id === id && p.source.index === index)
+          .reduce((sum, p) => sum + (number(p.quantity) || 1), 0) < (number(position.quantity) || 1)
+    )
+  );
+}
+
+/**
+ * What the store refuses on saving a draft into a Vorgang, with its messages: `check_sources`,
+ * `check_deductions`, `check_on_account` and `check_correction`
+ */
+function checkSave(caseId: number, id: number | null, kind: Kind, draft: InvoiceDraft) {
+  const bills = (offerCase: number) =>
+    offerCase === caseId ||
+    caseLinks.some(l => l.follower === caseId && l.source === offerCase && l.link === 'collect');
+  draft.positions.forEach(({ source }) => {
+    if (!source) {
+      return;
+    }
+    if (kind !== 'invoice') {
+      throw 'Nur die Positionen einer Rechnung beziehen sich auf ein Angebot.';
+    }
+    const offer = invoices.find(i => i.id === source.offer_id);
+    if (!offer) {
+      throw 'Das Angebot einer Position gibt es nicht.';
+    }
+    if (offer.kind !== 'offer' || offer.status !== 'exported' || !bills(offer.case_id)) {
+      throw 'Eine Position bezieht sich nur auf ein erstelltes Angebot desselben Vorgangs oder eines, den er zusammenfasst.';
+    }
+    if (source.index >= offer.draft.positions.length) {
+      throw 'Die Position des Angebots gibt es nicht.';
+    }
+  });
+  if (draft.on_account && draft.positions.some(p => p.source)) {
+    throw 'Eine Abschlags- oder Anzahlungsrechnung berechnet keine Angebotsposition endgültig.';
+  }
+  const deductions = draft.deductions ?? [];
+  const cancels = draft.corrects?.kind === 'cancel';
+  if (deductions.length > 0 && (kind !== 'invoice' || draft.on_account)) {
+    throw 'Nur eine Schlussrechnung zieht Abschlags- und Anzahlungsrechnungen ab.';
+  }
+  if (!cancels) {
+    deductions.forEach((d, i) => {
+      if (deductions.findIndex(o => o.invoice_id === d.invoice_id) !== i) {
+        throw 'Eine Abschlagsrechnung wird nur einmal abgezogen.';
+      }
+      const deducted = invoices.find(o => o.id === d.invoice_id);
+      if (
+        !deducted ||
+        deducted.case_id !== caseId ||
+        !onAccountOf(deducted) ||
+        isCancelled(deducted.id)
+      ) {
+        throw 'Abgezogen werden nur erstellte Abschlags- und Anzahlungsrechnungen desselben Vorgangs.';
+      }
+      const elsewhere = invoices.some(
+        o =>
+          o.status === 'exported' &&
+          o.id !== id &&
+          o.draft.corrects?.kind !== 'cancel' &&
+          !isCancelled(o.id) &&
+          (o.draft.deductions ?? []).some(x => x.invoice_id === d.invoice_id)
+      );
+      if (elsewhere) {
+        throw `Die Abschlagsrechnung ${deducted.number ?? ''} zieht schon eine andere Schlussrechnung ab.`;
+      }
+    });
+  }
+  const correction = draft.corrects;
+  if (!correction) {
+    return;
+  }
+  const original = invoices.find(i => i.id === correction.invoice_id);
+  if (kind !== 'invoice') {
+    throw 'Nur eine Rechnung wird storniert oder ersetzt.';
+  }
+  if (
+    !original ||
+    original.kind !== 'invoice' ||
+    original.status !== 'exported' ||
+    original.case_id !== caseId
+  ) {
+    throw 'Storniert oder ersetzt wird eine erstellte Rechnung desselben Vorgangs.';
+  }
+  if (original.draft.corrects?.kind === 'cancel') {
+    throw 'Eine Stornorechnung wird nicht storniert.';
+  }
+  if (cancels) {
+    if (
+      invoices.some(
+        s =>
+          s.id !== id &&
+          s.status === 'exported' &&
+          s.draft.corrects?.kind === 'cancel' &&
+          s.draft.corrects.invoice_id === original.id
+      )
+    ) {
+      throw 'Diese Rechnung ist schon storniert.';
+    }
+    // the parts that matter, the mock keeps no field order
+    const position = (p: Position) => [
+      p.description,
+      p.quantity?.trim() || '1',
+      p.price,
+      p.tax_rate,
+      p.unit,
+    ];
+    const negated = (q: string | null) => {
+      const typed = q?.trim() || '1';
+      return typed.startsWith('-') ? typed.slice(1) : `-${typed}`;
+    };
+    const mirrors =
+      draft.customer.id === original.draft.customer.id &&
+      JSON.stringify(draft.positions.map(position)) ===
+        JSON.stringify(
+          original.draft.positions.map(p => position({ ...p, quantity: negated(p.quantity) }))
+        ) &&
+      JSON.stringify(deductions.map(d => d.invoice_id)) ===
+        JSON.stringify((original.draft.deductions ?? []).map(d => d.invoice_id)) &&
+      draft.delivery_date === original.draft.delivery_date &&
+      draft.delivery_end === original.draft.delivery_end;
+    if (!mirrors) {
+      throw 'Eine Stornorechnung gibt die Rechnung so wieder, wie sie war.';
+    }
+  }
+}
+
 /** Ids are not reused after a draft was deleted */
 const nextId = () => Math.max(0, ...invoices.map(i => i.id)) + 1;
 
@@ -959,8 +1175,10 @@ function totals(draft: InvoiceDraft) {
     const own = settings.tax_rate.trim() === '' ? undefined : canonicalRate(p.tax_rate);
     return sum + ((number(p.quantity) || 1) * number(p.price) * (Number(own) || fallback)) / 100;
   }, 0);
-  // a Schlussrechnung takes off what its invoices on account came to
-  const deducted = (draft.deductions ?? []).reduce((sum, d) => sum + Number(d.gross || 0), 0);
+  // a Schlussrechnung takes off what its invoices on account came to, its Storno takes that back
+  const sign = draft.corrects?.kind === 'cancel' ? -1 : 1;
+  const deducted =
+    sign * (draft.deductions ?? []).reduce((sum, d) => sum + Number(d.gross || 0), 0);
   return {
     net: euro(net),
     vat: euro(vat),
@@ -984,6 +1202,8 @@ function onAccountOf(i: StoredInvoice): OnAccountInvoice | undefined {
     vat,
     gross,
     deducted_by: null,
+    paid: i.payments.length > 0 ? sum(i.payments.map(p => p.amount)) : null,
+    paid_at: i.paid_at,
   };
 }
 
@@ -1084,10 +1304,21 @@ if (billedFirst) {
   billedFirst.source = { offer_id: 3, index: 0 };
 }
 
+/** The Stornorechnung of an invoice, created or drafted */
+const cancelling = (id: number, status: Status) =>
+  invoices.find(
+    s =>
+      s.status === status &&
+      s.draft.corrects?.kind === 'cancel' &&
+      s.draft.corrects.invoice_id === id
+  );
+
+const isCancelled = (id: number) => cancelling(id, 'exported') !== undefined;
+
 /** The invoice positions that refer to offer positions, as `billing::references` reads them */
 const references = () =>
   invoices
-    .filter(i => i.kind === 'invoice')
+    .filter(i => i.kind === 'invoice' && !isCancelled(i.id))
     .flatMap(invoice =>
       invoice.draft.positions.flatMap(p =>
         p.source ? [{ invoice, source: p.source, quantity: quantityOf(p) }] : []
@@ -1147,15 +1378,25 @@ const groupOf = (i: StoredInvoice) => (i.relation === 'alternative' ? i.related_
 /** What the relations say of a document, read from the others as `relations.rs` does */
 function related(i: StoredInvoice): StoredInvoice {
   const taken =
-    i.kind === 'offer' &&
-    invoices.some(m => m.id !== i.id && m.answer === 'accepted' && groupOf(m) === groupOf(i));
+    i.kind === 'offer'
+      ? invoices.find(m => m.id !== i.id && m.answer === 'accepted' && groupOf(m) === groupOf(i))
+      : undefined;
+  const replacement = invoices.find(
+    r => r.related_id === i.id && r.relation === 'replacement' && r.status === 'exported'
+  );
+  const cancelled = cancelling(i.id, 'exported');
+  const ref = (d: StoredInvoice | undefined) => (d ? { id: d.id, number: d.number } : null);
   return {
     ...i,
     related_number: i.related_id === null ? null : find(i.related_id).number,
-    lapsed: i.status === 'exported' && i.answer === null && taken,
-    superseded: invoices.some(
-      r => r.related_id === i.id && r.relation === 'replacement' && r.status === 'exported'
-    ),
+    lapsed: i.status === 'exported' && i.answer === null && taken !== undefined,
+    taken_by: ref(taken),
+    superseded: replacement !== undefined,
+    superseded_by: ref(replacement),
+    cancelled: cancelled !== undefined,
+    cancelled_by: ref(cancelled),
+    cancel_draft: cancelling(i.id, 'draft')?.id ?? null,
+    partial: partial(i.draft),
   };
 }
 
@@ -1634,14 +1875,21 @@ export function installMocks() {
               answered_on: i.answered_on,
               updated_at: i.updated_at,
               archived_at: i.archived_at,
-              linked: linksOf(i.id).length,
               case_id: i.case_id,
               on_account: i.draft.on_account ?? null,
-              closing: (i.draft.deductions ?? []).length > 0,
+              closing: isClosing(i.draft),
+              partial: i.partial,
+              corrects: i.draft.corrects ?? null,
+              cancelled: i.cancelled,
+              cancelled_by: i.cancelled_by,
+              cancel_draft: i.cancel_draft,
               relation: i.relation,
+              related_id: i.related_id,
               related_number: i.related_number,
               lapsed: i.lapsed,
+              taken_by: i.taken_by,
               superseded: i.superseded,
+              superseded_by: i.superseded_by,
             }));
         case 'invoice_archive':
           find(args['id']).archived_at = new Date().toISOString();
@@ -1770,13 +2018,69 @@ export function installMocks() {
             ...UNRELATED,
           };
           followCustomer(stored.case_id, draft.customer.id, existing === undefined);
+          checkSave(stored.case_id, existing?.id ?? null, stored.kind, draft);
           stored.draft = draft;
+          // what is due, a Stornorechnung's negative
           stored.total = check(draft).totals?.due ?? null;
           if (!existing) {
             invoices.push(stored);
             event(stored.id, 'created', null, {}, draft);
           }
           return stored;
+        }
+        case 'invoice_cancel':
+        case 'invoice_replace': {
+          // mirrors `Store::cancel_invoice` and `Store::replace_invoice`
+          const kind = command === 'invoice_cancel' ? 'cancel' : 'replace';
+          const original = find(args['id'] as number);
+          if (kind === 'cancel' && isCancelled(original.id)) {
+            throw 'Diese Rechnung ist schon storniert.';
+          }
+          // one Storno draft at a time, it is opened again
+          const drafted = related(original).cancel_draft;
+          if (kind === 'cancel' && drafted) {
+            return related(find(drafted));
+          }
+          if (kind === 'replace' && !isCancelled(original.id)) {
+            throw 'Ersetzt wird eine stornierte Rechnung; erst die Stornorechnung erstellen.';
+          }
+          const draft: InvoiceDraft = {
+            ...structuredClone(original.draft),
+            issue_date: today(),
+            frozen: null,
+            corrects: {
+              invoice_id: original.id,
+              kind,
+              number: original.number ?? '',
+              issue_date: original.draft.issue_date,
+            },
+          };
+          if (kind === 'cancel') {
+            // quantities taken back, deductions kept (`corrections::mirrored`)
+            draft.positions = draft.positions.map(p => {
+              const typed = p.quantity?.trim() || '1';
+              const quantity = typed.startsWith('-') ? typed.slice(1) : `-${typed}`;
+              return { ...p, quantity, source: null };
+            });
+            draft.on_account = null;
+          }
+          const made: StoredInvoice = {
+            ...structuredClone(original),
+            ...UNRELATED,
+            id: nextId(),
+            number: null,
+            status: 'draft',
+            draft,
+            total: check(draft).totals?.due ?? null,
+            exported_at: null,
+            paid_at: null,
+            payments: [],
+            archived_at: null,
+            files: null,
+          };
+          invoices.push(made);
+          event(made.id, 'created', null, { from: original.id }, made.draft);
+          return made;
         }
         case 'offer_follow': {
           // mirrors `Store::follow_offer`: a copy in a new Vorgang following the offer's
@@ -1811,6 +2115,9 @@ export function installMocks() {
           const [first] = rows;
           if (!first || rows.length < 2) {
             throw 'Eine Sammelrechnung fasst mindestens zwei Vorgänge zusammen.';
+          }
+          if (ids.some(id => caseLinks.some(l => l.follower === id && l.link === 'collect'))) {
+            throw 'Ein Vorgang, der andere zusammenfasst, wird nicht noch einmal gesammelt.';
           }
           if (first.customer_id === null || rows.some(r => r.customer_id !== first.customer_id)) {
             throw 'Eine Sammelrechnung fasst Vorgänge desselben Kunden zusammen.';
@@ -2016,7 +2323,10 @@ export function installMocks() {
           }
           const standing = related(offer);
           if (standing.superseded || standing.lapsed) {
-            throw 'Ein ersetztes oder entfallenes Angebot wird nicht in Rechnung gestellt.';
+            throw 'Ein ersetztes Angebot oder eines, zu dem eine Alternative angenommen ist, wird nicht in Rechnung gestellt.';
+          }
+          if (offer.answer === 'declined') {
+            throw 'Ein abgelehntes Angebot wird nicht in Rechnung gestellt.';
           }
           const own = (contexts.find(c => c.id === offer.context_id) as Context).settings;
           const { customer, buyer_reference, note } = structuredClone(offer.draft);
@@ -2076,9 +2386,12 @@ export function installMocks() {
               if (!found) {
                 return [];
               }
+              // a Storno takes them back, a cancelled one frees them (`on_account::DEDUCTING`)
               const by = invoices.find(
                 other =>
                   other.id !== except &&
+                  other.draft.corrects?.kind !== 'cancel' &&
+                  !isCancelled(other.id) &&
                   (other.draft.deductions ?? []).some(d => d.invoice_id === i.id)
               );
               return [{ ...found, deducted_by: by ? (by.number ?? 'Entwurf') : null }];
@@ -2141,6 +2454,8 @@ export function installMocks() {
           );
           stored.exported_at = `${today()} 12:00:00`;
           stored.draft.frozen = settings;
+          // what is due, a Stornorechnung's negative
+          stored.total = check(stored.draft).totals?.due ?? stored.total;
           stored.files = {
             pdf: {
               path: `${stored.kind === 'offer' ? 'offers' : 'invoices'}/1/${stored.number}.pdf`,

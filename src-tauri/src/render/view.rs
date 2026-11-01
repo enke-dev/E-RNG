@@ -2,15 +2,15 @@
 //! presentation rules (address lines, which totals to show). Money is never computed
 //! here, every figure comes from the reconciled invoice.
 
-use en16931::invoice::{Code, DocumentKind, PaymentMeans, PostalAddress};
+use en16931::invoice::{Code, PaymentMeans, PostalAddress};
 use en16931::{Date, Invoice};
 use serde::{Deserialize, Serialize};
 
 use super::format::Formatter;
 use super::parts::PartView;
 use crate::model::{
-    CustomLayout, Deduction, Format, Insets, InvoiceDraft, Kind, OnAccount, Position, Settings,
-    Wording,
+    CorrectionKind, CustomLayout, Deduction, Format, Insets, InvoiceDraft, Kind, OnAccount,
+    Position, Settings, Wording,
 };
 use crate::units;
 
@@ -58,6 +58,8 @@ pub struct Branding {
     pub offer_number: String,
     /// A Schlussrechnung: the invoices on account it deducts, one row each below its gross sum
     pub deductions: Vec<Deduction>,
+    /// A Stornorechnung or an Ersatzrechnung: how it names the invoice it corrects
+    pub correction: Option<CorrectionKind>,
 }
 
 /// The seller's fields that only layouts use: they are not part of the invoice data and not in
@@ -73,10 +75,10 @@ pub struct SellerDetails {
 /// The words of a kind; an invoice on account and a Schlussrechnung say what they are
 fn wording_of(kind: Kind, draft: &InvoiceDraft, settings: &Settings) -> Wording {
     let wording = settings.wording(kind);
-    let title = match (kind, draft.on_account, draft.deductions.is_empty()) {
+    let title = match (kind, draft.on_account, draft.is_closing()) {
         (Kind::Invoice, Some(OnAccount::Prepayment), _) => "Anzahlungsrechnung",
         (Kind::Invoice, Some(OnAccount::Progress), _) => "Abschlagsrechnung",
-        (Kind::Invoice, None, false) => "Schlussrechnung",
+        (Kind::Invoice, None, true) => "Schlussrechnung",
         _ => return wording,
     };
     Wording {
@@ -161,6 +163,7 @@ impl Branding {
             // what a created invoice froze, the callers know better for the rest
             offer_number: draft.frozen_offers.join(", "),
             deductions: draft.deductions.clone(),
+            correction: draft.corrects.as_ref().map(|c| c.kind),
         }
     }
 }
@@ -183,17 +186,18 @@ fn with_letter(mut view: InvoiceView) -> InvoiceView {
     view
 }
 
-/// The headline of a document: a credit note's is fixed, else the layout's pattern for a draft or
-/// a created one
+/// The headline of a document: a Stornorechnung's is fixed, else the layout's pattern for a draft
+/// or a created one
 fn title_of(
-    credit: bool,
+    cancel: bool,
     branding: &Branding,
     format: &Format,
     number: &str,
     version: &str,
 ) -> String {
-    if credit {
-        return "Gutschrift".to_owned();
+    // "Gutschrift" would say self-billing
+    if cancel {
+        return "Stornorechnung".to_owned();
     }
     let pattern = if branding.draft {
         &format.draft_title
@@ -567,7 +571,6 @@ fn payment_lines(
 
 /// The facts about the document, as the infos part lists them.
 fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Date) -> Vec<Info> {
-    let credit = invoice.kind == DocumentKind::CreditNote;
     let date = |key: &'static str, label: &str, date: Date| Info {
         key,
         label: label.into(),
@@ -583,11 +586,7 @@ fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Dat
     let offer = branding.kind == Kind::Offer;
     let mut infos = vec![text(
         "number",
-        if credit {
-            "Gutschriftsnummer"
-        } else {
-            &branding.wording.number_label
-        },
+        &branding.wording.number_label,
         invoice.number.clone().unwrap_or_default(),
     )];
     infos.push(date("date", "Datum", issue));
@@ -608,9 +607,11 @@ fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Dat
             });
         }
     }
+    // nothing falls due on a Stornorechnung either, it gives back
+    let cancel = branding.correction == Some(CorrectionKind::Cancel);
     if let Some(due) = invoice
         .due_date
-        .filter(|_| !branding.no_payment_term && !offer)
+        .filter(|_| !branding.no_payment_term && !offer && !cancel)
     {
         infos.push(date("due-date", "Fällig am", due));
     }
@@ -625,7 +626,11 @@ fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Dat
     {
         infos.push(text(
             "preceding-invoice",
-            "Zu Rechnung",
+            match branding.correction {
+                Some(CorrectionKind::Cancel) => "Storniert Rechnung",
+                Some(CorrectionKind::Replace) => "Ersetzt Rechnung",
+                None => "Zu Rechnung",
+            },
             original.reference.as_str().to_owned(),
         ));
     }
@@ -734,7 +739,7 @@ fn total_rows(
     currency: &str,
 ) -> Vec<Total> {
     let totals = &invoice.totals;
-    let credit = invoice.kind == DocumentKind::CreditNote;
+    let cancel = branding.correction == Some(CorrectionKind::Cancel);
     let mut rows = vec![Total {
         label: "Summe der Positionen".into(),
         value: fmt.money(totals.line_total, currency),
@@ -818,8 +823,8 @@ fn total_rows(
     let offer = branding.kind == Kind::Offer;
     if !offer || branding.vat_free {
         rows.push(Total {
-            label: match (credit, offer) {
-                (true, _) => "Gutschriftsbetrag",
+            label: match (cancel, offer) {
+                (true, _) => "Stornobetrag",
                 (false, true) => "Gesamtbetrag",
                 (false, false) => "Zahlbetrag",
             }
@@ -834,7 +839,7 @@ fn total_rows(
 pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> InvoiceView {
     let fmt = &Formatter::new(format);
     let currency = invoice.currency.as_ref().map_or("EUR", |c| c.as_str());
-    let credit = invoice.kind == DocumentKind::CreditNote;
+    let cancel = branding.correction == Some(CorrectionKind::Cancel);
     let issue = invoice
         .issue_date
         .unwrap_or_else(|| Date::new(1970, 1, 1).unwrap());
@@ -860,7 +865,7 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         0 => String::new(),
         version => version.to_string(),
     };
-    let title = title_of(credit, branding, format, &number, &version);
+    let title = title_of(cancel, branding, format, &number, &version);
 
     let view = InvoiceView {
         title,
@@ -885,7 +890,7 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         lines,
         totals: rows,
         vat_notes,
-        payment: if offer {
+        payment: if offer || cancel {
             Vec::new()
         } else {
             payment_lines(

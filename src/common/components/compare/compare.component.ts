@@ -17,6 +17,7 @@ import type {
 } from '../../utils/api.utils.js';
 import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
+import { typedMoney } from '../../utils/billing.utils.js';
 import type { DraftDiff, FieldChange } from '../../utils/diff.utils.js';
 import { diffDrafts, diffWords } from '../../utils/diff.utils.js';
 import { formatMoment, money } from '../../utils/format.utils.js';
@@ -185,7 +186,7 @@ export class CompareComponent extends ErngElement.withStyles(styles) {
       <li class="${change}">
         <span class="what">${change === 'added' ? 'Neu' : 'Entfernt'}</span>
         <strong>${this.renderChange({ before, after, words: true })}</strong>
-        <span class="muted">${quantity} × ${money(position.price)}</span>
+        <span class="muted">${quantity} × ${typedMoney(position.price)}</span>
       </li>
     `;
   }

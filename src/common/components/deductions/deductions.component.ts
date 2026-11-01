@@ -1,10 +1,13 @@
+import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
+import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 import { html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import type { Deduction, OnAccountInvoice } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
+import { deductionOf } from '../../utils/billing.utils.js';
 import { formatDate, money } from '../../utils/format.utils.js';
 import styles from './deductions.component.css';
 
@@ -25,19 +28,7 @@ export class DeductionsComponent extends ErngElement.withStyles(styles) {
 
   private toggle(invoice: OnAccountInvoice, on: boolean) {
     const kept = this.deductions.filter(d => d.invoice_id !== invoice.id);
-    const deductions = on
-      ? [
-          ...kept,
-          {
-            invoice_id: invoice.id,
-            number: invoice.number,
-            issue_date: invoice.issue_date,
-            net: invoice.net,
-            vat: invoice.vat,
-            gross: invoice.gross,
-          },
-        ]
-      : kept;
+    const deductions = on ? [...kept, deductionOf(invoice)] : kept;
     this.dispatchEvent(new CustomEvent<Deduction[]>('deductions-change', { detail: deductions }));
   }
 
@@ -53,6 +44,28 @@ export class DeductionsComponent extends ErngElement.withStyles(styles) {
           `
         )}
       </ul>
+    `;
+  }
+
+  /**
+   * The picked ones not paid completely yet: deducted as invoiced all the same, what is missing stays
+   * open on them (§ 14 Abs. 5 UStG speaks of what was received, the warning says so)
+   */
+  private renderUnpaid(picked: Set<number>) {
+    const unpaid = this.available.filter(i => picked.has(i.id) && i.paid_at === null);
+    if (unpaid.length === 0) {
+      return nothing;
+    }
+    const names = unpaid.map(i => {
+      const open = Number(i.gross) - Number(i.paid ?? 0);
+      return `${i.number} (offen ${money(open.toFixed(2))})`;
+    });
+    return html`
+      <wa-callout variant="warning" size="s">
+        <wa-icon slot="icon" name="warning"></wa-icon>
+        Noch nicht ganz bezahlt: ${names.join(', ')}. Abgezogen wird, was berechnet ist; der Rest
+        bleibt auf ${unpaid.length === 1 ? 'dieser Rechnung' : 'diesen Rechnungen'} offen.
+      </wa-callout>
     `;
   }
 
@@ -76,6 +89,13 @@ export class DeductionsComponent extends ErngElement.withStyles(styles) {
             <span class="muted">
               ${money(invoice.gross)}
               ${
+                invoice.paid_at
+                  ? ' · bezahlt'
+                  : invoice.paid
+                    ? ` · ${money(invoice.paid)} bezahlt`
+                    : ' · unbezahlt'
+              }
+              ${
                 taken
                   ? ` · abgezogen in ${invoice.deducted_by}`
                   : invoice.deducted_by === 'Entwurf'
@@ -91,6 +111,7 @@ export class DeductionsComponent extends ErngElement.withStyles(styles) {
           ? html`<p class="muted">Abgezogen werden ${money(total.toFixed(2))} brutto.</p>`
           : nothing
       }
+      ${this.renderUnpaid(picked)}
     `;
   }
 }
