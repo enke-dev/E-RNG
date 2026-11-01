@@ -1,8 +1,8 @@
 use tauri::State;
 
-use crate::model::{Case, Event};
+use crate::model::{Case, Event, StoredInvoice};
 use crate::store::{Sequence, Store};
-use crate::utils::{CommandError, CommandResult};
+use crate::utils::{today, CommandError, CommandResult};
 
 /// The Vorgänge of a context (all with none), newest first
 #[tauri::command]
@@ -77,4 +77,17 @@ pub fn case_sequence_set(
     store
         .set_case_counter(context_id, &settings, next)
         .map_err(CommandError::from)
+}
+
+/// A Folgeangebot: the created offer `id` copied into a new Vorgang that follows its own
+#[tauri::command]
+pub fn offer_follow(store: State<'_, Store>, id: i64) -> CommandResult<StoredInvoice> {
+    store.follow_offer(id, &today()).map_err(CommandError::from)
+}
+
+/// A Sammelrechnung over Vorgänge of one customer: a new Vorgang collecting them, with an invoice
+/// draft of all that is open of their offers
+#[tauri::command]
+pub fn cases_collect(store: State<'_, Store>, ids: Vec<i64>) -> CommandResult<StoredInvoice> {
+    store.collect(&ids, &today()).map_err(CommandError::from)
 }

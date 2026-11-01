@@ -10,6 +10,8 @@ import type {
   Address,
   Answer,
   Case,
+  CaseLink,
+  CaseRef,
   CaseStage,
   CatalogEntry,
   Context,
@@ -878,6 +880,18 @@ function followCustomer(caseId: number, customerId: number | null | undefined, i
   row.customer_id = customerId ?? null;
 }
 
+/** Vorgänge that refer to each other, from the source to its follower (`case_links`) */
+const caseLinks: { source: number; follower: number; link: CaseLink }[] = [];
+
+/** The references of a Vorgang, its sources or its followers, as `case_links::refs` reads them */
+const refsOf = (id: number, sources: boolean): CaseRef[] =>
+  caseLinks
+    .filter(l => (sources ? l.follower : l.source) === id)
+    .map(l => {
+      const other = sources ? l.source : l.follower;
+      return { id: other, number: caseRow(other).number, link: l.link };
+    });
+
 /** What the store reads from a Vorgang's documents */
 function caseView(row: CaseRow): Case {
   const documents = invoices.filter(i => i.case_id === row.id);
@@ -917,6 +931,8 @@ function caseView(row: CaseRow): Case {
     paid: paid.toFixed(2),
     open: open.toFixed(2),
     archived: documents.length > 0 && documents.every(i => i.archived_at !== null),
+    sources: refsOf(row.id, true),
+    followers: refsOf(row.id, false),
   };
 }
 
@@ -1762,6 +1778,88 @@ export function installMocks() {
           }
           return stored;
         }
+        case 'offer_follow': {
+          // mirrors `Store::follow_offer`: a copy in a new Vorgang following the offer's
+          const source = find(args['id'] as number);
+          if (source.kind !== 'offer' || source.status !== 'exported') {
+            throw 'Ein Folgeangebot gibt es nur zu einem erstellten Angebot.';
+          }
+          const copy: StoredInvoice = {
+            ...structuredClone(source),
+            ...UNRELATED,
+            id: nextId(),
+            case_id: newCase(source.context_id, source.draft.customer.id),
+            number: null,
+            status: 'draft',
+            exported_at: null,
+            answer: null,
+            answered_on: null,
+            archived_at: null,
+            files: null,
+          };
+          copy.draft.issue_date = today();
+          copy.draft.frozen = null;
+          invoices.push(copy);
+          caseLinks.push({ source: source.case_id, follower: copy.case_id, link: 'follow' });
+          event(copy.id, 'created', null, { from: source.id }, copy.draft);
+          return copy;
+        }
+        case 'cases_collect': {
+          // mirrors `Store::collect`
+          const ids = args['ids'] as number[];
+          const rows = ids.map(caseRow);
+          const [first] = rows;
+          if (!first || rows.length < 2) {
+            throw 'Eine Sammelrechnung fasst mindestens zwei Vorgänge zusammen.';
+          }
+          if (first.customer_id === null || rows.some(r => r.customer_id !== first.customer_id)) {
+            throw 'Eine Sammelrechnung fasst Vorgänge desselben Kunden zusammen.';
+          }
+          const offers = invoices
+            .filter(i => ids.includes(i.case_id) && i.kind === 'offer' && i.status === 'exported')
+            .map(related)
+            .filter(o => o.answer !== 'declined' && !o.lapsed && !o.superseded);
+          const positions = offers.flatMap(o => {
+            const billing = billingOf(o.id, null);
+            return billing.positions
+              .filter(b => Number(b.open) > 0)
+              .map(b => billedPosition(billing, b.index, b.open));
+          });
+          const [offer] = offers;
+          if (!offer || positions.length === 0) {
+            throw 'In diesen Vorgängen ist nichts mehr offen.';
+          }
+          const caseId = newCase(first.context_id, first.customer_id, null, true);
+          ids.forEach(source => caseLinks.push({ source, follower: caseId, link: 'collect' }));
+          const draft: InvoiceDraft = {
+            ...structuredClone(offer.draft),
+            issue_date: today(),
+            delivery_date: today(),
+            delivery_end: null,
+            validity_days: null,
+            positions,
+            frozen: null,
+          };
+          const invoice: StoredInvoice = {
+            ...structuredClone(offer),
+            ...UNRELATED,
+            id: nextId(),
+            case_id: caseId,
+            kind: 'invoice',
+            number: null,
+            status: 'draft',
+            draft,
+            total: check(draft).totals?.due ?? null,
+            exported_at: null,
+            answer: null,
+            answered_on: null,
+            archived_at: null,
+            files: null,
+          };
+          invoices.push(invoice);
+          event(invoice.id, 'created', null, {}, invoice.draft);
+          return invoice;
+        }
         case 'offer_related': {
           // mirrors `Store::related_offer`
           const source = related(find(args['id'] as number));
@@ -1990,7 +2088,16 @@ export function installMocks() {
           const except = (args['except'] as number | null) ?? null;
           return invoices
             .filter(
-              i => i.case_id === args['caseId'] && i.kind === 'offer' && i.status === 'exported'
+              i =>
+                (i.case_id === args['caseId'] ||
+                  caseLinks.some(
+                    l =>
+                      l.follower === args['caseId'] &&
+                      l.source === i.case_id &&
+                      l.link === 'collect'
+                  )) &&
+                i.kind === 'offer' &&
+                i.status === 'exported'
             )
             .map(related)
             .filter(o => o.answer !== 'declined' && !o.lapsed && !o.superseded)

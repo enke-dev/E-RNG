@@ -20,3 +20,9 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* a Vorgang it refers to opens by its number */
+.ref {
+  cursor: pointer;
+  margin-inline-end: var(--wa-space-2xs);
+}

@@ -125,6 +125,19 @@ export interface Case {
   open: string;
   /** Every document archived */
   archived: boolean;
+  /** The Vorgänge it follows or collects, and those following or collecting it */
+  sources: CaseRef[];
+  followers: CaseRef[];
+}
+
+/** How a Vorgang refers to another: a Folgevorgang follows, a Sammelrechnung's Vorgang collects */
+export type CaseLink = 'follow' | 'collect';
+
+/** Another Vorgang as a reference names it */
+export interface CaseRef {
+  id: number;
+  number: string;
+  link: CaseLink;
 }
 
 /**
@@ -930,6 +943,10 @@ export const api = {
   /** A copy in a Vorgang of its own, or in the original's (`sameCase`) */
   invoiceDuplicate: (id: number, sameCase = false) =>
     invoke<StoredInvoice>('invoice_duplicate', { id, sameCase }),
+  /** A Folgeangebot: the created offer copied into a new Vorgang that follows its own */
+  offerFollow: (id: number) => invoke<StoredInvoice>('offer_follow', { id }),
+  /** A Sammelrechnung: a new Vorgang collecting these of one customer, with an invoice of what is open */
+  casesCollect: (ids: number[]) => invoke<StoredInvoice>('cases_collect', { ids }),
   /** A new offer in the Vorgang of the created offer `id` that refers to it */
   offerRelated: (id: number, relation: Relation) =>
     invoke<StoredInvoice>('offer_related', { id, relation }),

@@ -516,13 +516,19 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
   }
 
-  /** A new offer in this Vorgang that refers to this created one: a Nachtrag, an alternative, a replacement */
-  private async relate(relation: Relation) {
+  /**
+   * A new offer that refers to this created one: a Nachtrag, an alternative or a replacement in
+   * this Vorgang, or a Folgeangebot in a new one that follows it
+   */
+  private async relate(relation: Relation | 'follow') {
     if (!this.stored) {
       return;
     }
     try {
-      const offer = await api.offerRelated(this.stored.id, relation);
+      const offer =
+        relation === 'follow'
+          ? await api.offerFollow(this.stored.id)
+          : await api.offerRelated(this.stored.id, relation);
       this.announce({ id: offer.id });
       goto(this.route('offer', offer.id));
     } catch (error) {
@@ -552,7 +558,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       <wa-dropdown
         placement="top-end"
         @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) =>
-          void this.relate(e.detail.item.value as Relation)}"
+          void this.relate(e.detail.item.value as Relation | 'follow')}"
       >
         <wa-button slot="trigger" appearance="outlined" with-caret>Angebot dazu</wa-button>
         ${relations.map(([relation, { noun, hint }]) => {
@@ -567,6 +573,12 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
             </wa-dropdown-item>
           `;
         })}
+        <wa-dropdown-item
+          value="follow"
+          title="Ein Folgeauftrag in einem neuen Vorgang, der diesem folgt"
+        >
+          Folgeangebot
+        </wa-dropdown-item>
       </wa-dropdown>
     `;
   }

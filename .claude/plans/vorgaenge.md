@@ -1,6 +1,6 @@
 # Vorgänge – Plan
 
-**Status (2026-11-01): phases 1–7 done, not pushed yet; phase 8 next.**
+**Status (2026-11-01): phases 1–8 done, not pushed yet; phase 9 next.**
 Details of what is built are in `docs/development.md`. A living plan: decisions are edited in place,
 what is dropped is removed, not kept as history.
 
@@ -219,5 +219,8 @@ others.
    offer per VAT rate), the Schlussrechnung deducting them (BG-3, BT-113, a row per deduction with
    its VAT). Checked with Mustang: 386 (EN 16931) and 326 (XRechnung) for an Anzahlung, 326 for an
    Abschlag, 380 with BG-3 and BT-113 for the Schlussrechnung. Construction codes (875–877) unused.
-8. **Next. Vorgang → Vorgang**: Folgeangebot and Folgevorgang, Sammelrechnung across Vorgänge.
-9. **Corrections**: Rechnungskorrektur, Stornorechnung, Ersatzrechnung (`to_credit_note` exists).
+8. **Done. Vorgang → Vorgang**: Folgeangebot in a Folgevorgang (`Angebot dazu`), Sammelrechnung across
+   Vorgänge of one customer (a collecting Vorgang, its invoice bills their offers), the references on
+   the Vorgang's page. Schema 16. Not done: the status of a collected Vorgang does not follow its
+   references yet.
+9. **Next. Corrections**: Rechnungskorrektur, Stornorechnung, Ersatzrechnung (`to_credit_note` exists).

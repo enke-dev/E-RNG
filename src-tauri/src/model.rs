@@ -1,6 +1,7 @@
 //! What the app stores and what the UI edits. Money and quantities travel as strings so the
 //! webview never rounds them, the Rust side parses them exactly (`draft.rs`).
 
+use crate::case_links::CaseRef;
 use crate::relations::Relation;
 use serde::{Deserialize, Serialize};
 
@@ -921,6 +922,9 @@ pub struct Case {
     pub open: String,
     /// Every document of it is archived (an empty one is not)
     pub archived: bool,
+    /// The Vorgänge it follows or collects, and those that follow or collect it
+    pub sources: Vec<CaseRef>,
+    pub followers: Vec<CaseRef>,
 }
 
 /// The other end of a link between an offer and an invoice

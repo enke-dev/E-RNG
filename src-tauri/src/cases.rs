@@ -333,6 +333,9 @@ pub(crate) fn drop_if_empty(conn: &Connection, case_id: i64) -> Result<bool> {
              AND NOT EXISTS (SELECT 1 FROM invoices WHERE case_id = ?1)",
         [case_id],
     )?;
+    if changed > 0 {
+        crate::case_links::forget(conn, Some(case_id))?;
+    }
     Ok(changed > 0)
 }
 
@@ -559,6 +562,8 @@ fn read_case(conn: &Connection, id: i64, payments: &HashMap<i64, Vec<Payment>>) 
         paid: money(paid),
         open: money(open),
         archived,
+        sources: crate::case_links::refs(conn, id, true)?,
+        followers: crate::case_links::refs(conn, id, false)?,
     })
 }
 

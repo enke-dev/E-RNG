@@ -44,7 +44,7 @@ pub struct Sequence {
 
 /// What `PRAGMA user_version` says of a database this app has migrated; a backup of an older one is
 /// migrated on restore, so no step of `migrate` may ever be dropped.
-pub const SCHEMA_VERSION: i32 = 15;
+pub const SCHEMA_VERSION: i32 = 16;
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -127,6 +127,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 15 {
         crate::billing::migrate_to_sources(conn)?;
+    }
+    if version < 16 {
+        crate::case_links::migrate_to_case_links(conn)?;
     }
     crate::cases::ensure_started(conn)?;
     ensure_app_state(conn)
@@ -1403,6 +1406,7 @@ impl Store {
         tx.execute("DELETE FROM number_floors WHERE context_id = ?1", [id])?;
         // only empty ones are left, a context with documents is not removed
         tx.execute("DELETE FROM cases WHERE context_id = ?1", [id])?;
+        crate::case_links::forget(&tx, None)?;
         tx.execute("DELETE FROM contexts WHERE id = ?1", [id])?;
         tx.commit()?;
         Ok(())

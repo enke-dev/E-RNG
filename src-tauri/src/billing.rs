@@ -187,8 +187,14 @@ pub(crate) fn check_sources(
         let Some((offer_kind, status, offer_case, offer_draft)) = offer else {
             bail!("Das Angebot einer Position gibt es nicht.");
         };
-        if offer_kind != "offer" || status != "exported" || offer_case != case_id {
-            bail!("Eine Position bezieht sich nur auf ein erstelltes Angebot desselben Vorgangs.");
+        if offer_kind != "offer"
+            || status != "exported"
+            || !crate::case_links::bills(conn, case_id, offer_case)?
+        {
+            bail!(
+                "Eine Position bezieht sich nur auf ein erstelltes Angebot desselben Vorgangs \
+                 oder eines, den er zusammenfasst."
+            );
         }
         let offer_draft: InvoiceDraft = serde_json::from_str(&offer_draft)?;
         if source.index >= offer_draft.positions.len() {
@@ -359,7 +365,10 @@ impl Store {
             let conn = self.conn();
             let mut statement = conn.prepare(
                 "SELECT id FROM invoices
-                 WHERE case_id = ?1 AND kind = 'offer' AND status = 'exported' ORDER BY id",
+                 WHERE kind = 'offer' AND status = 'exported' AND (case_id = ?1 OR case_id IN (
+                     SELECT source_id FROM case_links WHERE follower_id = ?1 AND kind = 'collect'
+                 ))
+                 ORDER BY id",
             )?;
             let ids = statement
                 .query_map([case_id], |r| r.get(0))?
