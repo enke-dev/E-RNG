@@ -123,6 +123,10 @@ fn make(
     let branding = Branding {
         version: store.draft_exports(stored.id).map_err(failed)?,
         case_number: store.case_number_of(stored.id).map_err(failed)?,
+        offer_number: store
+            .offer_numbers_in(&stored.draft.positions)
+            .map_err(failed)?
+            .join(", "),
         ..Branding::for_document(Kind::Invoice, &stored.draft, settings, &customs)
     };
     let layout = branding.custom.clone();
@@ -178,6 +182,7 @@ fn make_offer(
     };
     // the offer it is a Nachtrag, an alternative or a replacement of, as the preview names it
     if let Some((relation, number)) = store.relation_of(stored.id).map_err(failed)? {
+        branding.offer_number.clone_from(&number);
         branding.offers = vec![number];
         branding.offer_label = relation.label(&settings.wording(Kind::Offer).title);
     }
@@ -559,15 +564,18 @@ mod tests {
             let offer = create(&sidecars, &store, &Creating::default(), data.path(), offer)
                 .unwrap()
                 .invoice;
-            let naming = InvoiceDraft {
+            let mut naming = InvoiceDraft {
                 offer_reference: true,
                 ..draft()
             };
+            naming.positions[0].source = Some(crate::model::PositionSource {
+                offer_id: offer.id,
+                index: 0,
+            });
             let id = store
-                .save_draft(None, context, Kind::Invoice, &naming, None)
+                .save_draft_in_case(offer.case_id, Kind::Invoice, &naming, None)
                 .unwrap()
                 .id;
-            store.link(offer.id, id).unwrap();
 
             let created = create(&sidecars, &store, &Creating::default(), data.path(), id).unwrap();
 

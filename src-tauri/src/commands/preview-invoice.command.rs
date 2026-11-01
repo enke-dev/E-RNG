@@ -44,12 +44,11 @@ pub(crate) fn shown(
             .masked(issue_day(&draft.issue_date), current.calendar()),
     };
 
-    // a created invoice names the offers it froze, a draft those it is linked to now
-    let offers = match id {
-        Some(id) if is_draft && kind == Kind::Invoice && draft.offer_reference => {
-            Some(store.offer_numbers(id)?)
-        }
-        _ => None,
+    // a created invoice names the offers it froze, a draft those its positions bill now
+    let offers = if is_draft && kind == Kind::Invoice && draft.offer_reference {
+        Some(store.offer_numbers_in(&draft.positions)?)
+    } else {
+        None
     };
 
     let relation = id
@@ -57,6 +56,12 @@ pub(crate) fn shown(
         .map(|id| store.relation_of(id))
         .transpose()?
         .flatten();
+    // what `{offer_number}` says: the offers the positions bill, or the offer it refers to
+    let referred = match (&relation, kind) {
+        (Some((_, number)), _) => vec![number.clone()],
+        (None, Kind::Invoice) => store.offer_numbers_in(&draft.positions)?,
+        (None, Kind::Offer) => Vec::new(),
+    };
 
     // a draft shows the version its next export will be, a created document how many there were
     let exports = id
@@ -79,6 +84,7 @@ pub(crate) fn shown(
                 case_number: case_number.clone(),
                 ..Branding::for_document(kind, draft, &settings, &customs)
             };
+            branding.offer_number = referred.join(", ");
             if let Some(offers) = offers {
                 branding.offers = offers;
             }

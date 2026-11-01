@@ -1,5 +1,6 @@
 use tauri::State;
 
+use crate::billing::OfferBilling;
 use crate::draft::{build_invoice, totals};
 use crate::model::{Answer, Event, InvoiceDraft, Kind, Linked, ListEntry, StoredInvoice};
 use crate::relations::Relation;
@@ -178,23 +179,30 @@ pub fn offer_to_invoice(store: State<'_, Store>, offer_id: i64) -> CommandResult
 }
 
 /// The documents an offer or an invoice is linked to
+/// What is billed of a created offer, position by position; `except` leaves an invoice draft out
+#[tauri::command]
+pub fn offer_billing(
+    store: State<'_, Store>,
+    id: i64,
+    except: Option<i64>,
+) -> CommandResult<OfferBilling> {
+    store.billing(id, except).map_err(CommandError::from)
+}
+
+/// What is billed of the offers of a Vorgang that can still be billed
+#[tauri::command]
+pub fn case_billing(
+    store: State<'_, Store>,
+    case_id: i64,
+    except: Option<i64>,
+) -> CommandResult<Vec<OfferBilling>> {
+    store
+        .case_billing(case_id, except)
+        .map_err(CommandError::from)
+}
+
+/// The documents of the other kind a document is billed with
 #[tauri::command]
 pub fn document_links(store: State<'_, Store>, id: i64) -> CommandResult<Vec<Linked>> {
     store.links(id).map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub fn document_link(store: State<'_, Store>, offer_id: i64, invoice_id: i64) -> CommandResult<()> {
-    store.link(offer_id, invoice_id).map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub fn document_unlink(
-    store: State<'_, Store>,
-    offer_id: i64,
-    invoice_id: i64,
-) -> CommandResult<()> {
-    store
-        .unlink(offer_id, invoice_id)
-        .map_err(CommandError::from)
 }

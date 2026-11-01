@@ -395,6 +395,8 @@ fn placeholder(view: &InvoiceView, name: &str) -> Option<String> {
         "version" => Some(view.version.clone()),
         // the number of the document's Vorgang, opt-in for whoever wants it on the document
         "vorgang_number" => Some(view.case_number.clone()),
+        // the offers an invoice bills, the offer a Nachtrag, an alternative or a replacement is for
+        "offer_number" => Some(view.offer_number.clone()),
         // single fields: the plain value, empty when it is not set
         "seller_street" => Some(fields.street.clone()),
         "seller_postcode_city" => Some(fields.postcode_city.clone()),

@@ -448,6 +448,16 @@ pub struct Position {
     pub tax_label: Option<String>,
     /// Net price per unit
     pub price: String,
+    /// Invoices: the offer position it bills (see `billing`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<PositionSource>,
+}
+
+/// A position of a created offer, by the offer and its place in it
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PositionSource {
+    pub offer_id: i64,
+    pub index: usize,
 }
 
 impl Position {

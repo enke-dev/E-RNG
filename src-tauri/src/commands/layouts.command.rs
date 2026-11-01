@@ -297,6 +297,7 @@ fn sample(settings: &crate::model::Settings, layout: Option<&CustomLayout>) -> I
             tax_rate: None,
             tax_label: None,
             price: "12.50".into(),
+            source: None,
         })
         .collect();
     if settings.intro.is_none() {

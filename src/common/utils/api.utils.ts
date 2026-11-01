@@ -200,6 +200,34 @@ export interface Position {
   /** The label the rate was picked with, a created invoice keeps it whatever becomes of the rate */
   tax_label: string | null;
   price: string;
+  /** Invoices: the position of a created offer of its Vorgang it bills */
+  source?: PositionSource | null;
+}
+
+/** A position of a created offer, by the offer and its place in it */
+export interface PositionSource {
+  offer_id: number;
+  index: number;
+}
+
+/** What is billed of a position of an offer, decimals like the quantities */
+export interface PositionBilling {
+  index: number;
+  position: Position;
+  /** By created invoices */
+  billed: string;
+  /** By invoice drafts, which do not bill yet */
+  drafted: string;
+  /** What created invoices have not billed yet */
+  open: string;
+}
+
+/** What is billed of a created offer, position by position, and by which invoices */
+export interface OfferBilling {
+  offer_id: number;
+  number: string;
+  positions: PositionBilling[];
+  invoices: Linked[];
 }
 
 /** A unit of a context's list, which the positions of its documents pick from */
@@ -888,13 +916,14 @@ export const api = {
   invoiceDelete: (id: number) => invoke<null>('invoice_delete', { id }),
   /** A new invoice draft from a created offer, linked to it, with the layout and texts of invoices */
   offerToInvoice: (offerId: number) => invoke<StoredInvoice>('offer_to_invoice', { offerId }),
-  /** The documents an offer or an invoice is linked to */
+  /** The documents of the other kind a document is billed with: offers an invoice bills, invoices billing an offer */
   documentLinks: (id: number) => invoke<Linked[]>('document_links', { id }),
-  /** Both ends are in one context, the offer comes first; linking twice is fine */
-  documentLink: (offerId: number, invoiceId: number) =>
-    invoke<null>('document_link', { offerId, invoiceId }),
-  documentUnlink: (offerId: number, invoiceId: number) =>
-    invoke<null>('document_unlink', { offerId, invoiceId }),
+  /** What is billed of a created offer; `except` leaves an invoice draft out */
+  offerBilling: (id: number, except: number | null = null) =>
+    invoke<OfferBilling>('offer_billing', { id, except }),
+  /** What is billed of the offers of a Vorgang that can still be billed */
+  caseBilling: (caseId: number, except: number | null = null) =>
+    invoke<OfferBilling[]>('case_billing', { caseId, except }),
   /** Totals and findings, an offer has no findings */
   invoiceCheck: (contextId: number, kind: Kind, draft: InvoiceDraft) =>
     invoke<Check>('check_invoice', { contextId, kind, draft }),

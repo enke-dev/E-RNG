@@ -50,6 +50,9 @@ pub struct Branding {
     pub version: u32,
     /// The number of its Vorgang, empty for a document shown without one (a layout's sample)
     pub case_number: String,
+    /// For `{offer_number}`: the offers an invoice bills, the offer an offer refers to (a
+    /// Nachtrag's main offer), joined by commas
+    pub offer_number: String,
 }
 
 /// The seller's fields that only layouts use: they are not part of the invoice data and not in
@@ -134,6 +137,8 @@ impl Branding {
             unit_labels: draft.positions.iter().map(Position::unit_label).collect(),
             version: 0,
             case_number: String::new(),
+            // what a created invoice froze, the callers know better for the rest
+            offer_number: draft.frozen_offers.join(", "),
         }
     }
 }
@@ -208,6 +213,8 @@ pub struct InvoiceView {
     pub version: String,
     /// The number of its Vorgang, for `{vorgang_number}`
     pub case_number: String,
+    /// The offers it bills or refers to, for `{offer_number}`
+    pub offer_number: String,
     pub issue: YearMonthDay,
     pub seller: PartyView,
     /// The seller's single fields, one text each, for the `{seller_*}` placeholders
@@ -801,6 +808,7 @@ pub fn build(invoice: &Invoice, branding: &Branding, format: &Format) -> Invoice
         number,
         version,
         case_number: branding.case_number.clone(),
+        offer_number: branding.offer_number.clone(),
         issue: YearMonthDay {
             year: issue.year(),
             month: issue.month(),

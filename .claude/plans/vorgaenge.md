@@ -1,6 +1,6 @@
 # Vorgänge – Plan
 
-**Status (2026-11-01): phases 1–5 done, not pushed yet; phase 6 next.**
+**Status (2026-11-01): phases 1–6 done, not pushed yet; phase 7 next.**
 Details of what is built are in `docs/development.md`. A living plan: decisions are edited in place,
 what is dropped is removed, not kept as history.
 
@@ -207,11 +207,12 @@ others.
    picked in the dialog, the fields, positions and totals that differ.
 5. **Done. Offer → offer**: Nachtrag, Alternativangebot (lapsing), Ersatzangebot (superseding),
    `Angebot dazu`, the row on the document, stages and tags. Schema 14, no data to migrate.
-6. **Next. Position references, final**: Rechnung (today's "invoice from offer"), Teilrechnung,
-   Sammelrechnung within a Vorgang; the open amount per offer and position. The offer ↔ invoice
-   links go (their grouping lives on in the Vorgang since phase 3, the printed offer numbers in
-   `frozen_offers`). An invoice that bills an offer can say so in its texts, a placeholder like
-   `{offer_number}` for "Laut Angebot AN-2026-003", by its kind or relation.
-7. **On account**: Anzahlungs- and Abschlagsrechnung, the Schlussrechnung deducting them.
+6. **Done. Position references, final**: an invoice position refers to a position of a created
+   offer of its Vorgang and bills its own quantity of it; what is open per position is the rest
+   after created invoices. `Rechnung erstellen` bills all that is open (less of it: Teilrechnung),
+   `aus Angebot` picks open positions of the Vorgang's offers (several: Sammelrechnung). The link
+   table went (schema 15, links became references by matching positions), printed numbers and
+   `{offer_number}` come from the references.
+7. **Next. On account**: Anzahlungs- and Abschlagsrechnung, the Schlussrechnung deducting them.
 8. **Vorgang → Vorgang**: Folgeangebot and Folgevorgang, Sammelrechnung across Vorgänge.
 9. **Corrections**: Rechnungskorrektur, Stornorechnung, Ersatzrechnung (`to_credit_note` exists).

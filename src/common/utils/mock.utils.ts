@@ -22,6 +22,7 @@ import type {
   Linked,
   ListEntry,
   NumberReset,
+  OfferBilling,
   Position,
   PositionTemplate,
   Rate,
@@ -36,6 +37,7 @@ import type {
   UnitDef,
   UnitUsage,
 } from './api.utils.js';
+import { billedPosition, quantityOf } from './billing.utils.js';
 import { today } from './form.utils.js';
 import { cleanInvisible, cleanInvisibleLine } from './invisible.utils.js';
 import { validUntil } from './kind.utils.js';
@@ -917,9 +919,6 @@ function caseView(row: CaseRow): Case {
   };
 }
 
-/** Offer id and invoice id, the first offer was billed with the first invoice */
-let links: [number, number][] = [[3, 1]];
-
 /** When the mock was last backed up, none at first */
 /** Folders of an interrupted restore, none until a test puts some here */
 let interrupted: string[] = [];
@@ -1036,6 +1035,69 @@ const numberOf = (stored: StoredInvoice) =>
   sequenceOf(stored.context_id, stored.kind, dayOf(stored.draft.issue_date)).next_number;
 
 const find = (id: number) => invoices.find(i => i.id === id) as StoredInvoice;
+
+// the first invoice billed the first position of the first offer
+const [billedFirst] = find(1).draft.positions;
+if (billedFirst) {
+  billedFirst.source = { offer_id: 3, index: 0 };
+}
+
+/** The invoice positions that refer to offer positions, as `billing::references` reads them */
+const references = () =>
+  invoices
+    .filter(i => i.kind === 'invoice')
+    .flatMap(invoice =>
+      invoice.draft.positions.flatMap(p =>
+        p.source ? [{ invoice, source: p.source, quantity: quantityOf(p) }] : []
+      )
+    );
+
+/** A document as the other end of a reference names it */
+const linkedOf = (i: StoredInvoice): Linked => ({
+  id: i.id,
+  kind: i.kind,
+  number: i.number,
+  status: i.status,
+  customer_name: i.draft.customer.name,
+  issue_date: i.draft.issue_date,
+});
+
+/** The documents of the other kind a document is billed with, newest first (`Store::links`) */
+function linksOf(id: number): Linked[] {
+  const others = new Set(
+    references().flatMap(r =>
+      r.invoice.id === id ? [r.source.offer_id] : r.source.offer_id === id ? [r.invoice.id] : []
+    )
+  );
+  return [...others]
+    .map(other => linkedOf(find(other)))
+    .sort((a, b) => b.issue_date.localeCompare(a.issue_date) || b.id - a.id);
+}
+
+/** What is billed of a created offer (`Store::billing`) */
+function billingOf(offerId: number, except: number | null): OfferBilling {
+  const offer = find(offerId);
+  const refs = references().filter(r => r.source.offer_id === offerId && r.invoice.id !== except);
+  const sum = (index: number, created: boolean) =>
+    refs
+      .filter(r => r.source.index === index && (r.invoice.status === 'exported') === created)
+      .reduce((total, r) => total + r.quantity, 0);
+  return {
+    offer_id: offerId,
+    number: offer.number ?? '',
+    positions: offer.draft.positions.map((position, index) => {
+      const billed = sum(index, true);
+      return {
+        index,
+        position,
+        billed: String(billed),
+        drafted: String(sum(index, false)),
+        open: String(Math.max(0, quantityOf(position) - billed)),
+      };
+    }),
+    invoices: linksOf(offerId).filter(l => l.kind === 'invoice'),
+  };
+}
 
 /** The offer a group of alternatives is headed by; every other offer heads its own */
 const groupOf = (i: StoredInvoice) => (i.relation === 'alternative' ? i.related_id : i.id);
@@ -1303,7 +1365,8 @@ export function installMocks() {
         case 'templates_list':
           return templates;
         case 'template_save': {
-          const template = args['template'] as PositionTemplate;
+          // a saved position bills no offer
+          const template = { ...(args['template'] as PositionTemplate), source: null };
           const same = templates.find(
             t =>
               template.id === null &&
@@ -1529,7 +1592,7 @@ export function installMocks() {
               answered_on: i.answered_on,
               updated_at: i.updated_at,
               archived_at: i.archived_at,
-              linked: links.filter(l => l.includes(i.id)).length,
+              linked: linksOf(i.id).length,
               case_id: i.case_id,
               relation: i.relation,
               related_number: i.related_number,
@@ -1751,6 +1814,8 @@ export function installMocks() {
           copy.draft.delivery_date = today();
           copy.draft.delivery_end = copy.draft.delivery_end === null ? null : today();
           copy.draft.frozen = null;
+          // a copy bills nothing again
+          copy.draft.positions = copy.draft.positions.map(p => ({ ...p, source: null }));
           invoices.push(copy);
           event(copy.id, 'created', null, { from: args['id'] as number }, copy.draft);
           return copy;
@@ -1764,7 +1829,6 @@ export function installMocks() {
           if (!invoices.some(i => i.case_id === gone)) {
             mockCases = mockCases.filter(c => c.id !== gone);
           }
-          links = links.filter(l => !l.includes(args['id']));
           return null;
         }
         case 'cases_list':
@@ -1824,7 +1888,15 @@ export function installMocks() {
             throw 'Ein ersetztes oder entfallenes Angebot wird nicht in Rechnung gestellt.';
           }
           const own = (contexts.find(c => c.id === offer.context_id) as Context).settings;
-          const { customer, positions, buyer_reference, note } = structuredClone(offer.draft);
+          const { customer, buyer_reference, note } = structuredClone(offer.draft);
+          // what is open of it, each position billing its own
+          const billing = billingOf(offer.id, null);
+          const positions = billing.positions
+            .filter(b => Number(b.open) > 0)
+            .map(b => billedPosition(billing, b.index, b.open));
+          if (positions.length === 0) {
+            throw 'Dieses Angebot ist vollständig in Rechnung gestellt.';
+          }
           const draft: InvoiceDraft = {
             ...draftOf(customer),
             issue_date: today(),
@@ -1858,37 +1930,23 @@ export function installMocks() {
           };
           invoices.push(invoice);
           event(invoice.id, 'created', null, { from: offer.id }, invoice.draft);
-          links.push([offer.id, invoice.id]);
           return invoice;
         }
         case 'document_links':
-          return links
-            .filter(l => l.includes(args['id']))
-            .map(l => find(l.find(id => id !== args['id']) as number))
-            .map((i): Linked => ({
-              id: i.id,
-              kind: i.kind,
-              number: i.number,
-              status: i.status,
-              customer_name: i.draft.customer.name,
-              issue_date: i.draft.issue_date,
-            }));
-        case 'document_link': {
-          const [offer, invoice] = [find(args['offerId']), find(args['invoiceId'])];
-          if (offer.kind !== 'offer' || invoice.kind !== 'invoice') {
-            throw 'Eine Verknüpfung verbindet ein Angebot mit einer Rechnung.';
-          }
-          if (offer.context_id !== invoice.context_id) {
-            throw 'Angebot und Rechnung werden innerhalb eines Kontexts verknüpft.';
-          }
-          if (!links.some(l => l[0] === offer.id && l[1] === invoice.id)) {
-            links.push([offer.id, invoice.id]);
-          }
-          return null;
+          return linksOf(args['id'] as number);
+        case 'offer_billing':
+          return billingOf(args['id'] as number, (args['except'] as number | null) ?? null);
+        case 'case_billing': {
+          const except = (args['except'] as number | null) ?? null;
+          return invoices
+            .filter(
+              i => i.case_id === args['caseId'] && i.kind === 'offer' && i.status === 'exported'
+            )
+            .map(related)
+            .filter(o => o.answer !== 'declined' && !o.lapsed && !o.superseded)
+            .sort((a, b) => a.id - b.id)
+            .map(o => billingOf(o.id, except));
         }
-        case 'document_unlink':
-          links = links.filter(l => l[0] !== args['offerId'] || l[1] !== args['invoiceId']);
-          return null;
         case 'check_invoice':
           // an offer has no rules to check
           return args['kind'] === 'offer'

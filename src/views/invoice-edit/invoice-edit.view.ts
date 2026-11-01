@@ -24,6 +24,8 @@ import '../../common/components/payments/payments.component.js';
 import '../../common/components/placeholders/placeholders.component.js';
 import '../../common/components/sheet/sheet.component.js';
 import '../../common/layouts/editor/editor.layout.js';
+import '../../common/components/billing/billing.component.js';
+import '../../common/components/offer-pick/offer-pick.component.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import type WaSwitch from '@awesome.me/webawesome/dist/components/switch/switch.js';
@@ -41,7 +43,7 @@ import type {
   Kind,
   LayoutInfo,
   Linked,
-  ListEntry,
+  OfferBilling,
   Position,
   PositionTemplate,
   Preview,
@@ -54,13 +56,13 @@ import type {
 } from '../../common/utils/api.utils.js';
 import { api, errorText } from '../../common/utils/api.utils.js';
 import { ErngElement } from '../../common/utils/base.utils.js';
+import { amount, quantityOf, sourceName } from '../../common/utils/billing.utils.js';
 import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
 import { RELATIONS } from '../../common/utils/documents.utils.js';
 import { nullable, text, today } from '../../common/utils/form.utils.js';
-import { formatDate, money, percent } from '../../common/utils/format.utils.js';
+import { formatDate, percent } from '../../common/utils/format.utils.js';
 import {
   draftTitle,
-  haystack,
   kindRoute,
   KINDS,
   otherKind,
@@ -141,11 +143,14 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   @state() private templateQuery = '';
   @state() private preview: Preview | undefined;
   @state() private previewError = '';
-  /** The documents of the other kind this one is linked to */
+  /** The documents of the other kind this one is billed with: the offers it bills, the invoices billing it */
   @state() private links: Linked[] = [];
-  /** The documents that can be linked, while the dialog to pick one is open */
-  @state() private linkable: ListEntry[] | undefined;
-  @state() private linkQuery = '';
+  /** A created offer: what is billed of it */
+  @state() private billing: OfferBilling | undefined;
+  /** An invoice draft in a Vorgang: what is open of its offers, this draft left out */
+  @state() private billings: OfferBilling[] = [];
+  /** While offer positions are being picked */
+  @state() private picking = false;
   /** An invoice draft is being made from this offer */
   @state() private converting = false;
 
@@ -238,11 +243,6 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     return this.stored?.status === 'exported';
   }
 
-  /** An invoice that is not created yet and may name the offers it is linked to: they show in the preview */
-  private get namesOffers() {
-    return this.kind === 'invoice' && !this.locked && this.draft?.offer_reference === true;
-  }
-
   private get texts() {
     return KINDS[this.kind];
   }
@@ -310,11 +310,26 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         }
       }
       this.links = stored ? await api.documentLinks(stored.id) : [];
+      await this.loadBilling();
       await this.runCheck();
       void this.#preview();
     } catch (error) {
       notifyError(error);
     }
+  }
+
+  /** What is billed of a created offer; what is open of the offers of an invoice draft's Vorgang */
+  private async loadBilling() {
+    const { stored, kind } = this;
+    this.billing =
+      kind === 'offer' && stored?.status === 'exported'
+        ? await api.offerBilling(stored.id)
+        : undefined;
+    const caseId = stored?.case_id ?? this.case?.id;
+    this.billings =
+      kind === 'invoice' && !this.locked && caseId !== undefined
+        ? await api.caseBilling(caseId, stored?.id ?? null)
+        : [];
   }
 
   /** Asks the real template renderer for the pages of the current form state */
@@ -723,8 +738,10 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
   }
 
-  private addPosition(from: 'blank' | 'template') {
-    if (from === 'template') {
+  private addPosition(from: 'blank' | 'template' | 'offer') {
+    if (from === 'offer') {
+      this.picking = true;
+    } else if (from === 'template') {
       void this.openTemplates();
     } else {
       this.edit(d =>
@@ -738,6 +755,39 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         })
       );
     }
+  }
+
+  /** Picked offer positions join the invoice; an untouched blank first position makes room */
+  private addBilled(positions: Position[]) {
+    this.edit(draft => {
+      const first = draft.positions[0];
+      const untouched =
+        draft.positions.length === 1 && first?.description === '' && first.price === '';
+      draft.positions = [...(untouched ? [] : draft.positions), ...positions];
+    });
+  }
+
+  /** What an invoice position refers to, and whether it bills more than is open of it */
+  private renderSource(position: Position) {
+    const source = position.source;
+    if (!source) {
+      return nothing;
+    }
+    const billing = this.billings.find(b => b.offer_id === source.offer_id);
+    const number = billing?.number ?? this.links.find(l => l.id === source.offer_id)?.number ?? '';
+    const open = billing?.positions[source.index]?.open;
+    const over = !this.locked && open !== undefined && quantityOf(position) > Number(open);
+    return html`
+      <wa-tag
+        class="source"
+        size="s"
+        appearance="outlined"
+        variant="${over ? 'warning' : 'neutral'}"
+        title="${over ? `Mehr als offen: ${amount(open ?? '0')}` : 'Aus dem Angebot übernommen'}"
+      >
+        ${sourceName(number, source.index)}${over ? ` · offen ${amount(open ?? '0')}` : ''}
+      </wa-tag>
+    `;
   }
 
   private movePosition(from: number, to: number) {
@@ -794,66 +844,15 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
   }
 
-  /** What a linked document is called: its number, a draft has none */
-  private nameOf(linked: Linked) {
-    return linked.number ?? KINDS[linked.kind].draftTitle;
-  }
-
-  /** Both ends of a link, the offer first */
-  private ends(other: number): [number, number] {
-    const own = this.stored?.id as number;
-    return this.kind === 'offer' ? [own, other] : [other, own];
-  }
-
-  /** Lists what can be linked: the other kind in this context, archived ones too, not yet linked ones */
-  private async openLinkPicker() {
-    try {
-      // a new document has no id to link to yet: it is saved as a draft first
-      if (!this.stored) {
-        await this.persist();
-        this.announce();
-      }
-      this.linkQuery = '';
-      const linked = new Set(this.links.map(l => l.id));
-      const customer = this.draft?.customer.name.trim() ?? '';
-      const entries = (
-        await api.invoicesList(this.contextId as number, otherKind(this.kind), true)
-      ).filter(e => !linked.has(e.id));
-      // the customer's own documents first, each group newest first as the list has them
-      const same = (e: ListEntry) => customer !== '' && e.customer_name.trim() === customer;
-      this.linkable = [...entries.filter(same), ...entries.filter(e => !same(e))];
-    } catch (error) {
-      notifyError(error);
+  /** Why a created offer cannot be billed (any more), nothing when it can */
+  private get cannotBill(): string {
+    const { stored, billing } = this;
+    if (stored?.superseded || stored?.lapsed) {
+      return 'Ein ersetztes oder entfallenes Angebot wird nicht in Rechnung gestellt.';
     }
-  }
-
-  private async linkTo(other: ListEntry) {
-    if (!this.stored) {
-      return;
-    }
-    try {
-      await api.documentLink(...this.ends(other.id));
-      this.linkable = undefined;
-      this.links = await api.documentLinks(this.stored.id);
-      this.announce();
-      this.namesOffers && void this.#preview();
-    } catch (error) {
-      notifyError(error);
-    }
-  }
-
-  private async unlink(other: Linked) {
-    if (!this.stored) {
-      return;
-    }
-    try {
-      await api.documentUnlink(...this.ends(other.id));
-      this.links = await api.documentLinks(this.stored.id);
-      this.announce();
-      this.namesOffers && void this.#preview();
-    } catch (error) {
-      notifyError(error);
-    }
+    return billing?.positions.every(p => Number(p.open) <= 0)
+      ? 'Dieses Angebot ist vollständig in Rechnung gestellt.'
+      : '';
   }
 
   /** Invoices can be made under the offer's context only once it has what they need */
@@ -861,7 +860,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     return contextById(this.contextId)?.missing.length === 0;
   }
 
-  /** A created offer becomes an invoice draft, linked to it; asks first when it has invoices already */
+  /** A created offer becomes an invoice draft billing what is open of it; asks first when it has invoices already */
   private async invoiceFromOffer() {
     const offer = this.stored;
     if (!offer || this.kind !== 'offer' || !this.locked || this.converting) {
@@ -881,7 +880,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
             : [drafts === 1 ? 'ein Rechnungsentwurf' : `${drafts} Rechnungsentwürfe`]),
         ]);
         const sure = await ask(
-          `Zu diesem Angebot gibt es schon ${named}. Noch eine Rechnung anlegen, z. B. eine Teilrechnung?`,
+          `Zu diesem Angebot gibt es schon ${named}. Eine Rechnung über das noch Offene anlegen?`,
           { title: 'Rechnung erstellen', okLabel: 'Anlegen', cancelLabel: 'Abbrechen' }
         );
         if (!sure) {
@@ -1149,7 +1148,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                 ?disabled="${locked}"
                 .value="${p.description}"
                 @input="${(e: Event) => this.editPosition(i, pos => (pos.description = text(e)))}"
-              ></wa-textarea>
+              >
+                ${p.source ? html`<span slot="hint">${this.renderSource(p)}</span>` : nothing}
+              </wa-textarea>
               <wa-input
                 label="Menge"
                 placeholder="1"
@@ -1203,13 +1204,18 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                   placement="bottom-end"
                   size="s"
                   @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) =>
-                    this.addPosition(e.detail.item.value === 'template' ? 'template' : 'blank')}"
+                    this.addPosition(e.detail.item.value as 'blank' | 'template' | 'offer')}"
                 >
                   <wa-button slot="trigger" size="s" appearance="outlined" with-caret>
                     Neue Position
                   </wa-button>
                   <wa-dropdown-item value="blank">leer hinzufügen</wa-dropdown-item>
                   <wa-dropdown-item value="template">aus Vorlage</wa-dropdown-item>
+                  ${
+                    this.billings.length > 0
+                      ? html`<wa-dropdown-item value="offer">aus Angebot</wa-dropdown-item>`
+                      : nothing
+                  }
                 </wa-dropdown>
               </wa-button-group>
             `
@@ -1269,7 +1275,7 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     `;
   }
 
-  /** The offers or invoices this document belongs to: metadata, so it can be changed on created ones too */
+  /** The offers an invoice bills, the invoices billing an offer and what is billed of it: read from the positions */
   private renderLinks() {
     const other = KINDS[otherKind(this.kind)];
     return html`
@@ -1277,37 +1283,39 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         <div slot="header">${this.links.length === 1 ? other.noun : other.list}</div>
         <div class="stack">
           ${
-            this.links.length === 0
-              ? html`<span class="muted">Noch nichts verknüpft.</span>`
-              : html`
-                  <erng-list>
-                    ${this.links.map(
-                      l => html`
-                        <div class="link">
-                          <erng-list-item @click="${() => goto(this.route(l.kind, l.id))}">
-                            ${l.customer_name || '–'}
-                            <span slot="sub">
-                              ${l.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
-                            </span>
-                            <span slot="sub-end">${formatDate(l.issue_date)}</span>
-                          </erng-list-item>
-                          <wa-button
-                            size="s"
-                            appearance="outlined"
-                            title="Verknüpfung mit ${this.nameOf(l)} aufheben"
-                            aria-label="Verknüpfung mit ${this.nameOf(l)} aufheben"
-                            @click="${() => void this.unlink(l)}"
-                          >
-                            <wa-icon name="unlink"></wa-icon>
-                          </wa-button>
-                        </div>
-                      `
-                    )}
-                  </erng-list>
-                `
+            // a created offer says what is billed of it below
+            this.links.length === 0 && this.billing
+              ? nothing
+              : this.links.length === 0
+                ? html`
+                    <span class="muted">
+                      ${
+                        this.kind === 'offer'
+                          ? 'Noch keine Rechnung dazu.'
+                          : 'Bezieht sich auf kein Angebot. Positionen „aus Angebot“ übernehmen.'
+                      }
+                    </span>
+                  `
+                : html`
+                    <erng-list>
+                      ${this.links.map(
+                        l => html`
+                          <div class="link">
+                            <erng-list-item @click="${() => goto(this.route(l.kind, l.id))}">
+                              ${l.customer_name || '–'}
+                              <span slot="sub">
+                                ${l.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
+                              </span>
+                              <span slot="sub-end">${formatDate(l.issue_date)}</span>
+                            </erng-list-item>
+                          </div>
+                        `
+                      )}
+                    </erng-list>
+                  `
           }
           ${
-            this.kind === 'invoice' && this.draft && this.links.some(l => l.kind === 'offer')
+            this.kind === 'invoice' && this.draft?.positions.some(p => p.source)
               ? html`
                   <wa-switch
                     ?checked="${this.draft.offer_reference}"
@@ -1321,78 +1329,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                 `
               : nothing
           }
-          <wa-button
-            class="add-link"
-            size="s"
-            appearance="outlined"
-            @click="${() => void this.openLinkPicker()}"
-          >
-            ${other.link}
-          </wa-button>
+          ${this.billing ? html`<erng-billing .billing="${this.billing}"></erng-billing>` : nothing}
         </div>
       </wa-card>
-    `;
-  }
-
-  private renderLinkPicker() {
-    const other = KINDS[otherKind(this.kind)];
-    const query = this.linkQuery.trim().toLowerCase();
-    const shown = (this.linkable ?? []).filter(e => haystack(e).includes(query));
-    return html`
-      <wa-dialog
-        ?open="${this.linkable !== undefined}"
-        label="${other.link.replace('…', '')}"
-        @wa-after-hide="${(e: Event) => e.target === e.currentTarget && (this.linkable = undefined)}"
-      >
-        <div class="stack">
-          <erng-filter-bar
-            .query="${this.linkQuery}"
-            placeholder="${other.search}"
-            @query-change="${(e: CustomEvent<string>) => (this.linkQuery = e.detail)}"
-          ></erng-filter-bar>
-          ${
-            shown.length === 0
-              ? html`
-                  <wa-callout variant="neutral">
-                    ${this.linkable?.length === 0 ? other.linkNone : 'Keine Treffer.'}
-                  </wa-callout>
-                `
-              : html`
-                  <erng-list>
-                    ${shown.map(
-                      e => html`
-                        <erng-list-item
-                          ?archived="${e.archived_at !== null}"
-                          @click="${() => void this.linkTo(e)}"
-                        >
-                          ${e.customer_name || '–'}
-                          <span slot="sub">
-                            ${e.number ?? html`<wa-tag variant="neutral" size="s">Entwurf</wa-tag>`}
-                          </span>
-                          <span slot="sub-end">${formatDate(e.issue_date)}</span>
-                          ${
-                            e.archived_at
-                              ? html`
-                                  <span slot="tags"
-                                    ><wa-tag variant="neutral" size="s">Archiviert</wa-tag></span
-                                  >
-                                `
-                              : nothing
-                          }
-                          <span slot="tags-end">${money(e.total)}</span>
-                        </erng-list-item>
-                      `
-                    )}
-                  </erng-list>
-                `
-          }
-        </div>
-        <div slot="footer" class="dialog-footer">
-          <wa-button appearance="outlined" @click="${() => (this.linkable = undefined)}">
-            Schließen
-          </wa-button>
-        </div>
-      </wa-dialog>
     `;
   }
 
@@ -1748,13 +1687,12 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                   <wa-button
                     variant="brand"
                     ?loading="${this.converting}"
-                    ?disabled="${!this.invoicesReady || stored?.superseded || stored?.lapsed}"
+                    ?disabled="${!this.invoicesReady || this.cannotBill !== ''}"
                     title="${
-                      stored?.superseded || stored?.lapsed
-                        ? 'Ein ersetztes oder entfallenes Angebot wird nicht in Rechnung gestellt.'
-                        : this.invoicesReady
-                          ? ''
-                          : 'Für Rechnungen fehlen noch Angaben in den Einstellungen.'
+                      this.cannotBill ||
+                      (this.invoicesReady
+                        ? ''
+                        : 'Für Rechnungen fehlen noch Angaben in den Einstellungen.')
                     }"
                     @click="${this.invoiceFromOffer}"
                   >
@@ -1833,7 +1771,14 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         </nav>
       </footer>
 
-      ${this.renderTemplates()} ${this.renderLinkPicker()}
+      ${this.renderTemplates()}
+      <erng-offer-pick
+        .billings="${this.billings}"
+        .positions="${this.draft?.positions ?? []}"
+        ?open="${this.picking}"
+        @pick="${(e: CustomEvent<Position[]>) => this.addBilled(e.detail)}"
+        @close="${() => (this.picking = false)}"
+      ></erng-offer-pick>
 
       <wa-dialog
         ?open="${this.newCustomer !== undefined}"

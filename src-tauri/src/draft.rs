@@ -509,6 +509,7 @@ pub(crate) mod fixtures {
                     tax_rate: None,
                     tax_label: None,
                     price: "95,00".into(),
+                    source: None,
                 },
                 Position {
                     description: "Reisekosten".into(),
@@ -518,6 +519,7 @@ pub(crate) mod fixtures {
                     tax_rate: None,
                     tax_label: None,
                     price: "42.50".into(),
+                    source: None,
                 },
             ],
             profile: ProfileKind::En16931,
@@ -894,6 +896,7 @@ mod tests {
                 tax_rate: None,
                 tax_label: None,
                 price: price.into(),
+                source: None,
             }];
             let invoice = build_invoice(&d, &settings(), "RE-1").unwrap();
             crate::invoice::validate(&invoice, ProfileKind::En16931)

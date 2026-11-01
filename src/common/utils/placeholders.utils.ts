@@ -24,6 +24,11 @@ const DOCUMENT: PlaceholderGroup = {
     { name: 'date', label: 'Datum', example: '31.10.2026' },
     { name: 'due_date', label: 'Fällig am (Rechnungen)', example: '14.11.2026' },
     { name: 'customer_name', label: 'Name des Kunden', example: 'Beispiel AG' },
+    {
+      name: 'offer_number',
+      label: 'Angebot: das eine Rechnung berechnet, auf das ein Nachtrag sich bezieht',
+      example: 'AN-2026-003',
+    },
     ...VERSIONS,
   ],
 };

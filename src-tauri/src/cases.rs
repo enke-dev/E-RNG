@@ -57,10 +57,18 @@ pub(crate) fn migrate_to_cases(conn: &Connection) -> Result<()> {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
-    let links = {
+    // the links went with schema 15, a database stamped back from there has none
+    let has_links: bool = tx.query_row(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'document_links'",
+        [],
+        |r| r.get(0),
+    )?;
+    let links = if has_links {
         let mut statement = tx.prepare("SELECT offer_id, invoice_id FROM document_links")?;
         let rows = statement.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
+    } else {
+        Vec::new()
     };
     // linked documents end up with the same root
     let mut parent: HashMap<i64, i64> = documents.iter().map(|(id, _, _)| (*id, *id)).collect();
@@ -927,8 +935,9 @@ pub(crate) mod tests {
             .invoice_from_offer(offer.id, "2026-10-22", &settings())
             .unwrap();
         bake(&store, first.id, "RE-2026-001", "400");
+        // the offer is billed in full, a second invoice bills something else of the Vorgang
         let second = store
-            .invoice_from_offer(offer.id, "2026-10-23", &settings())
+            .save_draft_in_case(case, Kind::Invoice, &draft(), None)
             .unwrap();
         bake(&store, second.id, "RE-2026-002", "600.50");
         let invoiced = store.case(case).unwrap();
@@ -1048,6 +1057,10 @@ pub(crate) mod tests {
         crate::store::migrate(&conn).unwrap();
         conn.execute_batch(
             "DROP TABLE cases; DROP INDEX invoices_case; ALTER TABLE invoices DROP COLUMN case_id;
+             CREATE TABLE document_links (
+                 offer_id INTEGER NOT NULL, invoice_id INTEGER NOT NULL, created_at TEXT NOT NULL,
+                 PRIMARY KEY (offer_id, invoice_id)
+             );
              PRAGMA user_version = 12;",
         )
         .unwrap();

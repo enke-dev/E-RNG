@@ -25,11 +25,8 @@ export interface KindTexts {
   cancelTitle: string;
   cancelText: string;
   missingContext: string;
-  /** What a link to documents of this kind says, for the badge of the list */
+  /** What the badge of the list says of the documents of this kind an entry is billed with */
   linkedTo: (count: number) => string;
-  /** The button and the dialog that link one of this kind; nothing there to pick from */
-  link: string;
-  linkNone: string;
 }
 
 /** The kind a document of `kind` is linked to */
@@ -56,9 +53,7 @@ export const KINDS: Record<Kind, KindTexts> = {
     cancelText: 'Die Eingaben dieser Rechnung gehen verloren.',
     missingContext: 'Für die Rechnung fehlt der Kontext.',
     linkedTo: count =>
-      count === 1 ? 'Mit einer Rechnung verknüpft' : `Mit ${count} Rechnungen verknüpft`,
-    link: 'Rechnung verknüpfen…',
-    linkNone: 'Keine weitere Rechnung zum Verknüpfen.',
+      count === 1 ? 'In einer Rechnung berechnet' : `In ${count} Rechnungen berechnet`,
   },
   offer: {
     list: 'Angebote',
@@ -79,10 +74,7 @@ export const KINDS: Record<Kind, KindTexts> = {
     cancelTitle: 'Neues Angebot abbrechen',
     cancelText: 'Die Eingaben dieses Angebots gehen verloren.',
     missingContext: 'Für das Angebot fehlt der Kontext.',
-    linkedTo: count =>
-      count === 1 ? 'Mit einem Angebot verknüpft' : `Mit ${count} Angeboten verknüpft`,
-    link: 'Angebot verknüpfen…',
-    linkNone: 'Kein weiteres Angebot zum Verknüpfen.',
+    linkedTo: count => (count === 1 ? 'Berechnet ein Angebot' : `Berechnet ${count} Angebote`),
   },
 };
 

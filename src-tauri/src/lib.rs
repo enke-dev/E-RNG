@@ -1,4 +1,5 @@
 mod backup;
+mod billing;
 mod cases;
 mod commands;
 mod context;
@@ -179,9 +180,9 @@ pub fn run() {
             commands::cases_command::cases_list,
             commands::customers_command::customer_save,
             commands::customers_command::customers_list,
-            commands::invoices_command::document_link,
             commands::invoices_command::document_links,
-            commands::invoices_command::document_unlink,
+            commands::invoices_command::offer_billing,
+            commands::invoices_command::case_billing,
             commands::invoice_files_command::invoice_create,
             commands::invoice_files_command::invoice_next_number,
             commands::invoice_files_command::invoice_output,
