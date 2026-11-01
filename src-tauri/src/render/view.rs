@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use super::format::Formatter;
 use super::parts::PartView;
-use crate::model::{CustomLayout, Format, Insets, InvoiceDraft, Kind, Position, Settings, Wording};
+use crate::model::{
+    CustomLayout, Deduction, Format, Insets, InvoiceDraft, Kind, OnAccount, Position, Settings,
+    Wording,
+};
 use crate::units;
 
 /// What the user adds to the plain invoice data: look and feel of the document.
@@ -53,6 +56,8 @@ pub struct Branding {
     /// For `{offer_number}`: the offers an invoice bills, the offer an offer refers to (a
     /// Nachtrag's main offer), joined by commas
     pub offer_number: String,
+    /// A Schlussrechnung: the invoices on account it deducts, one row each below its gross sum
+    pub deductions: Vec<Deduction>,
 }
 
 /// The seller's fields that only layouts use: they are not part of the invoice data and not in
@@ -63,6 +68,22 @@ pub struct SellerDetails {
     pub fax: Option<String>,
     pub website: Option<String>,
     pub bank_name: Option<String>,
+}
+
+/// The words of a kind; an invoice on account and a Schlussrechnung say what they are
+fn wording_of(kind: Kind, draft: &InvoiceDraft, settings: &Settings) -> Wording {
+    let wording = settings.wording(kind);
+    let title = match (kind, draft.on_account, draft.deductions.is_empty()) {
+        (Kind::Invoice, Some(OnAccount::Prepayment), _) => "Anzahlungsrechnung",
+        (Kind::Invoice, Some(OnAccount::Progress), _) => "Abschlagsrechnung",
+        (Kind::Invoice, None, false) => "Schlussrechnung",
+        _ => return wording,
+    };
+    Wording {
+        title: title.to_owned(),
+        draft_title: format!("{title} (Entwurf)"),
+        ..wording
+    }
 }
 
 impl Branding {
@@ -121,7 +142,7 @@ impl Branding {
             marks: false,
             draft: false,
             kind,
-            wording: settings.wording(kind),
+            wording: wording_of(kind, draft, settings),
             valid_until: draft
                 .valid_until()
                 .filter(|_| kind == Kind::Offer)
@@ -139,6 +160,7 @@ impl Branding {
             case_number: String::new(),
             // what a created invoice froze, the callers know better for the rest
             offer_number: draft.frozen_offers.join(", "),
+            deductions: draft.deductions.clone(),
         }
     }
 }
@@ -595,7 +617,12 @@ fn info_rows(invoice: &Invoice, branding: &Branding, fmt: &Formatter, issue: Dat
     if let Some(reference) = &invoice.buyer_reference {
         infos.push(text("buyer-reference", "Käuferreferenz", reference.clone()));
     }
-    if let Some(original) = invoice.preceding_invoices.first() {
+    // a Schlussrechnung names what it deducts below its sums, a correction its original here
+    if let Some(original) = invoice
+        .preceding_invoices
+        .first()
+        .filter(|_| branding.deductions.is_empty())
+    {
         infos.push(text(
             "preceding-invoice",
             "Zu Rechnung",
@@ -673,6 +700,33 @@ fn line_views(
 }
 
 /// The sums below the table, down to the amount to pay.
+/// The invoices on account a Schlussrechnung takes off: number, day, net and VAT, the gross off
+fn deduction_rows(branding: &Branding, fmt: &Formatter, currency: &str) -> Vec<Total> {
+    branding
+        .deductions
+        .iter()
+        .map(|deduction| {
+            let day = Date::parse(&deduction.issue_date)
+                .map_or_else(|_| deduction.issue_date.clone(), |d| fmt.date(d));
+            let label = if branding.vat_free {
+                format!("Abzüglich {} vom {day}", deduction.number)
+            } else {
+                format!(
+                    "Abzüglich {} vom {day} (netto {}, USt. {})",
+                    deduction.number,
+                    fmt.money(&deduction.net, currency),
+                    fmt.money(&deduction.vat, currency)
+                )
+            };
+            Total {
+                label,
+                value: format!("{}{}", fmt.minus(), fmt.money(&deduction.gross, currency)),
+                strong: false,
+            }
+        })
+        .collect()
+}
+
 fn total_rows(
     invoice: &Invoice,
     branding: &Branding,
@@ -741,13 +795,18 @@ fn total_rows(
             strong: true,
         });
     }
-    if let Some(paid) = totals.paid.filter(|p| !p.is_zero()) {
-        rows.push(Total {
-            label: "Bereits bezahlt".into(),
-            value: format!("{}{}", fmt.minus(), fmt.money(paid, currency)),
-            strong: false,
-        });
+    // a Schlussrechnung takes off each invoice on account with its VAT (§ 14 Abs. 5 UStG), what
+    // they add up to is the paid amount
+    if branding.deductions.is_empty() {
+        if let Some(paid) = totals.paid.filter(|p| !p.is_zero()) {
+            rows.push(Total {
+                label: "Bereits bezahlt".into(),
+                value: format!("{}{}", fmt.minus(), fmt.money(paid, currency)),
+                strong: false,
+            });
+        }
     }
+    rows.extend(deduction_rows(branding, fmt, currency));
     if let Some(rounding) = totals.rounding.filter(|r| !r.is_zero()) {
         rows.push(Total {
             label: "Rundung".into(),

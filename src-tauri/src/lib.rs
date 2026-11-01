@@ -15,6 +15,7 @@ mod layout_bundle;
 mod layout_files;
 mod model;
 mod numbering;
+mod on_account;
 mod originals;
 mod package;
 mod pipeline;
@@ -183,6 +184,7 @@ pub fn run() {
             commands::invoices_command::document_links,
             commands::invoices_command::offer_billing,
             commands::invoices_command::case_billing,
+            commands::invoices_command::case_on_account,
             commands::invoice_files_command::invoice_create,
             commands::invoice_files_command::invoice_next_number,
             commands::invoice_files_command::invoice_output,

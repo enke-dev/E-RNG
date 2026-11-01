@@ -126,6 +126,19 @@ export function tagsOf(entry: ListEntry, mixed: boolean) {
           </wa-tag>
         `
       : null,
+    entry.on_account || entry.closing
+      ? html`
+          <wa-tag variant="neutral" appearance="outlined" size="s">
+            ${
+              entry.on_account === 'prepayment'
+                ? 'Anzahlung'
+                : entry.on_account === 'progress'
+                  ? 'Abschlag'
+                  : 'Schlussrechnung'
+            }
+          </wa-tag>
+        `
+      : null,
     expired(entry) ? html`<wa-tag variant="neutral" size="s">Abgelaufen</wa-tag>` : null,
     entry.superseded ? html`<wa-tag variant="neutral" size="s">Ersetzt</wa-tag>` : null,
     entry.lapsed ? html`<wa-tag variant="neutral" size="s">Entfallen</wa-tag>` : null,

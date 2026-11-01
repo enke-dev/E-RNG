@@ -26,6 +26,8 @@ import '../../common/components/sheet/sheet.component.js';
 import '../../common/layouts/editor/editor.layout.js';
 import '../../common/components/billing/billing.component.js';
 import '../../common/components/offer-pick/offer-pick.component.js';
+import '../../common/components/offer-share/offer-share.component.js';
+import '../../common/components/deductions/deductions.component.js';
 
 import type WaSelect from '@awesome.me/webawesome/dist/components/select/select.js';
 import type WaSwitch from '@awesome.me/webawesome/dist/components/switch/switch.js';
@@ -39,11 +41,13 @@ import type {
   Case,
   Check,
   Customer,
+  Deduction,
   InvoiceDraft,
   Kind,
   LayoutInfo,
   Linked,
   OfferBilling,
+  OnAccountInvoice,
   Position,
   PositionTemplate,
   Preview,
@@ -151,6 +155,10 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   @state() private billings: OfferBilling[] = [];
   /** While offer positions are being picked */
   @state() private picking = false;
+  /** An invoice draft in a Vorgang: the created invoices on account it may deduct */
+  @state() private onAccountInvoices: OnAccountInvoice[] = [];
+  /** While a share of an offer is being taken on account */
+  @state() private sharing = false;
   /** An invoice draft is being made from this offer */
   @state() private converting = false;
 
@@ -326,10 +334,13 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
         ? await api.offerBilling(stored.id)
         : undefined;
     const caseId = stored?.case_id ?? this.case?.id;
-    this.billings =
-      kind === 'invoice' && !this.locked && caseId !== undefined
-        ? await api.caseBilling(caseId, stored?.id ?? null)
-        : [];
+    const open = kind === 'invoice' && !this.locked && caseId !== undefined;
+    [this.billings, this.onAccountInvoices] = open
+      ? await Promise.all([
+          api.caseBilling(caseId, stored?.id ?? null),
+          api.caseOnAccount(caseId, stored?.id ?? null),
+        ])
+      : [[], []];
   }
 
   /** Asks the real template renderer for the pages of the current form state */
@@ -738,8 +749,10 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
     }
   }
 
-  private addPosition(from: 'blank' | 'template' | 'offer') {
-    if (from === 'offer') {
+  private addPosition(from: 'blank' | 'template' | 'offer' | 'share') {
+    if (from === 'share') {
+      this.sharing = true;
+    } else if (from === 'offer') {
       this.picking = true;
     } else if (from === 'template') {
       void this.openTemplates();
@@ -941,8 +954,46 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   }
 
   /** What an invoice says about the service and the file format; an offer has neither */
+  /** An invoice, one on account, or a Schlussrechnung by what it deducts */
+  private setOnAccount(value: string) {
+    this.edit(d => {
+      d.on_account = value === 'prepayment' || value === 'progress' ? value : null;
+      if (d.on_account) {
+        // on account nothing is billed for good and nothing deducted
+        d.positions = d.positions.map(p => ({ ...p, source: null }));
+        d.deductions = [];
+      }
+    });
+  }
+
   private renderService(draft: InvoiceDraft, locked: boolean) {
+    const kind = html`
+      <wa-select
+        label="Art der Rechnung"
+        size="s"
+        ?disabled="${locked}"
+        .value="${draft.on_account ?? 'final'}"
+        hint="${
+          draft.on_account === 'prepayment'
+            ? 'Vor der Leistung, ohne Leistungsdatum. Die Schlussrechnung zieht sie ab.'
+            : draft.on_account === 'progress'
+              ? 'Für die Leistung bis jetzt. Die Schlussrechnung zieht sie ab.'
+              : (draft.deductions?.length ?? 0) > 0
+                ? 'Eine Schlussrechnung: sie zieht die Abschläge unten ab.'
+                : ''
+        }"
+        @change="${(e: Event) => this.setOnAccount(String((e.target as WaSelect).value))}"
+      >
+        <wa-option value="final">Rechnung</wa-option>
+        <wa-option value="prepayment">Anzahlungsrechnung</wa-option>
+        <wa-option value="progress">Abschlagsrechnung</wa-option>
+      </wa-select>
+    `;
+    if (draft.on_account === 'prepayment') {
+      return html`${kind}${this.renderProfile(draft, locked)}`;
+    }
     return html`
+      ${kind}
       <div class="grid">
         <wa-input
           type="date"
@@ -980,6 +1031,13 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       >
         Zeitraum
       </wa-switch>
+      ${this.renderProfile(draft, locked)}
+    `;
+  }
+
+  /** XRechnung and its Leitweg-ID */
+  private renderProfile(draft: InvoiceDraft, locked: boolean) {
+    return html`
       <wa-switch
         ?disabled="${locked}"
         ?checked="${draft.profile === 'xrechnung'}"
@@ -1204,7 +1262,9 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                   placement="bottom-end"
                   size="s"
                   @wa-select="${(e: CustomEvent<{ item: HTMLElement & { value: string } }>) =>
-                    this.addPosition(e.detail.item.value as 'blank' | 'template' | 'offer')}"
+                    this.addPosition(
+                      e.detail.item.value as 'blank' | 'template' | 'offer' | 'share'
+                    )}"
                 >
                   <wa-button slot="trigger" size="s" appearance="outlined" with-caret>
                     Neue Position
@@ -1212,9 +1272,14 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
                   <wa-dropdown-item value="blank">leer hinzufügen</wa-dropdown-item>
                   <wa-dropdown-item value="template">aus Vorlage</wa-dropdown-item>
                   ${
-                    this.billings.length > 0
-                      ? html`<wa-dropdown-item value="offer">aus Angebot</wa-dropdown-item>`
-                      : nothing
+                    // on account a share of an offer, else its positions for good
+                    this.billings.length === 0
+                      ? nothing
+                      : this.draft?.on_account
+                        ? html`<wa-dropdown-item value="share"
+                            >Anteil eines Angebots</wa-dropdown-item
+                          >`
+                        : html`<wa-dropdown-item value="offer">aus Angebot</wa-dropdown-item>`
                   }
                 </wa-dropdown>
               </wa-button-group>
@@ -1272,6 +1337,30 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
           </wa-button>
         </div>
       </wa-dialog>
+    `;
+  }
+
+  /** A Schlussrechnung: the invoices on account of the Vorgang it deducts */
+  private renderDeductions() {
+    const draft = this.draft;
+    const deductions = draft?.deductions ?? [];
+    const shown =
+      this.kind === 'invoice' &&
+      !draft?.on_account &&
+      (deductions.length > 0 || this.onAccountInvoices.length > 0);
+    if (!draft || !shown) {
+      return nothing;
+    }
+    return html`
+      <wa-card>
+        <div slot="header">Abschläge abziehen</div>
+        <erng-deductions
+          .available="${this.onAccountInvoices}"
+          .deductions="${deductions}"
+          ?locked="${this.locked}"
+          @deductions-change="${(e: CustomEvent<Deduction[]>) => this.edit(d => (d.deductions = e.detail))}"
+        ></erng-deductions>
+      </wa-card>
     `;
   }
 
@@ -1603,8 +1692,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
             </div>
           </wa-card>
 
-          ${this.renderLinks()} ${this.createError ? this.renderFailure(this.createError) : nothing}
-          ${this.renderCheck()}
+          ${this.renderLinks()} ${this.renderDeductions()}
+          ${this.createError ? this.renderFailure(this.createError) : nothing} ${this.renderCheck()}
           ${
             stored
               ? html`
@@ -1772,6 +1861,13 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
       </footer>
 
       ${this.renderTemplates()}
+      <erng-offer-share
+        .billings="${this.billings}"
+        .onAccount="${this.draft?.on_account ?? 'progress'}"
+        ?open="${this.sharing}"
+        @pick="${(e: CustomEvent<Position[]>) => this.addBilled(e.detail)}"
+        @close="${() => (this.sharing = false)}"
+      ></erng-offer-share>
       <erng-offer-pick
         .billings="${this.billings}"
         .positions="${this.draft?.positions ?? []}"

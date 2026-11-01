@@ -417,7 +417,7 @@ impl Store {
         // the list shows what the draft comes to, as `invoice_save` keeps it
         let total = build_invoice(&draft, settings, "ENTWURF")
             .ok()
-            .map(|invoice| totals(&invoice).gross);
+            .map(|invoice| totals(&invoice).due);
         let id = {
             let conn = self.conn();
             let tx = conn.unchecked_transaction()?;

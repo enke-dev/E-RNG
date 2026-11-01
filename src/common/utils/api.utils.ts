@@ -300,6 +300,36 @@ export interface InvoiceDraft {
   /** Invoices: the document names the numbers of the offers it is linked to */
   offer_reference: boolean;
   frozen: Settings | null;
+  /** Invoices: billed on account, provisional */
+  on_account?: OnAccount | null;
+  /** Invoices: the invoices on account of its Vorgang it deducts, a Schlussrechnung */
+  deductions?: Deduction[];
+}
+
+/** An invoice on account: money before any work (Anzahlung) or for the work so far (Abschlag) */
+export type OnAccount = 'prepayment' | 'progress';
+
+/** An invoice on account a Schlussrechnung deducts; the store fills in what it came to */
+export interface Deduction {
+  invoice_id: number;
+  number: string;
+  issue_date: string;
+  net: string;
+  vat: string;
+  gross: string;
+}
+
+/** A created invoice on account of a Vorgang, with what deducts it */
+export interface OnAccountInvoice {
+  id: number;
+  number: string;
+  issue_date: string;
+  on_account: OnAccount;
+  net: string;
+  vat: string;
+  gross: string;
+  /** The number of the created invoice deducting it, or `Entwurf` for a draft that does */
+  deducted_by: string | null;
 }
 
 export type Status = 'draft' | 'exported';
@@ -418,6 +448,9 @@ export interface Created {
 }
 
 export interface ListEntry extends Related {
+  /** Invoices: on account, or a Schlussrechnung deducting such */
+  on_account: OnAccount | null;
+  closing: boolean;
   id: number;
   context_id: number;
   kind: Kind;
@@ -458,6 +491,8 @@ export interface Totals {
   net: string;
   vat: string;
   gross: string;
+  /** What is to be paid: the gross less what a Schlussrechnung deducts */
+  due: string;
 }
 
 export interface InputProblem {
@@ -921,6 +956,9 @@ export const api = {
   /** What is billed of a created offer; `except` leaves an invoice draft out */
   offerBilling: (id: number, except: number | null = null) =>
     invoke<OfferBilling>('offer_billing', { id, except }),
+  /** The created invoices on account of a Vorgang; `except` leaves the asking draft out */
+  caseOnAccount: (caseId: number, except: number | null = null) =>
+    invoke<OnAccountInvoice[]>('case_on_account', { caseId, except }),
   /** What is billed of the offers of a Vorgang that can still be billed */
   caseBilling: (caseId: number, except: number | null = null) =>
     invoke<OfferBilling[]>('case_billing', { caseId, except }),

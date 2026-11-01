@@ -3,6 +3,7 @@ use tauri::State;
 use crate::billing::OfferBilling;
 use crate::draft::{build_invoice, totals};
 use crate::model::{Answer, Event, InvoiceDraft, Kind, Linked, ListEntry, StoredInvoice};
+use crate::on_account::OnAccountInvoice;
 use crate::relations::Relation;
 use crate::store::Store;
 use crate::utils::{today, CommandError, CommandResult};
@@ -116,9 +117,12 @@ pub fn invoice_save(
         (None, None, None) => return Err("Für eine neue Rechnung fehlt der Kontext.".into()),
     };
     let settings = store.settings(context_id)?;
+    // what the deducted invoices came to comes from them, before the total is worked out
+    let mut draft = draft;
+    store.fill_deductions(&mut draft)?;
     let total = build_invoice(&draft, &settings, "ENTWURF")
         .ok()
-        .map(|invoice| totals(&invoice).gross);
+        .map(|invoice| totals(&invoice).due);
     match (id, case_id) {
         // a new document within a Vorgang, else in one of its own
         (None, Some(case)) => store.save_draft_in_case(case, kind, &draft, total.as_deref()),
@@ -198,6 +202,18 @@ pub fn case_billing(
 ) -> CommandResult<Vec<OfferBilling>> {
     store
         .case_billing(case_id, except)
+        .map_err(CommandError::from)
+}
+
+/// The created invoices on account of a Vorgang, with what deducts each
+#[tauri::command]
+pub fn case_on_account(
+    store: State<'_, Store>,
+    case_id: i64,
+    except: Option<i64>,
+) -> CommandResult<Vec<OnAccountInvoice>> {
+    store
+        .case_on_account(case_id, except)
         .map_err(CommandError::from)
 }
 

@@ -23,6 +23,7 @@ import type {
   ListEntry,
   NumberReset,
   OfferBilling,
+  OnAccountInvoice,
   Position,
   PositionTemplate,
   Rate,
@@ -942,7 +943,32 @@ function totals(draft: InvoiceDraft) {
     const own = settings.tax_rate.trim() === '' ? undefined : canonicalRate(p.tax_rate);
     return sum + ((number(p.quantity) || 1) * number(p.price) * (Number(own) || fallback)) / 100;
   }, 0);
-  return { net: euro(net), vat: euro(vat), gross: euro(net + vat) };
+  // a Schlussrechnung takes off what its invoices on account came to
+  const deducted = (draft.deductions ?? []).reduce((sum, d) => sum + Number(d.gross || 0), 0);
+  return {
+    net: euro(net),
+    vat: euro(vat),
+    gross: euro(net + vat),
+    due: euro(net + vat - deducted),
+  };
+}
+
+/** A created invoice on account, with what it came to (`on_account::figures`) */
+function onAccountOf(i: StoredInvoice): OnAccountInvoice | undefined {
+  if (i.kind !== 'invoice' || i.status !== 'exported' || !i.draft.on_account || !i.number) {
+    return undefined;
+  }
+  const { net, vat, gross } = totals(i.draft);
+  return {
+    id: i.id,
+    number: i.number,
+    issue_date: i.draft.issue_date,
+    on_account: i.draft.on_account,
+    net,
+    vat,
+    gross,
+    deducted_by: null,
+  };
 }
 
 function check(draft: InvoiceDraft) {
@@ -1594,6 +1620,8 @@ export function installMocks() {
               archived_at: i.archived_at,
               linked: linksOf(i.id).length,
               case_id: i.case_id,
+              on_account: i.draft.on_account ?? null,
+              closing: (i.draft.deductions ?? []).length > 0,
               relation: i.relation,
               related_number: i.related_number,
               lapsed: i.lapsed,
@@ -1697,6 +1725,11 @@ export function installMocks() {
         }
         case 'invoice_save': {
           const draft = args['draft'] as InvoiceDraft;
+          // the figures of what it deducts come from the invoices on account (`fill_deductions`)
+          draft.deductions = (draft.deductions ?? []).map(d => {
+            const found = onAccountOf(find(d.invoice_id));
+            return found ? { ...d, ...found, invoice_id: d.invoice_id } : d;
+          });
           const existing = args['id'] === null ? undefined : find(args['id']);
           const into = (args['caseId'] as number | null | undefined) ?? null;
           const context =
@@ -1722,7 +1755,7 @@ export function installMocks() {
           };
           followCustomer(stored.case_id, draft.customer.id, existing === undefined);
           stored.draft = draft;
-          stored.total = check(draft).totals?.gross ?? null;
+          stored.total = check(draft).totals?.due ?? null;
           if (!existing) {
             invoices.push(stored);
             event(stored.id, 'created', null, {}, draft);
@@ -1917,7 +1950,7 @@ export function installMocks() {
             number: null,
             status: 'draft',
             draft,
-            total: check(draft).totals?.gross ?? null,
+            total: check(draft).totals?.due ?? null,
             exported_at: null,
             paid_at: null,
             payments: [],
@@ -1936,6 +1969,23 @@ export function installMocks() {
           return linksOf(args['id'] as number);
         case 'offer_billing':
           return billingOf(args['id'] as number, (args['except'] as number | null) ?? null);
+        case 'case_on_account': {
+          const except = (args['except'] as number | null) ?? null;
+          return invoices
+            .filter(i => i.case_id === args['caseId'])
+            .flatMap(i => {
+              const found = onAccountOf(i);
+              if (!found) {
+                return [];
+              }
+              const by = invoices.find(
+                other =>
+                  other.id !== except &&
+                  (other.draft.deductions ?? []).some(d => d.invoice_id === i.id)
+              );
+              return [{ ...found, deducted_by: by ? (by.number ?? 'Entwurf') : null }];
+            });
+        }
         case 'case_billing': {
           const except = (args['except'] as number | null) ?? null;
           return invoices

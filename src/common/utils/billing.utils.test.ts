@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { OfferBilling, Position } from './api.utils.js';
-import { amount, billedPosition, quantityOf, sourceName } from './billing.utils.js';
+import { amount, billedPosition, quantityOf, sharePositions, sourceName } from './billing.utils.js';
 
 const position = (quantity: string | null): Position => ({
   description: 'Montage',
@@ -40,5 +40,35 @@ describe('billing', () => {
     // a lump sum stays one
     expect(billedPosition(billing, 1, '1').quantity).toBeNull();
     expect(() => billedPosition(billing, 2, '1')).toThrow();
+  });
+
+  it('makes a share of an offer one lump sum per VAT rate', () => {
+    // 10 hours at 50 and a lump sum of 50: 550 net
+    const [share] = sharePositions(billing, 30, 'progress');
+    expect(share).toMatchObject({
+      description: 'Abschlag 30 % auf Angebot AN-2026-001',
+      quantity: null,
+      unit_label: 'pauschal',
+      price: '165,00',
+      source: null,
+    });
+    const mixed: OfferBilling = {
+      ...billing,
+      positions: [
+        ...billing.positions,
+        {
+          index: 2,
+          position: { ...position('2'), price: '10,50', tax_rate: '7', tax_label: '7%' },
+          billed: '0',
+          drafted: '0',
+          open: '2',
+        },
+      ],
+    };
+    const shares = sharePositions(mixed, 12.5, 'prepayment');
+    expect(shares.map(s => [s.description, s.price, s.tax_rate])).toEqual([
+      ['Anzahlung 12,5 % auf Angebot AN-2026-001 (USt. Standard)', '68,75', null],
+      ['Anzahlung 12,5 % auf Angebot AN-2026-001 (USt. 7%)', '2,63', '7'],
+    ]);
   });
 });

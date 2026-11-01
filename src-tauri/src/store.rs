@@ -22,6 +22,7 @@ use crate::model::{
     StoredInvoice,
 };
 use crate::numbering::{protect_new_tokens, Calendar, Given, Pattern};
+use crate::on_account::{check_deductions, check_on_account};
 use crate::rates::{self, Rate, RateDef, RateUsage};
 use crate::relations::{lapsed, Relation, RELATION_COLUMNS};
 use crate::units::{self, DraftRef, TemplateRef, Unit, UnitDef, UnitUsage};
@@ -2141,6 +2142,8 @@ impl Store {
                 archived_at: invoice.archived_at,
                 linked,
                 case_id: invoice.case_id,
+                on_account: draft.on_account,
+                closing: !draft.deductions.is_empty(),
                 relation: invoice.relation,
                 related_number: invoice.related_number,
                 lapsed: invoice.lapsed,
@@ -2207,12 +2210,17 @@ impl Store {
                     tx.query_row("SELECT kind FROM invoices WHERE id = ?1", [id], |r| {
                         r.get(0)
                     })?;
-                check_sources(&tx, case, Kind::from_column(&stored_kind), draft)?;
+                let stored_kind = Kind::from_column(&stored_kind);
+                check_sources(&tx, case, stored_kind, draft)?;
+                check_deductions(&tx, case, Some(id), stored_kind, draft)?;
+                check_on_account(draft)?;
                 id
             } else {
                 // a plain new document makes its own Vorgang
                 let case = new_case(&tx, context_id, draft.customer.id, None)?;
                 check_sources(&tx, case, kind, draft)?;
+                check_deductions(&tx, case, None, kind, draft)?;
+                check_on_account(draft)?;
                 insert_draft(&tx, context_id, kind, &json, total, None, case)?
             };
             tx.commit()?;
@@ -2245,6 +2253,8 @@ impl Store {
             let id = insert_draft(&tx, context_id, kind, &json, total, None, case_id)?;
             crate::cases::follow_customer(&tx, case_id, draft.customer.id)?;
             check_sources(&tx, case_id, kind, draft)?;
+            check_deductions(&tx, case_id, Some(id), kind, draft)?;
+            check_on_account(draft)?;
             tx.commit()?;
             id
         };
@@ -2562,6 +2572,8 @@ impl Store {
         }
         let conn = self.conn();
         let tx = conn.unchecked_transaction()?;
+        // another Schlussrechnung may have been created since this one was saved
+        check_deductions(&tx, stored.case_id, Some(id), kind, &draft)?;
         let changed = tx.execute(
             "UPDATE invoices SET number = ?1, counter = ?2, issued_on = ?3, status = 'exported',
                  draft = ?4, total = ?5, files = ?6, exported_at = datetime('now'),

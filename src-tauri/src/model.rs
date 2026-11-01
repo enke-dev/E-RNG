@@ -583,6 +583,40 @@ pub struct InvoiceDraft {
     /// The numbers of the linked offers, as they were when the invoice was created
     #[serde(default)]
     pub frozen_offers: Vec<String>,
+    /// Invoices: billed on account, provisional (see `on_account`); none bills for good
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_account: Option<OnAccount>,
+    /// Invoices: the invoices on account of its Vorgang it deducts, a Schlussrechnung
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deductions: Vec<Deduction>,
+}
+
+/// What an invoice on account is: money asked before any work (Anzahlung) or for the work done so
+/// far (Abschlag). Either is deducted by the Schlussrechnung.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OnAccount {
+    /// Anzahlungsrechnung: before any work, it has no date of service
+    Prepayment,
+    /// Abschlagsrechnung: the work so far, a day or a period of service
+    Progress,
+}
+
+/// An invoice on account a Schlussrechnung deducts, with what it came to; the store fills in the
+/// figures from the invoice itself, which is created and never changes
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Deduction {
+    pub invoice_id: i64,
+    #[serde(default)]
+    pub number: String,
+    #[serde(default)]
+    pub issue_date: String,
+    #[serde(default)]
+    pub net: String,
+    #[serde(default)]
+    pub vat: String,
+    #[serde(default)]
+    pub gross: String,
 }
 
 impl InvoiceDraft {
@@ -613,6 +647,8 @@ impl InvoiceDraft {
             frozen_layout: None,
             offer_reference: false,
             frozen_offers: Vec::new(),
+            on_account: None,
+            deductions: Vec::new(),
         }
     }
 }
@@ -832,6 +868,9 @@ pub struct ListEntry {
     pub linked: u32,
     /// The Vorgang it is in
     pub case_id: i64,
+    /// Invoices: on account, or a Schlussrechnung deducting such
+    pub on_account: Option<OnAccount>,
+    pub closing: bool,
     /// See `StoredInvoice`
     pub relation: Option<Relation>,
     pub related_number: Option<String>,

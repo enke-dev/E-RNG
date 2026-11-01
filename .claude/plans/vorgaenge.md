@@ -1,6 +1,6 @@
 # Vorgänge – Plan
 
-**Status (2026-11-01): phases 1–6 done, not pushed yet; phase 7 next.**
+**Status (2026-11-01): phases 1–7 done, not pushed yet; phase 8 next.**
 Details of what is built are in `docs/development.md`. A living plan: decisions are edited in place,
 what is dropped is removed, not kept as history.
 
@@ -151,10 +151,12 @@ printable one could come later.
 - An **Abschlagsrechnung** bills the work done so far: everything up to now, or a period, which is its
   Leistungszeitraum (required). Type code 326 (partial invoice), in construction 875.
 - VAT is due on receipt for both (§ 13 Abs. 1 Nr. 1 a Satz 4 UStG), both are deducted by the
-  Schlussrechnung. Verify that Mustang and the XRechnung code list accept 386, 326 and 875.
-- In the XML the Schlussrechnung likely states its full amounts, refers to the Abschläge as preceding
-  invoices (BG-3) and puts what was paid on them in BT-113 (paid amount), instead of negative lines;
-  verify against EN 16931 and XRechnung before phase 7.
+  Schlussrechnung. XRechnung knows no 386 (KoSIT: 326, 380, 384, 389, 381, 875, 876, 877), an
+  Anzahlung goes as 326 there; Mustang accepts 386 under EN 16931.
+- In the XML the Schlussrechnung states its full amounts, refers to the invoices on account as
+  preceding invoices (BG-3) and puts what they came to gross in BT-113 (paid amount), instead of
+  negative lines; the document lists each with its net and VAT. Mustang accepts it; whether BT-113
+  should hold what was invoiced or only what was received is open (see review).
 
 "Final" decides the open amount: a final position bills its part for good, an Abschlag or Anzahlung
 is only a payment on account until the Schlussrechnung settles it. So the difference between Abschlag
@@ -213,6 +215,9 @@ others.
    `aus Angebot` picks open positions of the Vorgang's offers (several: Sammelrechnung). The link
    table went (schema 15, links became references by matching positions), printed numbers and
    `{offer_number}` come from the references.
-7. **Next. On account**: Anzahlungs- and Abschlagsrechnung, the Schlussrechnung deducting them.
-8. **Vorgang → Vorgang**: Folgeangebot and Folgevorgang, Sammelrechnung across Vorgänge.
+7. **Done. On account**: Anzahlungs- and Abschlagsrechnung (`Art der Rechnung`, a share of an
+   offer per VAT rate), the Schlussrechnung deducting them (BG-3, BT-113, a row per deduction with
+   its VAT). Checked with Mustang: 386 (EN 16931) and 326 (XRechnung) for an Anzahlung, 326 for an
+   Abschlag, 380 with BG-3 and BT-113 for the Schlussrechnung. Construction codes (875–877) unused.
+8. **Next. Vorgang → Vorgang**: Folgeangebot and Folgevorgang, Sammelrechnung across Vorgänge.
 9. **Corrections**: Rechnungskorrektur, Stornorechnung, Ersatzrechnung (`to_credit_note` exists).

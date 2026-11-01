@@ -18,6 +18,8 @@ use crate::invoice::Invoice;
 
 use crate::layout::{self, CustomLayout, ImageFile};
 pub use layouts::{all as layouts, LayoutInfo};
+#[cfg(test)]
+pub(crate) use view::build;
 pub use view::Branding;
 
 /// Where the fonts of an own layout are put next to the template

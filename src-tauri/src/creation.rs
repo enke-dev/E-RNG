@@ -118,7 +118,8 @@ fn make(
             findings: vec![finding],
         });
     }
-    let total = totals(&invoice).gross;
+    // what is due: a Schlussrechnung keeps what is left after its deductions
+    let total = totals(&invoice).due;
     let customs = store.all_custom_layouts().map_err(failed)?;
     let branding = Branding {
         version: store.draft_exports(stored.id).map_err(failed)?,
@@ -378,7 +379,7 @@ mod tests {
         use super::*;
         use crate::context::Context;
         use crate::draft::fixtures::{draft, settings};
-        use crate::model::InvoiceDraft;
+        use crate::model::{InvoiceDraft, OnAccount, StoredInvoice};
 
         fn setup() -> (Store, i64, tempfile::TempDir) {
             let store = Store::in_memory().unwrap();
@@ -582,6 +583,78 @@ mod tests {
             // the XML has no reference to an offer, only the document does
             assert_eq!(created.invoice.draft.frozen_offers, ["AN-2026-001"]);
             assert!(created.invoice.files.unwrap().xml.is_some());
+        }
+
+        /// The XML of a created invoice, as it was kept
+        fn xml_of(data: &std::path::Path, invoice: &StoredInvoice) -> String {
+            let path = &invoice.files.as_ref().unwrap().xml.as_ref().unwrap().path;
+            std::fs::read_to_string(data.join(path)).unwrap()
+        }
+
+        #[test]
+        #[ignore = "needs the sidecars: bun run generate:sidecars"]
+        fn invoices_on_account_and_a_schlussrechnung_pass_the_validators() {
+            let (store, context, data) = setup();
+            let sidecars = Sidecars::in_repo();
+            let created = |draft: &InvoiceDraft, case: Option<i64>| {
+                let mut draft = draft.clone();
+                store.fill_deductions(&mut draft).unwrap();
+                let id = match case {
+                    Some(case) => store.save_draft_in_case(case, Kind::Invoice, &draft, None),
+                    None => store.save_draft(None, context, Kind::Invoice, &draft, None),
+                }
+                .unwrap()
+                .id;
+                create(&sidecars, &store, &Creating::default(), data.path(), id)
+                    .unwrap()
+                    .invoice
+            };
+
+            // an Anzahlung: 386 under EN 16931, 326 under XRechnung, no date of service
+            let prepayment = InvoiceDraft {
+                on_account: Some(OnAccount::Prepayment),
+                ..draft()
+            };
+            let made = created(&prepayment, None);
+            let xml = xml_of(data.path(), &made);
+            assert!(xml.contains("<ram:TypeCode>386</ram:TypeCode>"), "{xml}");
+            let xrechnung = InvoiceDraft {
+                profile: crate::invoice::ProfileKind::XRechnung,
+                buyer_reference: Some("991-01234-56".into()),
+                ..prepayment
+            };
+            let made = created(&xrechnung, None);
+            assert!(xml_of(data.path(), &made).contains("<ram:TypeCode>326</ram:TypeCode>"));
+
+            // an Abschlag, and the Schlussrechnung that deducts it
+            let progress = InvoiceDraft {
+                on_account: Some(OnAccount::Progress),
+                ..draft()
+            };
+            let abschlag = created(&progress, None);
+            let closing = InvoiceDraft {
+                deductions: vec![crate::model::Deduction {
+                    invoice_id: abschlag.id,
+                    number: String::new(),
+                    issue_date: String::new(),
+                    net: String::new(),
+                    vat: String::new(),
+                    gross: String::new(),
+                }],
+                ..draft()
+            };
+            let schluss = created(&closing, Some(abschlag.case_id));
+            let xml = xml_of(data.path(), &schluss);
+            assert!(xml.contains("<ram:TypeCode>380</ram:TypeCode>"));
+            assert!(xml.contains("InvoiceReferencedDocument"), "{xml}");
+            assert!(xml.contains(abschlag.number.as_deref().unwrap()));
+            assert!(xml.contains("TotalPrepaidAmount"));
+            // what is kept as its total is what is left to pay
+            assert!(
+                crate::history::decimal(schluss.total.as_deref().unwrap())
+                    < crate::history::decimal(abschlag.total.as_deref().unwrap())
+                        * rust_decimal::Decimal::TEN
+            );
         }
 
         #[test]

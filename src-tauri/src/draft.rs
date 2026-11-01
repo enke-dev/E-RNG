@@ -5,14 +5,18 @@ use std::str::FromStr;
 
 use en16931::codes::guard;
 use en16931::invoice::{
-    Contact, Delivery, InvoiceNote, Party, PaymentInstructions, PaymentMeans, Period, PostalAddress,
+    Contact, Delivery, InvoiceNote, Party, PaymentInstructions, PaymentMeans, Period,
+    PostalAddress, PrecedingInvoice,
 };
-use en16931::{Date, Identifier, Percentage, Quantity, Reconciler, UnitPriceAmount};
+use en16931::{
+    Date, DocumentReference, Identifier, InvoiceAmount, Percentage, Quantity, Reconciler,
+    UnitPriceAmount,
+};
 use rust_decimal::Decimal;
 use serde::Serialize;
 
 use crate::invoice::{line_from_unit_price, Invoice, ProfileKind};
-use crate::model::{Address, Customer, InvoiceDraft, Position, Seller, Settings};
+use crate::model::{Address, Customer, InvoiceDraft, OnAccount, Position, Seller, Settings};
 use crate::rates;
 
 /// The Peppol business process `XRechnung` asks for (BT-23)
@@ -24,6 +28,8 @@ pub struct Totals {
     pub net: String,
     pub vat: String,
     pub gross: String,
+    /// What is to be paid: the gross less what a Schlussrechnung deducts (BT-115)
+    pub due: String,
 }
 
 /// Input that cannot even be turned into an invoice (a price that is no number, a missing date),
@@ -309,19 +315,21 @@ pub fn build_invoice(
         draft.profile.specification_id(),
         number,
         issue,
-        "380",
+        type_code(draft),
         "EUR",
     )
     .seller(seller)
     .buyer(buyer)
     .payment(payment(&settings.seller));
-    // one day is the date of service (BT-72), a period the invoicing period (BG-14)
-    builder = match delivery_end {
-        Some(end) => builder.invoicing_period(Period {
+    // one day is the date of service (BT-72), a period the invoicing period (BG-14); an Anzahlung
+    // asks for money before any work and has neither (§ 14 Abs. 4 Nr. 6 UStG)
+    builder = match (delivery_end, draft.on_account) {
+        (_, Some(OnAccount::Prepayment)) => builder,
+        (Some(end), _) => builder.invoicing_period(Period {
             start: Some(delivery),
             end: Some(end),
         }),
-        None => builder.delivery(Delivery {
+        (None, _) => builder.delivery(Delivery {
             date: Some(delivery),
             ..Delivery::default()
         }),
@@ -346,7 +354,17 @@ pub fn build_invoice(
     for line in lines {
         builder = builder.line(line);
     }
-    let reconciler = if vat_free {
+    reconciled(builder, draft, settings)
+}
+
+/// The invoice with its sums: an exemption without VAT, and a Schlussrechnung's deductions
+fn reconciled(
+    builder: en16931::invoice::InvoiceBuilder,
+    draft: &InvoiceDraft,
+    settings: &Settings,
+) -> Result<Invoice, Vec<InputProblem>> {
+    let vat_free = settings.vat_free();
+    let mut reconciler = if vat_free {
         Reconciler::new().exemption(
             "E",
             Some(settings.vat_note.trim()).filter(|n| !n.is_empty()),
@@ -355,12 +373,47 @@ pub fn build_invoice(
     } else {
         Reconciler::new()
     };
-    builder.build_reconciled_with(&reconciler).map_err(|e| {
+    // a Schlussrechnung states its full amounts; what the invoices on account came to is taken off
+    // what is due (BT-113), each of them is named as a preceding invoice (BG-3)
+    if !draft.deductions.is_empty() {
+        let deducted: Decimal = draft
+            .deductions
+            .iter()
+            .map(|d| crate::history::decimal(&d.gross))
+            .sum();
+        let paid = InvoiceAmount::parse(&deducted.round_dp(2).to_string()).map_err(|e| {
+            vec![problem(
+                "deductions",
+                format!("Der Abzug lässt sich nicht berechnen: {e}"),
+            )]
+        })?;
+        reconciler = reconciler.paid(paid);
+    }
+    let mut invoice = builder.build_reconciled_with(&reconciler).map_err(|e| {
         vec![problem(
             "positions",
             format!("Die Summen lassen sich nicht berechnen: {e}"),
         )]
-    })
+    })?;
+    invoice.preceding_invoices = draft
+        .deductions
+        .iter()
+        .map(|d| PrecedingInvoice {
+            reference: DocumentReference::new(d.number.clone()),
+            issue_date: Date::parse(&d.issue_date).ok(),
+        })
+        .collect();
+    Ok(invoice)
+}
+
+/// BT-3: an invoice, or one on account. `XRechnung` knows no prepayment invoice (386), an Anzahlung
+/// goes as a partial invoice there (326), as an Abschlag does everywhere.
+fn type_code(draft: &InvoiceDraft) -> &'static str {
+    match (draft.on_account, draft.profile) {
+        (None, _) => "380",
+        (Some(OnAccount::Prepayment), ProfileKind::En16931) => "386",
+        (Some(_), _) => "326",
+    }
 }
 
 /// The date of a field, `None` with the problem noted.
@@ -441,6 +494,7 @@ pub fn totals(invoice: &Invoice) -> Totals {
         net: t.taxable_total.to_string(),
         vat: t.vat_total.map_or_else(|| "0.00".into(), |v| v.to_string()),
         gross: t.gross_total.to_string(),
+        due: t.due.to_string(),
     }
 }
 
@@ -532,6 +586,8 @@ pub(crate) mod fixtures {
             frozen_layout: None,
             offer_reference: false,
             frozen_offers: Vec::new(),
+            on_account: None,
+            deductions: Vec::new(),
         }
     }
 }

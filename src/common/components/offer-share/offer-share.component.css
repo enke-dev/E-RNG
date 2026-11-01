@@ -1,0 +1,28 @@
+:host {
+  display: contents;
+}
+
+.pick {
+  display: grid;
+  grid-template-columns: 1fr 8rem;
+  gap: var(--wa-space-s);
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--wa-space-m);
+    margin: 0;
+    padding-block: var(--wa-space-2xs);
+  }
+
+  .amount {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+}
