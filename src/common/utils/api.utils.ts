@@ -133,6 +133,32 @@ export interface Case {
 /** How a Vorgang refers to another: a Folgevorgang follows, a Sammelrechnung's Vorgang collects */
 export type CaseLink = 'follow' | 'collect';
 
+/** How one document relates to another, from the earlier to the later (`case_graph::EdgeKind`) */
+export type EdgeKind =
+  | 'bills'
+  | 'share'
+  | 'deducts'
+  | 'supplement'
+  | 'alternative'
+  | 'replacement'
+  | 'cancels'
+  | 'replaces';
+
+export interface GraphEdge {
+  from: number;
+  to: number;
+  kind: EdgeKind;
+}
+
+/** The documents of a Vorgang and how they relate, documents of other Vorgänge on the other end too */
+export interface CaseGraph {
+  /** By issue date */
+  documents: ListEntry[];
+  edges: GraphEdge[];
+  /** The other Vorgänge among the documents */
+  others: { id: number; number: string }[];
+}
+
 /** Another Vorgang as a reference names it */
 export interface CaseRef {
   id: number;
@@ -1002,6 +1028,8 @@ export const api = {
   /** Only a Vorgang without documents */
   caseDelete: (id: number) => invoke<null>('case_delete', { id }),
   caseEvents: (id: number) => invoke<DocumentEvent[]>('case_events', { id }),
+  /** The documents of a Vorgang and how they relate */
+  caseGraph: (id: number) => invoke<CaseGraph>('case_graph', { id }),
   /** Where the numbers of a context's Vorgänge stand today */
   caseSequence: (contextId: number) => invoke<Sequence>('case_sequence', { contextId }),
   /** Continues the numbers of the Vorgänge from `next` in today's period */

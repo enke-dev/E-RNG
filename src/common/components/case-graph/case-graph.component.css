@@ -1,0 +1,201 @@
+/* the graph needs room; on a narrow card the documents are a list instead */
+:host {
+  display: block;
+  container-type: inline-size;
+}
+
+.muted {
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+}
+
+.scroll {
+  overflow-x: auto;
+  padding-block-end: var(--wa-space-2xs);
+}
+
+/* the columns side by side, their cards flowing down; the lines lie over all of it */
+.canvas {
+  display: flex;
+  position: relative;
+  align-items: flex-start;
+  inline-size: max-content;
+
+  svg {
+    position: absolute;
+    inset: 0;
+    inline-size: 100%;
+    block-size: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.head {
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+  font-weight: var(--wa-font-weight-semibold);
+}
+
+.list {
+  display: none;
+  flex-direction: column;
+  gap: var(--wa-space-xs);
+}
+
+@container (max-width: 36rem) {
+  .graph {
+    display: none;
+  }
+
+  .list {
+    display: flex;
+  }
+}
+
+/* a document: its name and check marks, day and amount, its tags wrapping as they need */
+.card {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  gap: var(--wa-space-3xs);
+  box-sizing: border-box;
+  /* a native button is as tall as a form control, a card as its content */
+  block-size: auto;
+  min-inline-size: 0;
+  padding: var(--wa-space-xs) var(--wa-space-s);
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  background: var(--wa-color-surface-raised);
+  border: var(--wa-border-width-s) solid var(--wa-color-surface-border);
+  border-radius: var(--wa-border-radius-m);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--wa-color-brand-border-loud);
+  }
+
+  &:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
+  }
+
+  /* hidden overflow lets flex items shrink to nothing, these keep their height */
+  > * {
+    flex: none;
+  }
+
+  > .muted,
+  strong {
+    overflow: hidden;
+    white-space: nowrap;
+    text-align: start;
+    text-overflow: ellipsis;
+  }
+
+  .title {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    min-inline-size: 0;
+
+    strong {
+      flex: 0 1 auto;
+      min-inline-size: 0;
+    }
+
+    wa-badge {
+      flex: none;
+    }
+  }
+
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wa-space-2xs);
+  }
+
+  /* belongs to another Vorgang */
+  &.other {
+    background: transparent;
+    border-style: dashed;
+    opacity: 0.75;
+  }
+
+  /* another card is hovered and this one has nothing to do with it */
+  transition: opacity var(--wa-transition-fast);
+
+  &.dim {
+    opacity: 0.35;
+  }
+}
+
+/* the lines, by how the documents relate */
+path {
+  fill: none;
+  stroke: var(--wa-color-neutral-border-loud);
+  stroke-width: 1.5;
+  transition:
+    opacity var(--wa-transition-fast),
+    stroke-width var(--wa-transition-fast);
+
+  /* a card is hovered: its lines stand out, the others step back */
+  &.lit {
+    stroke-width: 2.5;
+  }
+
+  &.dim {
+    opacity: 0.2;
+  }
+
+  &.share {
+    stroke: var(--wa-color-brand-border-loud);
+    stroke-dasharray: 6 4;
+  }
+
+  &.deducts {
+    stroke: var(--wa-color-brand-border-loud);
+    stroke-dasharray: 2 4;
+    stroke-linecap: round;
+  }
+
+  &.supplement,
+  &.alternative,
+  &.replacement {
+    stroke-dasharray: 2 4;
+    stroke-linecap: round;
+  }
+
+  &.cancels,
+  &.replaces {
+    stroke: var(--wa-color-danger-border-loud);
+    stroke-dasharray: 6 4;
+  }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wa-space-xs) var(--wa-space-m);
+  margin: var(--wa-space-s) 0 0;
+  padding: 0;
+  color: var(--wa-color-text-quiet);
+  font-size: var(--wa-font-size-s);
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+  }
+}

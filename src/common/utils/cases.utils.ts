@@ -28,7 +28,8 @@ export const caseName = (vorgang: Case) =>
 
 /**
  * The address of the Vorgänge, or of a document in them: `new` becomes `new-offer` or
- * `new-invoice`, the kind is all a new one has; `new-offer@12` makes it in Vorgang 12
+ * `new-invoice`, the kind is all a new one has; `new-offer@12` makes it in Vorgang 12. A document
+ * of Vorgang 12 is `case-12/7`; without its Vorgang, `7` finds it.
  */
 export function casesRoute(kind: Kind, id?: number | string, inCase?: number): string {
   if (id === undefined) {
@@ -37,7 +38,7 @@ export function casesRoute(kind: Kind, id?: number | string, inCase?: number): s
   if (id === 'new') {
     return `/cases/new-${kind}${inCase === undefined ? '' : `@${inCase}`}`;
   }
-  return `/cases/${id}`;
+  return inCase === undefined || id === 'none' ? `/cases/${id}` : `/cases/case-${inCase}/${id}`;
 }
 
 /** The address of a Vorgang itself, its overview */
@@ -47,7 +48,7 @@ export const caseRoute = (id: number) => `/cases/case-${id}`;
 export type Selection =
   | { type: 'newest' }
   | { type: 'none' }
-  | { type: 'document'; id: number }
+  | { type: 'document'; id: number; caseId: number | null }
   | { type: 'new'; kind: Kind; caseId: number | null }
   | { type: 'case'; id: number };
 
@@ -59,10 +60,12 @@ export function parseSelection(selected: string): Selection {
   if (fresh) {
     return { type: 'new', kind: fresh[1] as Kind, caseId: fresh[2] ? Number(fresh[2]) : null };
   }
-  const vorgang = /^case-(\d+)$/.exec(selected);
+  const vorgang = /^case-(\d+)(?:\/(\d+))?$/.exec(selected);
   if (vorgang) {
-    return { type: 'case', id: Number(vorgang[1]) };
+    return vorgang[2]
+      ? { type: 'document', id: Number(vorgang[2]), caseId: Number(vorgang[1]) }
+      : { type: 'case', id: Number(vorgang[1]) };
   }
   const id = Number(selected);
-  return Number.isInteger(id) && id > 0 ? { type: 'document', id } : { type: 'none' };
+  return Number.isInteger(id) && id > 0 ? { type: 'document', id, caseId: null } : { type: 'none' };
 }

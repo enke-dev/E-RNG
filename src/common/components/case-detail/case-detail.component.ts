@@ -2,6 +2,7 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/card/card.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/tag/tag.js';
+import '../case-graph/case-graph.component.js';
 import '../collect/collect.component.js';
 import '../history/history.component.js';
 import '../page/page.component.js';
@@ -10,7 +11,7 @@ import type { PropertyValues } from 'lit';
 import { html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { Case, CaseRef, Kind } from '../../utils/api.utils.js';
+import type { Case, CaseGraph, CaseRef, Kind } from '../../utils/api.utils.js';
 import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { parsed } from '../../utils/billing.utils.js';
@@ -24,8 +25,8 @@ import styles from './case-detail.component.css';
 
 /**
  * A Vorgang itself: its name, where it stands and its sums, the Vorgänge it follows or collects and
- * those following or collecting it, a new offer or invoice for it, a Sammelrechnung with other
- * Vorgänge of its customer, and the history of all its documents together.
+ * those following or collecting it, its documents as a graph, a new offer or invoice for it, a
+ * Sammelrechnung with other Vorgänge of its customer, and the history of all its documents together.
  *
  * @fires case-changed - the Vorgang was renamed or removed, the list reloads
  */
@@ -37,6 +38,8 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
   @property({ type: Number }) revision = 0;
 
   @state() private case: Case | undefined;
+  /** Its documents and how they relate */
+  @state() private graph: CaseGraph | undefined;
   /** Something is open in its offers, a Sammelrechnung could take it */
   @state() private billable = false;
   @state() private collecting = false;
@@ -49,8 +52,9 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
 
   private async load() {
     try {
-      [this.case, this.billable] = await Promise.all([
+      [this.case, this.graph, this.billable] = await Promise.all([
         api.caseGet(this.caseId),
+        api.caseGraph(this.caseId),
         api
           .caseBilling(this.caseId)
           .then(billings => billings.some(b => b.positions.some(p => parsed(p.open) > 0))),
@@ -174,6 +178,11 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
               )}
             </dl>
           </div>
+        </wa-card>
+
+        <wa-card>
+          <div slot="header">Dokumente</div>
+          <erng-case-graph case-id="${vorgang.id}" .graph="${this.graph}"></erng-case-graph>
         </wa-card>
 
         <wa-card>

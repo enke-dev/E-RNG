@@ -10,6 +10,7 @@ import type {
   Address,
   Answer,
   Case,
+  CaseGraph,
   CaseLink,
   CaseRef,
   CaseStage,
@@ -18,7 +19,9 @@ import type {
   Customer,
   CustomLayout,
   DocumentEvent,
+  EdgeKind,
   EventKind,
+  GraphEdge,
   InvoiceDraft,
   Kind,
   Linked,
@@ -1400,6 +1403,90 @@ function related(i: StoredInvoice): StoredInvoice {
   };
 }
 
+/** A document as a row of a list reads it (`ListEntry`) */
+const entryOf = (stored: StoredInvoice): ListEntry => {
+  const i = related(stored);
+  return {
+    id: i.id,
+    context_id: i.context_id,
+    kind: i.kind,
+    valid_until: i.kind === 'offer' ? validUntil(i.draft.issue_date, i.draft.validity_days) : null,
+    seller_name: sellerOf(i.context_id),
+    number: i.number,
+    status: i.status,
+    customer_name: i.draft.customer.name,
+    issue_date: i.draft.issue_date,
+    total: i.total,
+    paid_at: i.paid_at,
+    paid: i.payments.length > 0 ? sum(i.payments.map(p => p.amount)) : null,
+    answer: i.answer,
+    answered_on: i.answered_on,
+    updated_at: i.updated_at,
+    archived_at: i.archived_at,
+    case_id: i.case_id,
+    on_account: i.draft.on_account ?? null,
+    closing: isClosing(i.draft),
+    partial: i.partial,
+    corrects: i.draft.corrects ?? null,
+    cancelled: i.cancelled,
+    cancelled_by: i.cancelled_by,
+    cancel_draft: i.cancel_draft,
+    relation: i.relation,
+    related_id: i.related_id,
+    related_number: i.related_number,
+    lapsed: i.lapsed,
+    taken_by: i.taken_by,
+    superseded: i.superseded,
+    superseded_by: i.superseded_by,
+  };
+};
+
+/** As `Store::case_graph`: the documents of a Vorgang, how they relate, the other Vorgänge on the other end */
+function caseGraph(id: number): CaseGraph {
+  const own = invoices.filter(i => i.case_id === id);
+  const edgesOf = (i: StoredInvoice): GraphEdge[] => {
+    const edge = (from: number, kind: EdgeKind): GraphEdge => ({ from, to: i.id, kind });
+    return [
+      ...(i.relation && i.related_id !== null ? [edge(i.related_id, i.relation)] : []),
+      ...i.draft.positions.flatMap(p => [
+        ...(p.source ? [edge(p.source.offer_id, 'bills')] : []),
+        ...(p.share ? [edge(p.share.offer_id, 'share')] : []),
+      ]),
+      ...(i.draft.deductions ?? []).map(d => edge(d.invoice_id, 'deducts')),
+      ...(i.draft.corrects
+        ? [
+            edge(
+              i.draft.corrects.invoice_id,
+              i.draft.corrects.kind === 'cancel' ? 'cancels' : 'replaces'
+            ),
+          ]
+        : []),
+    ];
+  };
+  const offers = new Set(own.filter(i => i.kind === 'offer').map(i => i.id));
+  // a Sammelrechnung of another Vorgang billing its offers
+  const incoming = invoices
+    .filter(i => i.case_id !== id)
+    .flatMap(i => edgesOf(i).filter(e => e.kind === 'bills' && offers.has(e.from)));
+  const unique = new Map(
+    [...own.flatMap(edgesOf), ...incoming].map(e => [`${e.from}:${e.to}:${e.kind}`, e])
+  );
+  const ids = new Set([
+    ...own.map(i => i.id),
+    ...[...unique.values()].flatMap(e => [e.from, e.to]),
+  ]);
+  const documents = invoices
+    .filter(i => ids.has(i.id))
+    .map(entryOf)
+    .sort((a, b) => a.issue_date.localeCompare(b.issue_date) || a.id - b.id);
+  const others = [...new Set(documents.filter(d => d.case_id !== id).map(d => d.case_id))];
+  return {
+    documents,
+    edges: [...unique.values()].filter(e => ids.has(e.from) && ids.has(e.to)),
+    others: others.map(other => ({ id: other, number: caseRow(other).number })),
+  };
+}
+
 export function installMocks() {
   // `platform()` reads this synchronously
   (globalThis as unknown as Record<string, unknown>)['__TAURI_OS_PLUGIN_INTERNALS__'] = {
@@ -1856,41 +1943,7 @@ export function installMocks() {
             .filter(i => args['kind'] == null || i.kind === args['kind'])
             .filter(i => args['contextId'] == null || i.context_id === args['contextId'])
             .filter(i => i.archived_at === null || Boolean(args['withArchived']))
-            .map(related)
-            .map((i): ListEntry => ({
-              id: i.id,
-              context_id: i.context_id,
-              kind: i.kind,
-              valid_until:
-                i.kind === 'offer' ? validUntil(i.draft.issue_date, i.draft.validity_days) : null,
-              seller_name: sellerOf(i.context_id),
-              number: i.number,
-              status: i.status,
-              customer_name: i.draft.customer.name,
-              issue_date: i.draft.issue_date,
-              total: i.total,
-              paid_at: i.paid_at,
-              paid: i.payments.length > 0 ? sum(i.payments.map(p => p.amount)) : null,
-              answer: i.answer,
-              answered_on: i.answered_on,
-              updated_at: i.updated_at,
-              archived_at: i.archived_at,
-              case_id: i.case_id,
-              on_account: i.draft.on_account ?? null,
-              closing: isClosing(i.draft),
-              partial: i.partial,
-              corrects: i.draft.corrects ?? null,
-              cancelled: i.cancelled,
-              cancelled_by: i.cancelled_by,
-              cancel_draft: i.cancel_draft,
-              relation: i.relation,
-              related_id: i.related_id,
-              related_number: i.related_number,
-              lapsed: i.lapsed,
-              taken_by: i.taken_by,
-              superseded: i.superseded,
-              superseded_by: i.superseded_by,
-            }));
+            .map(entryOf);
         case 'invoice_archive':
           find(args['id']).archived_at = new Date().toISOString();
           event(args['id'] as number, 'archived', null);
@@ -2299,6 +2352,8 @@ export function installMocks() {
           }
           mockCases = mockCases.filter(c => c.id !== args['id']);
           return null;
+        case 'case_graph':
+          return caseGraph(args['id'] as number);
         case 'case_events': {
           const ids = invoices.filter(i => i.case_id === args['id']).map(i => i.id);
           return events

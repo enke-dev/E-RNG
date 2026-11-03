@@ -1,5 +1,6 @@
 use tauri::State;
 
+use crate::case_graph::CaseGraph;
 use crate::model::{Case, Event, StoredInvoice};
 use crate::store::{Sequence, Store};
 use crate::utils::{today, CommandError, CommandResult};
@@ -49,6 +50,12 @@ pub fn case_set_title(
 #[tauri::command]
 pub fn case_delete(store: State<'_, Store>, id: i64) -> CommandResult<()> {
     store.delete_case(id).map_err(CommandError::from)
+}
+
+/// The documents of a Vorgang and how they relate, for its graph
+#[tauri::command]
+pub fn case_graph(store: State<'_, Store>, id: i64) -> CommandResult<CaseGraph> {
+    store.case_graph(id).map_err(CommandError::from)
 }
 
 /// The history of all documents of a Vorgang, as recorded

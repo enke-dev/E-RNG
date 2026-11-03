@@ -268,13 +268,35 @@ export const detailTags = (tags: StatusTag[], open: (kind: Kind, id: number) => 
  * What a document is, as tags and check marks on a row of its own; the context only in a mixed list.
  * The badges are styled by `documents.utils.css`.
  */
-export function tagsOf(entry: ListEntry, mixed: boolean) {
+/** The check marks of a document: created (and checked), paid or answered */
+export function marksOf(entry: ListEntry) {
   // an offer is not checked against rules, it is only made
   const created = entry.kind === 'offer' ? 'Erstellt' : 'Erstellt und geprüft';
-  const status = statusOf(entry);
+  return [
+    entry.status === 'exported'
+      ? html`
+          <wa-badge pill class="created" variant="brand" title="${created}">
+            <wa-icon name="check" label="${created}"></wa-icon>
+          </wa-badge>
+        `
+      : null,
+    ...statusOf(entry)
+      .filter(t => t.mark)
+      .map(
+        t => html`
+          <wa-badge pill class="payed" variant="${t.variant}" title="${t.detail ?? t.label}">
+            <wa-icon name="check" label="${t.label}"></wa-icon>
+          </wa-badge>
+        `
+      ),
+  ].filter(mark => mark !== null);
+}
+
+/** The tags of a document's row, its check marks last unless `marks` is off (shown elsewhere) */
+export function tagsOf(entry: ListEntry, mixed: boolean, marks = true) {
   return [
     mixed ? html`<wa-tag variant="neutral" size="s">${contextName(entry)}</wa-tag>` : null,
-    ...status
+    ...statusOf(entry)
       .filter(t => !t.mark)
       .map(
         t => html`
@@ -288,22 +310,7 @@ export function tagsOf(entry: ListEntry, mixed: boolean) {
           </wa-tag>
         `
       ),
-    entry.status === 'exported'
-      ? html`
-          <wa-badge pill class="created" variant="brand" title="${created}">
-            <wa-icon name="check" label="${created}"></wa-icon>
-          </wa-badge>
-        `
-      : null,
-    ...status
-      .filter(t => t.mark)
-      .map(
-        t => html`
-          <wa-badge pill class="payed" variant="${t.variant}" title="${t.detail ?? t.label}">
-            <wa-icon name="check" label="${t.label}"></wa-icon>
-          </wa-badge>
-        `
-      ),
+    ...(marks ? marksOf(entry) : []),
   ].filter(tag => tag !== null);
 }
 

@@ -86,6 +86,11 @@ export const routes: RouteConfig[] = [
     render: ({ id }) => cases(id),
   },
   {
+    path: '/cases/:vorgang/:id',
+    enter: entering(() => import('./cases/cases.view.js'), 'offer'),
+    render: ({ vorgang, id }) => cases(`${vorgang}/${id}`),
+  },
+  {
     path: '/offers',
     enter: entering(() => import('./invoices/invoices.view.js'), 'offer'),
     render: () => offers(),

@@ -1,5 +1,6 @@
 mod backup;
 mod billing;
+mod case_graph;
 mod case_links;
 mod cases;
 mod commands;
@@ -176,6 +177,7 @@ pub fn run() {
             commands::cases_command::case_create,
             commands::cases_command::case_delete,
             commands::cases_command::case_events,
+            commands::cases_command::case_graph,
             commands::cases_command::case_get,
             commands::cases_command::case_sequence,
             commands::cases_command::case_sequence_set,
