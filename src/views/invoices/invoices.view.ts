@@ -55,6 +55,8 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
   @state() private all = false;
   /** An invoice that got its id while the address still says `new` */
   @state() private created: number | undefined;
+  /** The address names a document the list does not know: nothing shown till read again */
+  @state() private unknown = false;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -65,11 +67,22 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
   protected override willUpdate(changed: PropertyValues<this>) {
     if (changed.has('selected')) {
       this.created = undefined;
+      const id = Number(this.selected);
+      this.unknown =
+        this.entries !== undefined &&
+        Number.isInteger(id) &&
+        id > 0 &&
+        !this.entries.some(e => e.id === id);
     }
   }
 
   protected override updated(changed: PropertyValues<this>) {
     if (changed.has('selected')) {
+      // one made elsewhere since, archived, of the other kind or gone: the list decides, read again
+      if (this.unknown) {
+        void this.load(true);
+        return;
+      }
       this.selectNewest();
     }
   }
@@ -97,6 +110,7 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
         // a document of the other kind belongs to the other list
         const other = await api.invoiceGet(id).catch(() => undefined);
         if (other && other.kind !== this.kind) {
+          this.unknown = true;
           redirect(kindRoute(other.kind, id));
           return;
         }
@@ -106,12 +120,14 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
           await this.load();
           return;
         }
+        this.unknown = true;
         this.entries = entries;
         const newest = entries[0];
         redirect(newest ? kindRoute(this.kind, newest.id) : kindRoute(this.kind));
         return;
       }
       this.entries = entries;
+      this.unknown = false;
       this.selectNewest();
     } catch (error) {
       notifyError(error);
@@ -324,7 +340,7 @@ export class InvoicesView extends ErngElement.withStyles(styles) {
         </erng-list>
 
         ${
-          this.entries
+          this.entries && !this.unknown
             ? this.current === ''
               ? html`
                   <div slot="detail" class="placeholder">
