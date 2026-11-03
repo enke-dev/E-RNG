@@ -1,6 +1,7 @@
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
+import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 
@@ -13,7 +14,8 @@ import type { Case } from '../../utils/api.utils.js';
 import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { parsed } from '../../utils/billing.utils.js';
-import { CASE_STAGES, caseName, casesRoute } from '../../utils/cases.utils.js';
+import { CASE_STAGES, casesRoute } from '../../utils/cases.utils.js';
+import { text } from '../../utils/form.utils.js';
 import { notifyError } from '../../utils/notify.utils.js';
 import { goto } from '../../utils/routing.utils.js';
 import styles from './collect.component.css';
@@ -38,9 +40,12 @@ export class CollectComponent extends ErngElement.withStyles(styles) {
   @state() private candidates: Case[] | undefined;
   @state() private owner = '';
   @state() private picked = new Set<number>();
+  /** The name of the new Vorgang */
+  @state() private name = '';
 
   protected override willUpdate(changed: PropertyValues<this>) {
     if (changed.has('open') && this.open) {
+      this.name = '';
       void this.load();
     }
   }
@@ -92,7 +97,7 @@ export class CollectComponent extends ErngElement.withStyles(styles) {
 
   private async collect() {
     try {
-      const invoice = await api.casesCollect([...this.picked]);
+      const invoice = await api.casesCollect([...this.picked], this.name.trim());
       this.close();
       this.dispatchEvent(new CustomEvent('case-changed', { bubbles: true, composed: true }));
       goto(casesRoute('invoice', invoice.id));
@@ -126,7 +131,7 @@ export class CollectComponent extends ErngElement.withStyles(styles) {
               ?disabled="${c.id === this.caseId}"
               @change="${(e: Event) => this.toggle(c.id, (e.target as HTMLInputElement).checked)}"
             >
-              ${c.number} · ${caseName(c)}
+              ${c.title} · ${c.number}
               <span class="muted">${CASE_STAGES[c.stage]}</span>
             </wa-checkbox>
           `
@@ -166,10 +171,23 @@ export class CollectComponent extends ErngElement.withStyles(styles) {
               : nothing
           }
           ${this.renderChoices()}
+          <wa-input
+            label="Bezeichnung"
+            size="s"
+            placeholder="z. B. Sammelrechnung Oktober"
+            hint="Interne Bezeichnung des neuen Vorgangs"
+            required
+            .value="${this.name}"
+            @input="${(e: Event) => (this.name = text(e))}"
+          ></wa-input>
         </div>
         <div slot="footer" class="dialog-footer">
           <wa-button appearance="outlined" @click="${this.close}">Abbrechen</wa-button>
-          <wa-button variant="brand" ?disabled="${this.picked.size < 2}" @click="${this.collect}">
+          <wa-button
+            variant="brand"
+            ?disabled="${this.picked.size < 2 || this.name.trim() === ''}"
+            @click="${this.collect}"
+          >
             Sammelrechnung anlegen
           </wa-button>
         </div>

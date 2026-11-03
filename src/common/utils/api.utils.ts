@@ -111,7 +111,7 @@ export interface Case {
   customer_id: number | null;
   /** As its newest document has it, else as the customer is stored */
   customer_name: string;
-  title: string | null;
+  title: string;
   created_at: string;
   /** The customer cannot change any more: a second document or a created one */
   locked: boolean;
@@ -1014,7 +1014,8 @@ export const api = {
   /** A Folgeangebot: the created offer copied into a new Vorgang that follows its own */
   offerFollow: (id: number) => invoke<StoredInvoice>('offer_follow', { id }),
   /** A Sammelrechnung: a new Vorgang collecting these of one customer, with an invoice of what is open */
-  casesCollect: (ids: number[]) => invoke<StoredInvoice>('cases_collect', { ids }),
+  casesCollect: (ids: number[], title: string) =>
+    invoke<StoredInvoice>('cases_collect', { ids, title }),
   /** A new offer in the Vorgang of the created offer `id` that refers to it */
   offerRelated: (id: number, relation: Relation) =>
     invoke<StoredInvoice>('offer_related', { id, relation }),
@@ -1022,9 +1023,9 @@ export const api = {
     invoke<Case[]>('cases_list', { contextId, withArchived }),
   caseGet: (id: number) => invoke<Case>('case_get', { id }),
   /** Starts a Vorgang for a customer, without documents yet */
-  caseCreate: (contextId: number, customerId: number | null, title: string | null) =>
+  caseCreate: (contextId: number, customerId: number | null, title: string) =>
     invoke<Case>('case_create', { contextId, customerId, title }),
-  caseSetTitle: (id: number, title: string | null) => invoke<Case>('case_set_title', { id, title }),
+  caseSetTitle: (id: number, title: string) => invoke<Case>('case_set_title', { id, title }),
   /** Only a Vorgang without documents */
   caseDelete: (id: number) => invoke<null>('case_delete', { id }),
   caseEvents: (id: number) => invoke<DocumentEvent[]>('case_events', { id }),

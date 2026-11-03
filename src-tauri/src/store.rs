@@ -2236,8 +2236,9 @@ impl Store {
                 check_correction(&tx, case, Some(id), stored_kind, draft, false)?;
                 id
             } else {
-                // a plain new document makes its own Vorgang
-                let case = new_case(&tx, context_id, draft.customer.id, None)?;
+                // a plain new document makes its own Vorgang, called after it
+                let title = crate::cases::title_after(kind, None, &draft.issue_date);
+                let case = new_case(&tx, context_id, draft.customer.id, &title)?;
                 check_sources(&tx, case, kind, draft)?;
                 check_deductions(&tx, case, None, kind, draft)?;
                 check_on_account(draft)?;
@@ -2337,7 +2338,13 @@ impl Store {
             let case = if same_case {
                 source.case_id
             } else {
-                new_case(&tx, source.context_id, draft.customer.id, None)?
+                // called like the original's, to be renamed
+                let title: String = tx.query_row(
+                    "SELECT title FROM cases WHERE id = ?1",
+                    [source.case_id],
+                    |r| r.get(0),
+                )?;
+                new_case(&tx, source.context_id, draft.customer.id, &title)?
             };
             let copy = insert_draft(
                 &tx,

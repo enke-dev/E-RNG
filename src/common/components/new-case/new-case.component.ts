@@ -39,16 +39,12 @@ export class NewCaseComponent extends ErngElement {
   }
 
   private async create() {
-    if (this.customer === '') {
+    if (this.customer === '' || this.name.trim() === '') {
       return;
     }
     this.busy = true;
     try {
-      const created = await api.caseCreate(
-        this.contextId,
-        Number(this.customer),
-        this.name.trim() || null
-      );
+      const created = await api.caseCreate(this.contextId, Number(this.customer), this.name.trim());
       this.dispatchEvent(new CustomEvent<Case>('case-created', { detail: created }));
       this.open = false;
     } catch (error) {
@@ -80,7 +76,8 @@ export class NewCaseComponent extends ErngElement {
           <wa-input
             label="Bezeichnung"
             placeholder="z. B. Badsanierung"
-            hint="Interne Bezeichnung, optional"
+            hint="Interne Bezeichnung, nennt den Vorgang in der Liste"
+            required
             .value="${this.name}"
             @input="${(e: Event) => (this.name = text(e))}"
           ></wa-input>
@@ -93,7 +90,7 @@ export class NewCaseComponent extends ErngElement {
             <wa-button
               variant="brand"
               ?loading="${this.busy}"
-              ?disabled="${this.customer === ''}"
+              ?disabled="${this.customer === '' || this.name.trim() === ''}"
               @click="${this.create}"
             >
               Anlegen

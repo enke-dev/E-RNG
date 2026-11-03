@@ -28,22 +28,16 @@ pub fn case_create(
     store: State<'_, Store>,
     context_id: i64,
     customer_id: Option<i64>,
-    title: Option<String>,
+    title: String,
 ) -> CommandResult<Case> {
     store
-        .create_case(context_id, customer_id, title.as_deref())
+        .create_case(context_id, customer_id, &title)
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn case_set_title(
-    store: State<'_, Store>,
-    id: i64,
-    title: Option<String>,
-) -> CommandResult<Case> {
-    store
-        .set_case_title(id, title.as_deref())
-        .map_err(CommandError::from)
+pub fn case_set_title(store: State<'_, Store>, id: i64, title: String) -> CommandResult<Case> {
+    store.set_case_title(id, &title).map_err(CommandError::from)
 }
 
 /// Removes a Vorgang without documents
@@ -95,6 +89,12 @@ pub fn offer_follow(store: State<'_, Store>, id: i64) -> CommandResult<StoredInv
 /// A Sammelrechnung over Vorgänge of one customer: a new Vorgang collecting them, with an invoice
 /// draft of all that is open of their offers
 #[tauri::command]
-pub fn cases_collect(store: State<'_, Store>, ids: Vec<i64>) -> CommandResult<StoredInvoice> {
-    store.collect(&ids, &today()).map_err(CommandError::from)
+pub fn cases_collect(
+    store: State<'_, Store>,
+    ids: Vec<i64>,
+    title: String,
+) -> CommandResult<StoredInvoice> {
+    store
+        .collect(&ids, &today(), &title)
+        .map_err(CommandError::from)
 }

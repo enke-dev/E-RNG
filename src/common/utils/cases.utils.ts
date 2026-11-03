@@ -1,4 +1,4 @@
-import type { Case, CaseStage, Kind } from './api.utils.js';
+import type { CaseStage, Kind } from './api.utils.js';
 
 /** Where a Vorgang stands, as the UI says it */
 export const CASE_STAGES: Record<CaseStage, string> = {
@@ -23,9 +23,6 @@ export const STAGE_VARIANTS: Record<CaseStage, string> = {
 };
 
 /** What a Vorgang is called: its customer and, last, its internal title if it has one */
-export const caseName = (vorgang: Case) =>
-  [vorgang.customer_name, vorgang.title].filter(Boolean).join(' · ') || '–';
-
 /**
  * The address of the Vorgänge, or of a document in them: `new` becomes `new-offer` or
  * `new-invoice`, the kind is all a new one has; `new-offer@12` makes it in Vorgang 12. A document

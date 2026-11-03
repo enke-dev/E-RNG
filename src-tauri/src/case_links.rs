@@ -143,9 +143,11 @@ impl Store {
         Ok(copy)
     }
 
-    /// A Sammelrechnung over Vorgänge of one customer: a new Vorgang for the customer that collects
-    /// them, and in it an invoice draft dated `today` with all that is still open of their offers
-    pub fn collect(&self, case_ids: &[i64], today: &str) -> Result<StoredInvoice> {
+    /// A Sammelrechnung over Vorgänge of one customer: a new Vorgang named `title` for the customer
+    /// that collects them, and in it an invoice draft dated `today` with all that is still open of
+    /// their offers
+    pub fn collect(&self, case_ids: &[i64], today: &str, title: &str) -> Result<StoredInvoice> {
+        crate::cases::named(title)?;
         let cases = case_ids
             .iter()
             .map(|&id| self.case(id))
@@ -212,7 +214,7 @@ impl Store {
             let conn = self.conn();
             let tx = conn.unchecked_transaction()?;
             // started for its customer, like `Neuer Vorgang`
-            let case = new_case(&tx, first.context_id, first.customer_id, None)?;
+            let case = new_case(&tx, first.context_id, first.customer_id, title)?;
             tx.execute("UPDATE cases SET started = 1 WHERE id = ?1", [case])?;
             for &source in case_ids {
                 link(&tx, source, case, CaseLink::Collect)?;
@@ -288,13 +290,13 @@ mod tests {
         let a = offer(&store, 7, "AN-1");
         let b = offer(&store, 7, "AN-2");
         let other = offer(&store, 8, "AN-3");
-        assert!(store.collect(&[a.case_id], "2026-11-02").is_err());
+        assert!(store.collect(&[a.case_id], "2026-11-02", "Sammel").is_err());
         assert!(store
-            .collect(&[a.case_id, other.case_id], "2026-11-02")
+            .collect(&[a.case_id, other.case_id], "2026-11-02", "Sammel")
             .is_err());
 
         let invoice = store
-            .collect(&[a.case_id, b.case_id], "2026-11-02")
+            .collect(&[a.case_id, b.case_id], "2026-11-02", "Sammel")
             .unwrap();
         let sources: Vec<_> = invoice
             .draft
@@ -327,13 +329,13 @@ mod tests {
         // the collecting Vorgang is not collected again
         let c = offer(&store, 7, "AN-4");
         assert!(store
-            .collect(&[invoice.case_id, c.case_id], "2026-11-02")
+            .collect(&[invoice.case_id, c.case_id], "2026-11-02", "Sammel")
             .is_err());
 
         // once created, nothing is open any more
         bake(&store, invoice.id, "RE-1", "200");
         assert!(store
-            .collect(&[a.case_id, b.case_id], "2026-11-03")
+            .collect(&[a.case_id, b.case_id], "2026-11-03", "Sammel")
             .is_err());
         // and each collected Vorgang stands as its part of the invoice says, half of it here
         let collected = store.case(a.case_id).unwrap();

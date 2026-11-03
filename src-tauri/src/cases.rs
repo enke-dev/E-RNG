@@ -32,7 +32,7 @@ pub(crate) fn migrate_to_cases(conn: &Connection) -> Result<()> {
              counter INTEGER NOT NULL,
              issued_on TEXT NOT NULL,
              customer_id INTEGER,
-             title TEXT,
+             title TEXT NOT NULL,
              created_at TEXT NOT NULL,
              started INTEGER NOT NULL DEFAULT 0,
              UNIQUE (context_id, number)
@@ -46,13 +46,16 @@ pub(crate) fn migrate_to_cases(conn: &Connection) -> Result<()> {
     }
     let documents = {
         let mut statement = tx.prepare(
-            "SELECT id, context_id, draft FROM invoices WHERE case_id IS NULL ORDER BY id",
+            "SELECT id, context_id, draft, kind, number FROM invoices WHERE case_id IS NULL
+             ORDER BY id",
         )?;
         let rows = statement.query_map([], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, i64>(1)?,
                 r.get::<_, String>(2)?,
+                Kind::from_column(&r.get::<_, String>(3)?),
+                r.get::<_, Option<String>>(4)?,
             ))
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
@@ -71,7 +74,7 @@ pub(crate) fn migrate_to_cases(conn: &Connection) -> Result<()> {
         Vec::new()
     };
     // linked documents end up with the same root
-    let mut parent: HashMap<i64, i64> = documents.iter().map(|(id, _, _)| (*id, *id)).collect();
+    let mut parent: HashMap<i64, i64> = documents.iter().map(|(id, ..)| (*id, *id)).collect();
     for (offer, invoice) in links {
         if parent.contains_key(&offer) && parent.contains_key(&invoice) {
             let (a, b) = (root(&mut parent, offer), root(&mut parent, invoice));
@@ -80,30 +83,41 @@ pub(crate) fn migrate_to_cases(conn: &Connection) -> Result<()> {
             }
         }
     }
-    // a group: its context, customer and documents with their issue dates
-    let mut groups: BTreeMap<GroupKey, Vec<(i64, String)>> = BTreeMap::new();
-    for (id, context, json) in &documents {
+    // a group: its context, customer and documents with their issue dates, kinds and numbers
+    let mut groups: BTreeMap<GroupKey, Vec<Grouped>> = BTreeMap::new();
+    for (id, context, json, kind, number) in &documents {
         let draft: InvoiceDraft = serde_json::from_str(json)?;
         let key = (*context, root(&mut parent, *id), draft.customer.id);
-        groups
-            .entry(key)
-            .or_default()
-            .push((*id, draft.issue_date.clone()));
+        groups.entry(key).or_default().push(Grouped {
+            id: *id,
+            day: draft.issue_date.clone(),
+            kind: *kind,
+            number: number.clone(),
+        });
     }
+    let first = |docs: &[Grouped]| {
+        docs.iter()
+            .min_by(|a, b| (&a.day, a.id).cmp(&(&b.day, b.id)))
+            .cloned()
+    };
     let mut ordered: Vec<_> = groups.into_iter().collect();
     ordered.sort_by(|((ca, _, _), a), ((cb, _, _), b)| {
-        let first = |docs: &[(i64, String)]| docs.iter().map(|(_, d)| d.clone()).min();
-        (ca, first(a), a[0].0).cmp(&(cb, first(b), b[0].0))
+        let day = |docs: &[Grouped]| first(docs).map(|d| d.day);
+        (ca, day(a), a[0].id).cmp(&(cb, day(b), b[0].id))
     });
     for ((context, _, customer), docs) in ordered {
         let settings = numbering_settings(&tx, context);
         let issued = docs
             .iter()
-            .filter_map(|(_, day)| Date::parse(day).ok())
+            .filter_map(|d| Date::parse(&d.day).ok())
             .min()
             .unwrap_or_else(|| Date::parse(&crate::utils::today()).expect("today is a date"));
-        let case = insert_case(&tx, context, &settings, customer, None, issued)?;
-        for (id, _) in docs {
+        // older versions named no Vorgang: it is called after its first document
+        let title = first(&docs)
+            .map(|d| title_after(d.kind, d.number.as_deref(), &d.day))
+            .unwrap_or_default();
+        let case = insert_case(&tx, context, &settings, customer, &title, issued)?;
+        for Grouped { id, .. } in docs {
             tx.execute(
                 "UPDATE invoices SET case_id = ?1 WHERE id = ?2",
                 params![case, id],
@@ -126,6 +140,49 @@ pub(crate) fn ensure_started(conn: &Connection) -> Result<()> {
 
 /// Context, root of the linked documents and customer: documents of one key share a Vorgang
 type GroupKey = (i64, i64, Option<i64>);
+
+/// A document of an older version on its way into a Vorgang
+#[derive(Clone)]
+struct Grouped {
+    id: i64,
+    day: String,
+    kind: Kind,
+    number: Option<String>,
+}
+
+/// What a Vorgang is called that was made without a name: after a document of it, by its kind and
+/// number, or by its day while it is a draft (`Angebot AN-2026-001`, `Rechnung vom 03.11.2026`)
+pub(crate) fn title_after(kind: Kind, number: Option<&str>, issue_date: &str) -> String {
+    let noun = match kind {
+        Kind::Offer => "Angebot",
+        Kind::Invoice => "Rechnung",
+    };
+    if let Some(number) = number {
+        return format!("{noun} {number}");
+    }
+    // the day as the app writes it, an unreadable one as it is
+    let day = Date::parse(issue_date).map_or_else(
+        |_| issue_date.to_owned(),
+        |d| {
+            let iso = d.to_string();
+            let parts: Vec<&str> = iso.split('-').collect();
+            match parts.as_slice() {
+                [y, m, d] => format!("{d}.{m}.{y}"),
+                _ => iso,
+            }
+        },
+    );
+    format!("{noun} vom {day}")
+}
+
+/// A name for a Vorgang as typed: trimmed, never blank
+pub(crate) fn named(title: &str) -> Result<&str> {
+    let title = title.trim();
+    if title.is_empty() {
+        bail!("Ein Vorgang braucht eine Bezeichnung.");
+    }
+    Ok(title)
+}
 
 /// The root of a document among the linked ones, shortening the way there for the next look
 fn root(parent: &mut HashMap<i64, i64>, id: i64) -> i64 {
@@ -228,9 +285,10 @@ fn insert_case(
     context_id: i64,
     settings: &Settings,
     customer_id: Option<i64>,
-    title: Option<&str>,
+    title: &str,
     date: Date,
 ) -> Result<i64> {
+    let title = named(title)?;
     let (number, counter) = next_number(conn, context_id, settings, date)?;
     conn.execute(
         "INSERT INTO cases (context_id, number, counter, issued_on, customer_id, title, created_at)
@@ -241,7 +299,7 @@ fn insert_case(
             counter,
             date.to_string(),
             customer_id,
-            title.map(str::trim).filter(|t| !t.is_empty()),
+            title,
             now()
         ],
     )?;
@@ -259,7 +317,7 @@ pub(crate) fn new_case(
     conn: &Connection,
     context_id: i64,
     customer_id: Option<i64>,
-    title: Option<&str>,
+    title: &str,
 ) -> Result<i64> {
     let settings = numbering_settings(conn, context_id);
     let today = Date::parse(&crate::utils::today())?;
@@ -588,7 +646,7 @@ fn read_case(conn: &Connection, id: i64, payments: &HashMap<i64, Vec<Payment>>) 
                     r.get::<_, i64>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, Option<i64>>(2)?,
-                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, String>(3)?,
                     r.get::<_, String>(4)?,
                 ))
             },
@@ -648,7 +706,7 @@ impl Store {
         &self,
         context_id: i64,
         customer_id: Option<i64>,
-        title: Option<&str>,
+        title: &str,
     ) -> Result<Case> {
         let id = {
             let conn = self.conn();
@@ -662,11 +720,11 @@ impl Store {
         self.case(id)
     }
 
-    /// Names a Vorgang, or takes the name away (blank)
-    pub fn set_case_title(&self, id: i64, title: Option<&str>) -> Result<Case> {
+    /// Names a Vorgang anew, never blank
+    pub fn set_case_title(&self, id: i64, title: &str) -> Result<Case> {
         let changed = self.conn().execute(
             "UPDATE cases SET title = ?1 WHERE id = ?2",
-            params![title.map(str::trim).filter(|t| !t.is_empty()), id],
+            params![named(title)?, id],
         )?;
         if changed == 0 {
             bail!("unknown Vorgang");
@@ -915,7 +973,7 @@ pub(crate) mod tests {
             .save_customer(&crate::draft::fixtures::customer())
             .unwrap()
             .id;
-        let started = store.create_case(1, customer, None).unwrap();
+        let started = store.create_case(1, customer, "Bad").unwrap();
         store.delete_customer(customer.unwrap()).unwrap();
 
         assert_eq!(store.case(started.id).unwrap().customer_id, None);
@@ -934,6 +992,10 @@ pub(crate) mod tests {
         let alone = store.duplicate_to(offer.id, "2026-12-01", false).unwrap();
         let joined = store.duplicate_to(offer.id, "2026-12-01", true).unwrap();
         assert_ne!(alone.case_id, offer.case_id);
+        // a new document's Vorgang is called after it, a copy's like the original's
+        let named = store.case(offer.case_id).unwrap().title;
+        assert!(named.starts_with("Angebot vom "), "{named}");
+        assert_eq!(store.case(alone.case_id).unwrap().title, named);
         assert_eq!(joined.case_id, offer.case_id);
 
         bake(&store, offer.id, "AN-2026-001", "100");
@@ -952,17 +1014,17 @@ pub(crate) mod tests {
     #[test]
     fn a_vorgang_can_be_started_empty_named_and_removed_while_empty() {
         let store = Store::in_memory().unwrap();
-        let started = store
-            .create_case(1, Some(7), Some(" Badsanierung "))
-            .unwrap();
-        assert_eq!(started.title.as_deref(), Some("Badsanierung"));
+        assert!(store.create_case(1, Some(7), "  ").is_err());
+        let started = store.create_case(1, Some(7), " Badsanierung ").unwrap();
+        assert_eq!(started.title, "Badsanierung");
         assert_eq!(started.documents, 0);
         assert!(!started.archived);
         assert_eq!(store.cases(Some(1), false).unwrap().len(), 1);
         assert_eq!(store.cases(Some(2), false).unwrap().len(), 0);
 
-        let renamed = store.set_case_title(started.id, Some("  ")).unwrap();
-        assert_eq!(renamed.title, None);
+        assert!(store.set_case_title(started.id, "  ").is_err());
+        let renamed = store.set_case_title(started.id, " Bad ").unwrap();
+        assert_eq!(renamed.title, "Bad");
 
         // started for its customer, it is locked before it has a document
         assert!(started.locked);
@@ -980,7 +1042,7 @@ pub(crate) mod tests {
         // emptied by its last draft, it goes
         assert!(store.case(started.id).is_err());
 
-        let empty = store.create_case(1, None, None).unwrap();
+        let empty = store.create_case(1, None, "Leer").unwrap();
         store.delete_case(empty.id).unwrap();
         assert!(store.cases(None, true).unwrap().is_empty());
     }
@@ -1174,5 +1236,7 @@ pub(crate) mod tests {
         assert_eq!(number(1), "VG-2026-002");
         assert_eq!(number(3), "VG-2026-003");
         assert_eq!(store.case(case(1)).unwrap().customer_id, Some(7));
+        // unnamed before, called after the first document
+        assert_eq!(store.case(case(1)).unwrap().title, "Angebot vom 01.03.2026");
     }
 }

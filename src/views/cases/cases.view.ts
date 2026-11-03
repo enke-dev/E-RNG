@@ -352,7 +352,7 @@ export class CasesView extends ErngElement.withStyles(styles) {
           this.stages.has(vorgang.stage) &&
           (this.year === 'all' || years.includes(this.year)) &&
           (this.customer === 'all' || vorgang.customer_name === this.customer) &&
-          ([vorgang.number, vorgang.title ?? '', vorgang.customer_name]
+          ([vorgang.number, vorgang.title, vorgang.customer_name]
             .join(' ')
             .toLowerCase()
             .includes(query) ||
@@ -470,7 +470,7 @@ export class CasesView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  /** A Vorgang: its number and sum, its title, where it stands; opens it */
+  /** A Vorgang: its title and sum, its number and day, where it stands; opens it */
   private renderCase(vorgang: Case) {
     const context = contextById(vorgang.context_id);
     return html`
@@ -479,9 +479,9 @@ export class CasesView extends ErngElement.withStyles(styles) {
         ?archived="${vorgang.archived}"
         @click="${() => goto(caseRoute(vorgang.id))}"
       >
-        ${vorgang.number}
+        ${vorgang.title}
         <span slot="end">${money(sumOf(vorgang))}</span>
-        <span slot="sub">${vorgang.title ?? ''}</span>
+        <span slot="sub">${vorgang.number}</span>
         <span slot="sub-end">${formatDate(vorgang.created_at)}</span>
         <span slot="tags">
           ${

@@ -874,7 +874,7 @@ interface CaseRow {
   context_id: number;
   number: string;
   customer_id: number | null;
-  title: string | null;
+  title: string;
   created_at: string;
   /** Started for its customer (`Neuer Vorgang`): the customer is locked from the start */
   started: boolean;
@@ -887,26 +887,34 @@ let mockCases: CaseRow[] = [1, 2, 3, 4].map(id => ({
   context_id: 1,
   number: caseNumber(id),
   customer_id: (invoices.find(i => i.case_id === id)?.draft.customer.id as number | null) ?? null,
-  title: id === 1 ? 'Website-Relaunch' : null,
+  title: ['Website-Relaunch', 'Wartung 2026', 'Schulung', 'Badsanierung'][id - 1] ?? 'Vorgang',
   created_at: `2026-09-0${id} 08:00:00`,
   started: false,
 }));
 
 const caseRow = (id: number) => mockCases.find(c => c.id === id) as CaseRow;
 
-function newCase(
-  contextId: number,
-  customerId: number | null,
-  title: string | null = null,
-  started = false
-) {
+/** As `cases::title_after`: a Vorgang made without a name is called after its first document */
+const titleAfter = (kind: Kind, day: string) =>
+  `${kind === 'offer' ? 'Angebot' : 'Rechnung'} vom ${day.split('-').reverse().join('.')}`;
+
+/** As `cases::named`: a Vorgang always has a name */
+const named = (title: unknown) => {
+  const trimmed = String(title ?? '').trim();
+  if (trimmed === '') {
+    throw 'Ein Vorgang braucht eine Bezeichnung.';
+  }
+  return trimmed;
+};
+
+function newCase(contextId: number, customerId: number | null, title: string, started = false) {
   const id = Math.max(0, ...mockCases.map(c => c.id)) + 1;
   mockCases.push({
     id,
     context_id: contextId,
     number: caseNumber(id),
     customer_id: customerId,
-    title,
+    title: named(title),
     created_at: new Date().toISOString(),
     started,
   });
@@ -2053,7 +2061,13 @@ export function installMocks() {
             into === null ? ((args['contextId'] as number | null) ?? 1) : caseRow(into).context_id;
           const stored: StoredInvoice = existing ?? {
             id: nextId(),
-            case_id: into ?? newCase(context, draft.customer.id),
+            case_id:
+              into ??
+              newCase(
+                context,
+                draft.customer.id,
+                titleAfter(args['kind'] as Kind, draft.issue_date)
+              ),
             context_id: context,
             kind: args['kind'] as Kind,
             number: null,
@@ -2145,7 +2159,11 @@ export function installMocks() {
             ...structuredClone(source),
             ...UNRELATED,
             id: nextId(),
-            case_id: newCase(source.context_id, source.draft.customer.id),
+            case_id: newCase(
+              source.context_id,
+              source.draft.customer.id,
+              caseRow(source.case_id).title
+            ),
             number: null,
             status: 'draft',
             exported_at: null,
@@ -2189,7 +2207,7 @@ export function installMocks() {
           if (!offer || positions.length === 0) {
             throw 'In diesen Vorgängen ist nichts mehr offen.';
           }
-          const caseId = newCase(first.context_id, first.customer_id, null, true);
+          const caseId = newCase(first.context_id, first.customer_id, named(args['title']), true);
           ids.forEach(source => caseLinks.push({ source, follower: caseId, link: 'collect' }));
           const draft: InvoiceDraft = {
             ...structuredClone(offer.draft),
@@ -2290,7 +2308,11 @@ export function installMocks() {
             id: nextId(),
             case_id: args['sameCase']
               ? find(args['id']).case_id
-              : newCase(find(args['id']).context_id, find(args['id']).draft.customer.id),
+              : newCase(
+                  find(args['id']).context_id,
+                  find(args['id']).draft.customer.id,
+                  caseRow(find(args['id']).case_id).title
+                ),
             number: null,
             status: 'draft',
             exported_at: null,
@@ -2336,14 +2358,14 @@ export function installMocks() {
               newCase(
                 args['contextId'] as number,
                 (args['customerId'] as number | null) ?? null,
-                (args['title'] as string | null) ?? null,
+                named(args['title']),
                 args['customerId'] != null
               )
             )
           );
         case 'case_set_title': {
           const row = caseRow(args['id'] as number);
-          row.title = ((args['title'] as string | null) ?? '').trim() || null;
+          row.title = named(args['title']);
           return caseView(row);
         }
         case 'case_delete':

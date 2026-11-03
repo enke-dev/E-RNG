@@ -980,7 +980,7 @@ pub struct Case {
     pub customer_id: Option<i64>,
     /// As its newest document has it, else as the customer is stored
     pub customer_name: String,
-    pub title: Option<String>,
+    pub title: String,
     pub created_at: String,
     /// The customer cannot change any more: it has a second document or a created one
     pub locked: bool,

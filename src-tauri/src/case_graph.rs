@@ -255,7 +255,7 @@ mod tests {
         };
         let (a, b) = (offer("AN-1"), offer("AN-2"));
         let invoice = store
-            .collect(&[a.case_id, b.case_id], "2026-11-03")
+            .collect(&[a.case_id, b.case_id], "2026-11-03", "Sammel")
             .unwrap();
         let graph = store.case_graph(a.case_id).unwrap();
         assert_eq!(

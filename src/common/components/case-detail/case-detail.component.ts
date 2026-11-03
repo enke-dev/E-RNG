@@ -16,7 +16,6 @@ import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
 import { parsed } from '../../utils/billing.utils.js';
 import { CASE_STAGES, caseRoute, casesRoute, STAGE_VARIANTS } from '../../utils/cases.utils.js';
-import { text } from '../../utils/form.utils.js';
 import { formatDate, money } from '../../utils/format.utils.js';
 import { KINDS } from '../../utils/kind.utils.js';
 import { notifyError } from '../../utils/notify.utils.js';
@@ -68,9 +67,15 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
     this.dispatchEvent(new CustomEvent('case-changed', { bubbles: true, composed: true }));
   }
 
-  private async rename(title: string) {
+  /** A Vorgang always has a name: a blank one is not saved, the field shows the last one again */
+  private async rename(field: HTMLInputElement) {
+    const title = field.value.trim();
+    if (title === '') {
+      field.value = this.case?.title ?? '';
+      return;
+    }
     try {
-      this.case = await api.caseSetTitle(this.caseId, title.trim() || null);
+      this.case = await api.caseSetTitle(this.caseId, title);
       this.announce();
     } catch (error) {
       notifyError(error);
@@ -135,8 +140,9 @@ export class CaseDetailComponent extends ErngElement.withStyles(styles) {
                 label="Bezeichnung"
                 placeholder="z. B. Badsanierung"
                 hint="Interne Bezeichnung"
-                .value="${vorgang.title ?? ''}"
-                @change="${(e: Event) => void this.rename(text(e))}"
+                required
+                .value="${vorgang.title}"
+                @change="${(e: Event) => void this.rename(e.target as HTMLInputElement)}"
               ></wa-input>
               <div class="facts">
                 <span class="muted">Kunde</span>
