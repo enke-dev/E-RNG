@@ -981,6 +981,9 @@ function caseView(row: CaseRow): Case {
   const created = documents.filter(i => i.status === 'exported');
   const total = (list: StoredInvoice[]) => list.reduce((s, i) => s + Number(i.total ?? 0), 0);
   const offers = created.filter(i => i.kind === 'offer');
+  // a cancelled invoice and its Storno bill nothing (`Standing.settled`)
+  const settled = (i: StoredInvoice) => isCancelled(i.id) || i.draft.corrects?.kind === 'cancel';
+  const billing = created.filter(i => i.kind === 'invoice' && !settled(i));
   const bills = [
     ...created
       .filter(i => i.kind === 'invoice')
@@ -993,20 +996,47 @@ function caseView(row: CaseRow): Case {
   const invoiced = bills.reduce((s, b) => s + b.total, 0);
   const paid = bills.reduce((s, b) => s + b.paid, 0);
   const open = Math.max(0, invoiced - paid);
+  const drafted = (kind: Kind) => documents.some(i => i.kind === kind && i.status === 'draft');
+  // as `Standing.due`: by the payment days it was made with, 14 in the mock
+  const due = (i: StoredInvoice) => {
+    const day = new Date(`${i.draft.issue_date}T12:00:00Z`);
+    day.setUTCDate(day.getUTCDate() + (i.draft.frozen?.payment_days ?? 14));
+    return day.toISOString().slice(0, 10);
+  };
+  const today = new Date().toISOString().slice(0, 10);
+  const overdue = billing.some(
+    i =>
+      i.payments.reduce((t, p) => t + Number(p.amount), 0) < Number(i.total ?? 0) && due(i) < today
+  );
+  const accepted = offers
+    .filter(o => o.answer === 'accepted')
+    .reduce((s, o) => s + Number(o.total ?? 0), 0);
+  const leftToBill = Math.round((accepted - invoiced) * 100) > 0;
+  // the furthest step, as `cases::status`
   const stage: CaseStage =
-    bills.length > 0
-      ? open === 0
-        ? 'paid'
-        : paid === 0
+    billing.length + collectedParts(row.id).length > 0
+      ? overdue
+        ? 'overdue'
+        : open > 0 && paid === 0
           ? 'invoiced'
-          : 'partly-paid'
-      : offers.length === 0
-        ? 'draft'
-        : offers.some(o => o.answer === 'accepted')
-          ? 'accepted'
-          : offers.every(o => o.answer === 'declined')
+          : open > 0
+            ? 'partly-paid'
+            : leftToBill
+              ? 'partly-invoiced'
+              : 'paid'
+      : offers.some(o => o.answer === 'accepted')
+        ? 'accepted'
+        : offers.length > 0
+          ? offers.every(o => o.answer === 'declined')
             ? 'declined'
-            : 'offered';
+            : 'offered'
+          : created.some(i => i.kind === 'invoice')
+            ? 'cancelled'
+            : drafted('invoice')
+              ? 'drafting-invoice'
+              : drafted('offer')
+                ? 'drafting-offer'
+                : 'new';
   return {
     ...row,
     customer_name:

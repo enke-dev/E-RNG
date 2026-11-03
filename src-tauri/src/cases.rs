@@ -398,6 +398,7 @@ pub(crate) fn drop_if_empty(conn: &Connection, case_id: i64) -> Result<bool> {
 }
 
 /// One document as `status` reads it
+#[derive(Clone)]
 pub(crate) struct Standing {
     pub kind: Kind,
     pub status: Status,
@@ -408,6 +409,18 @@ pub(crate) struct Standing {
     /// Out of the running: another offer of its group accepted, or replaced (see `relations`)
     pub lapsed: bool,
     pub superseded: bool,
+    /// An invoice taken back by a created Stornorechnung, or that Stornorechnung: it bills nothing
+    pub settled: bool,
+    /// A created invoice: the day it is due, by the payment days it was made with
+    pub due: Option<String>,
+}
+
+/// The day an invoice issued on `issue_date` is due, `days` after (none: the same day)
+fn due_on(issue_date: Option<&str>, days: Option<u32>) -> Option<String> {
+    let issued = chrono::NaiveDate::parse_from_str(issue_date?, "%Y-%m-%d").ok()?;
+    issued
+        .checked_add_days(chrono::Days::new(u64::from(days.unwrap_or(0))))
+        .map(|d| d.format("%Y-%m-%d").to_string())
 }
 
 fn decimal(text: Option<&str>) -> Decimal {
@@ -415,8 +428,9 @@ fn decimal(text: Option<&str>) -> Decimal {
 }
 
 /// Where a Vorgang stands and what its sums are, read from its documents and, for a collected one,
-/// its part of the invoices collecting it (`collected_parts`). The one place that decides it.
-pub(crate) fn status(documents: &[Standing]) -> (CaseStage, [Decimal; 5]) {
+/// its part of the invoices collecting it (`collected_parts`), on `today`. The one place that
+/// decides it.
+pub(crate) fn status(documents: &[Standing], today: &str) -> (CaseStage, [Decimal; 5]) {
     let created = |kind: Kind| {
         documents
             .iter()
@@ -439,24 +453,48 @@ pub(crate) fn status(documents: &[Standing]) -> (CaseStage, [Decimal; 5]) {
         .sum();
     let paid: Decimal = created(Kind::Invoice).map(|d| d.paid).sum();
     let open = (invoiced - paid).max(Decimal::ZERO);
-    let offer_count = created(Kind::Offer).count();
-    let invoice_count = created(Kind::Invoice).count();
-    let stage = if invoice_count > 0 {
-        if open.is_zero() {
-            CaseStage::Paid
-        } else if paid.is_zero() {
+    // the furthest step: what is billed, else what is offered, else what is being written
+    let billing = || created(Kind::Invoice).filter(|d| !d.settled);
+    // an invoice not paid in full past its day
+    let overdue = billing().any(|d| {
+        d.paid < decimal(d.total.as_deref()) && d.due.as_deref().is_some_and(|due| due < today)
+    });
+    // accepted offers not billed in full yet: an Abschlag or a Teilrechnung so far
+    let left_to_bill = (accepted - invoiced).round_dp(2) > Decimal::ZERO;
+    let drafted = |kind: Kind| {
+        documents
+            .iter()
+            .any(|d| d.kind == kind && d.status == Status::Draft)
+    };
+    // while the customer is to pay, the payment tells; once they did, what is left to bill
+    let stage = if billing().next().is_some() {
+        if overdue {
+            CaseStage::Overdue
+        } else if !open.is_zero() && paid.is_zero() {
             CaseStage::Invoiced
-        } else {
+        } else if !open.is_zero() {
             CaseStage::PartlyPaid
+        } else if left_to_bill {
+            CaseStage::PartlyInvoiced
+        } else {
+            CaseStage::Paid
         }
-    } else if offer_count == 0 {
-        CaseStage::Draft
     } else if created(Kind::Offer).any(|d| d.answer == Some(Answer::Accepted)) {
         CaseStage::Accepted
-    } else if running().all(|d| d.answer == Some(Answer::Declined)) {
-        CaseStage::Declined
+    } else if created(Kind::Offer).next().is_some() {
+        if running().all(|d| d.answer == Some(Answer::Declined)) {
+            CaseStage::Declined
+        } else {
+            CaseStage::Offered
+        }
+    } else if created(Kind::Invoice).next().is_some() {
+        CaseStage::Cancelled
+    } else if drafted(Kind::Invoice) {
+        CaseStage::DraftingInvoice
+    } else if drafted(Kind::Offer) {
+        CaseStage::DraftingOffer
     } else {
-        CaseStage::Offered
+        CaseStage::New
     };
     (stage, [offered, accepted, invoiced, paid, open])
 }
@@ -517,7 +555,10 @@ fn documents_of(
     payments: &HashMap<i64, Vec<Payment>>,
 ) -> Result<(Vec<Standing>, Option<String>, bool)> {
     let mut statement = conn.prepare(&format!(
-        "SELECT id, kind, status, total, answer, draft, archived_at, {RELATION_COLUMNS}
+        "SELECT id, kind, status, total, answer, draft, archived_at,
+             json_extract(draft, '$.corrects.kind') AS correction,
+             json_extract(draft, '$.issue_date') AS issued,
+             json_extract(draft, '$.frozen.payment_days') AS days, {RELATION_COLUMNS}
          FROM invoices WHERE case_id = ?1 ORDER BY updated_at DESC, id DESC",
     ))?;
     let rows = statement
@@ -548,6 +589,17 @@ fn documents_of(
                     .and_then(Relation::from_column),
                 lapsed: lapsed(kind, status, answer, reference(r, "taken_by")?.is_some()),
                 superseded: reference(r, "superseded_by")?.is_some(),
+                settled: reference(r, "cancelled_by")?.is_some()
+                    || r.get::<_, Option<String>>("correction")?.as_deref() == Some("cancel"),
+                due: (kind == Kind::Invoice && status == Status::Exported)
+                    .then(|| -> rusqlite::Result<Option<String>> {
+                        Ok(due_on(
+                            r.get::<_, Option<String>>("issued")?.as_deref(),
+                            r.get("days")?,
+                        ))
+                    })
+                    .transpose()?
+                    .flatten(),
             };
             let archived = r.get::<_, Option<String>>("archived_at")?.is_some();
             Ok((standing, r.get::<_, String>("draft")?, archived))
@@ -629,6 +681,11 @@ fn collected_parts(
                 relation: None,
                 lapsed: false,
                 superseded: false,
+                settled: false,
+                due: due_on(
+                    Some(&draft.issue_date),
+                    draft.frozen.as_ref().and_then(|f| f.payment_days),
+                ),
             }))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -676,7 +733,8 @@ fn read_case(conn: &Connection, id: i64, payments: &HashMap<i64, Vec<Payment>>) 
         .into_iter()
         .chain(collected_parts(conn, id, payments)?)
         .collect();
-    let (stage, [offered, accepted, invoiced, paid, open]) = status(&standings);
+    let (stage, [offered, accepted, invoiced, paid, open]) =
+        status(&standings, &crate::utils::today());
     Ok(Case {
         id,
         context_id,
@@ -875,7 +933,7 @@ pub(crate) mod tests {
         assert_eq!(case.customer_name, draft().customer.name);
         assert_eq!(case.documents, 1);
         assert!(!case.locked);
-        assert_eq!(case.stage, CaseStage::Draft);
+        assert_eq!(case.stage, CaseStage::DraftingOffer);
         assert_eq!(
             store.case(second.case_id).unwrap().number,
             format!("VG-{}-002", year())
@@ -1048,6 +1106,67 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn what_is_due_and_what_is_left_to_bill_tell_where_the_customer_is() {
+        let doc = |kind: Kind, total: &str, paid: &str, answer: Option<Answer>| Standing {
+            kind,
+            status: Status::Exported,
+            total: Some(total.into()),
+            paid: crate::history::decimal(paid),
+            answer,
+            relation: None,
+            lapsed: false,
+            superseded: false,
+            settled: false,
+            due: (kind == Kind::Invoice).then(|| "2026-11-10".into()),
+        };
+        let offer = doc(Kind::Offer, "1000", "0", Some(Answer::Accepted));
+        let stage = |docs: &[Standing], today: &str| status(docs, today).0;
+        // an Abschlag of 300 on it, open, then due, then paid
+        let open = [offer.clone(), doc(Kind::Invoice, "300", "0", None)];
+        assert_eq!(stage(&open, "2026-11-10"), CaseStage::Invoiced);
+        assert_eq!(stage(&open, "2026-11-11"), CaseStage::Overdue);
+        let paid = [offer.clone(), doc(Kind::Invoice, "300", "300", None)];
+        assert_eq!(stage(&paid, "2026-11-11"), CaseStage::PartlyInvoiced);
+        // the Schlussrechnung for the rest, paid
+        let done = [
+            offer,
+            doc(Kind::Invoice, "300", "300", None),
+            doc(Kind::Invoice, "700", "700", None),
+        ];
+        assert_eq!(stage(&done, "2026-12-01"), CaseStage::Paid);
+    }
+
+    #[test]
+    fn a_vorgang_stands_at_its_furthest_step() {
+        let store = Store::in_memory().unwrap();
+        store
+            .save_context(&crate::context::Context::new(settings(), ""), None, None)
+            .unwrap();
+        let started = store.create_case(1, Some(7), "Bad").unwrap();
+        assert_eq!(started.stage, CaseStage::New);
+        let stage = || store.case(started.id).unwrap().stage;
+
+        store
+            .save_draft_in_case(started.id, Kind::Offer, &for_customer(Some(7)), None)
+            .unwrap();
+        assert_eq!(stage(), CaseStage::DraftingOffer);
+        // dated today, so not due yet
+        let mut written = for_customer(Some(7));
+        written.issue_date = crate::utils::today();
+        let invoice = store
+            .save_draft_in_case(started.id, Kind::Invoice, &written, None)
+            .unwrap();
+        assert_eq!(stage(), CaseStage::DraftingInvoice);
+
+        // an invoice taken back bills nothing: neither paid nor open, cancelled
+        bake(&store, invoice.id, "RE-2026-001", "100");
+        assert_eq!(stage(), CaseStage::Invoiced);
+        let storno = store.cancel_invoice(invoice.id, "2026-11-02").unwrap();
+        bake(&store, storno.id, "RE-2026-002", "-100");
+        assert_eq!(stage(), CaseStage::Cancelled);
+    }
+
+    #[test]
     fn where_a_vorgang_stands_comes_from_its_documents() {
         let store = Store::in_memory().unwrap();
         let offer = store
@@ -1072,13 +1191,17 @@ pub(crate) mod tests {
         assert_eq!(store.case(case).unwrap().stage, CaseStage::Accepted);
         assert_eq!(store.case(case).unwrap().accepted, "1000");
 
+        // dated today, so not due yet
+        let today = crate::utils::today();
         let first = store
-            .invoice_from_offer(offer.id, "2026-10-22", &settings())
+            .invoice_from_offer(offer.id, &today, &settings())
             .unwrap();
         bake(&store, first.id, "RE-2026-001", "400");
         // the offer is billed in full, a second invoice bills something else of the Vorgang
+        let mut other = draft();
+        other.issue_date.clone_from(&today);
         let second = store
-            .save_draft_in_case(case, Kind::Invoice, &draft(), None)
+            .save_draft_in_case(case, Kind::Invoice, &other, None)
             .unwrap();
         bake(&store, second.id, "RE-2026-002", "600.50");
         let invoiced = store.case(case).unwrap();

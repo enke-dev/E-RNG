@@ -295,8 +295,9 @@ mod tests {
             .collect(&[a.case_id, other.case_id], "2026-11-02", "Sammel")
             .is_err());
 
+        // dated today, so not due while the test looks at it
         let invoice = store
-            .collect(&[a.case_id, b.case_id], "2026-11-02", "Sammel")
+            .collect(&[a.case_id, b.case_id], &crate::utils::today(), "Sammel")
             .unwrap();
         let sources: Vec<_> = invoice
             .draft

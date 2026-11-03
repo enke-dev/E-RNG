@@ -2,27 +2,36 @@ import type { CaseStage, Kind } from './api.utils.js';
 
 /** Where a Vorgang stands, as the UI says it */
 export const CASE_STAGES: Record<CaseStage, string> = {
-  draft: 'Entwurf',
-  offered: 'Angeboten',
-  accepted: 'Angenommen',
-  declined: 'Abgelehnt',
-  invoiced: 'Berechnet',
+  new: 'Neu',
+  'drafting-offer': 'Angebot in Arbeit',
+  'drafting-invoice': 'Rechnung in Arbeit',
+  offered: 'Angebot erstellt',
+  accepted: 'Angebot angenommen',
+  declined: 'Angebot abgelehnt',
+  invoiced: 'Rechnung gestellt',
   'partly-paid': 'Teilweise bezahlt',
+  overdue: 'Überfällig',
+  'partly-invoiced': 'Teilweise berechnet',
   paid: 'Bezahlt',
+  cancelled: 'Storniert',
 };
 
 /** The tag colour of a stage */
 export const STAGE_VARIANTS: Record<CaseStage, string> = {
-  draft: 'neutral',
+  new: 'neutral',
+  'drafting-offer': 'neutral',
+  'drafting-invoice': 'neutral',
   offered: 'brand',
   accepted: 'success',
   declined: 'danger',
   invoiced: 'brand',
   'partly-paid': 'warning',
+  overdue: 'danger',
+  'partly-invoiced': 'brand',
   paid: 'success',
+  cancelled: 'neutral',
 };
 
-/** What a Vorgang is called: its customer and, last, its internal title if it has one */
 /**
  * The address of the Vorgänge, or of a document in them: `new` becomes `new-offer` or
  * `new-invoice`, the kind is all a new one has; `new-offer@12` makes it in Vorgang 12. A document

@@ -956,8 +956,12 @@ pub struct ListEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CaseStage {
-    /// Nothing created yet
-    Draft,
+    /// No documents yet
+    New,
+    /// An offer is being written, nothing created yet
+    DraftingOffer,
+    /// An invoice is being written, nothing created yet
+    DraftingInvoice,
     /// Offers created, none answered yet
     Offered,
     Accepted,
@@ -966,8 +970,14 @@ pub enum CaseStage {
     /// Invoiced, nothing paid
     Invoiced,
     PartlyPaid,
-    /// Every invoice paid completely
+    /// An invoice not paid in full past its due day
+    Overdue,
+    /// What is invoiced is paid, accepted offers are not billed in full yet
+    PartlyInvoiced,
+    /// Every invoice paid completely, the accepted offers billed in full
     Paid,
+    /// Its invoices all cancelled, no offer to fall back on
+    Cancelled,
 }
 
 /// A Vorgang: the documents of one business case for one customer

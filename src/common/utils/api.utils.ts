@@ -100,8 +100,20 @@ export interface CaseSettings {
 }
 
 /** Where a Vorgang stands, read from its documents */
+/** Where a Vorgang stands, its furthest step (`cases::status`) */
 export type CaseStage =
-  'draft' | 'offered' | 'accepted' | 'declined' | 'invoiced' | 'partly-paid' | 'paid';
+  | 'new'
+  | 'drafting-offer'
+  | 'drafting-invoice'
+  | 'offered'
+  | 'accepted'
+  | 'declined'
+  | 'invoiced'
+  | 'partly-paid'
+  | 'overdue'
+  | 'partly-invoiced'
+  | 'paid'
+  | 'cancelled';
 
 /** The documents of one business case for one customer */
 export interface Case {
