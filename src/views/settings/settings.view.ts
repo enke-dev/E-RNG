@@ -1383,29 +1383,41 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       if (c.id === null) {
         return html`<wa-tag size="s" appearance="outlined">Neu</wa-tag>`;
       }
+      const others = available.get().length > 1;
+      // an incomplete one says so; switching to it opens its form to complete it
       if (c.missing.length > 0) {
-        return html`<wa-tag size="s" variant="warning">unvollständig</wa-tag>`;
+        return c.id === active || !others
+          ? html`<wa-tag size="s" variant="warning">unvollständig</wa-tag>`
+          : html`
+              <wa-button
+                size="xs"
+                appearance="outlined"
+                variant="warning"
+                class="tag"
+                title="Zu diesem Kontext wechseln und ihn vervollständigen"
+                @click="${() => void switchContext(c.id as number)}"
+              >
+                unvollständig
+              </wa-button>
+            `;
       }
-      return html`
-        ${
-          // with one context there is nothing to tell apart or to switch to
-          available.get().length < 2
-            ? nothing
-            : c.id === active
-              ? html`<wa-tag size="s" variant="brand">Aktiv</wa-tag>`
-              : html`
-                  <wa-button
-                    size="xs"
-                    appearance="outlined"
-                    variant="neutral"
-                    class="tag"
-                    @click="${() => void switchContext(c.id as number)}"
-                  >
-                    Wechseln
-                  </wa-button>
-                `
-        }
-      `;
+      // with one context there is nothing to tell apart or to switch to
+      if (!others) {
+        return nothing;
+      }
+      return c.id === active
+        ? html`<wa-tag size="s" variant="brand">Aktiv</wa-tag>`
+        : html`
+            <wa-button
+              size="xs"
+              appearance="outlined"
+              variant="neutral"
+              class="tag"
+              @click="${() => void switchContext(c.id as number)}"
+            >
+              Wechseln
+            </wa-button>
+          `;
     };
     const group = (id: number | 'new', heading: string, extra: unknown = nothing) => html`
       <erng-list-group heading="${heading}" ?placeholder="${id === 'new'}">
