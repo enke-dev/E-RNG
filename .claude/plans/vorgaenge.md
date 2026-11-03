@@ -1,27 +1,30 @@
 # Vorgänge – Plan
 
 **Status (2026-11-03): phases 1–9 done and reviewed, the decisions below settled, not pushed yet.**
+The UI built on it (the Vorgänge as the only list, the document graph, the stages) is in
+[ui-followups.md](ui-followups.md).
 Details of what is built are in `docs/development.md`. A living plan: decisions are edited in place,
 what is dropped is removed, not kept as history.
 
 ## Idea
 
 A **Vorgang** wraps the documents of one business case for one customer: offers, invoices and the drafts
-traded with the customer before a document is baked. It has its own number and, later, a timeline built
-from the history of its documents. Users who only want offers and invoices never have to see it.
+traded with the customer before a document is baked. It has its own number, a name and a timeline built
+from the history of its documents. It is where documents are found and started.
 
 ## Model
 
-- **Every document is in exactly one Vorgang.** Creating a plain offer or invoice creates its Vorgang
-  with it, unseen. So there is one model, no "document without Vorgang" case, and any document's
-  Vorgang can be picked up later to add more to it.
-- **A Vorgang has**: context, number, customer, an optional internal title (`Badsanierung`), created at.
-  Its status is not stored, it is derived from its documents (offered, accepted, invoiced, open
-  amount, paid completely), archived when all its documents are.
-- **Starting one**: `Neuer Vorgang` asks for the customer and makes an empty Vorgang; documents are
-  added to it. A plain new offer or invoice makes its Vorgang with it. Deleting a document that leaves
-  its Vorgang empty deletes the Vorgang too (a gap in the numbers, which is fine); one made empty by
-  `Neuer Vorgang` stays until deleted by hand.
+- **Every document is in exactly one Vorgang.** There is one model, no "document without Vorgang"
+  case, and any Vorgang can take more documents.
+- **A Vorgang has**: context, number, customer, a name (`Badsanierung`, never blank), created at. Its
+  stage is not stored, it is derived from its documents (its furthest step, see
+  [ui-followups.md](ui-followups.md)), archived when all its documents are.
+- **Starting one**: `Neuer Vorgang` asks for the customer and the name and makes an empty Vorgang;
+  documents are started on its page. A copy or a Folgeangebot in a new Vorgang takes the original's
+  name, a Sammelrechnung asks for one; a plain new document (the store still allows it) and the
+  migration name theirs after the first document. Deleting a document that leaves its Vorgang empty
+  deletes the Vorgang too (a gap in the numbers, which is fine); one made empty by `Neuer Vorgang`
+  stays until deleted by hand.
 - **The customer belongs to the Vorgang**, its documents take it from there.
   - While the Vorgang holds a single document that is not baked, the customer can be changed (as today
     on a draft), which changes the Vorgang's customer.
@@ -81,21 +84,13 @@ from the history of its documents. Users who only want offers and invoices never
 
 ## UI
 
-Reuse what exists, the looks are not decided yet.
+The list, the Vorgang page and its graph moved on with [ui-followups.md](ui-followups.md). From
+this plan:
 
-- **Navigation**: while this plan is built, "Vorgänge" is a new main entry before "Angebote" and
-  "Rechnungen". When it is done, both may be dropped in favour of "Vorgänge" alone (done with the
-  UI follow-ups).
-- **Vorgänge list**: the sidebar list with inset items, as in the settings. Every Vorgang is a group,
-  the single-document ones too (to be revisited with the UI follow-ups): number, customer and the
-  internal title last as the header, which opens the Vorgang page; its documents inset below by issue
-  date (from phase 6 offers before the
-  invoices billing them), an action to add an offer or invoice. Filterable by kind, status and
-  customer.
-- **Document history**: a vertical timeline as the last card of the document view (after the
-  timelines of estino-ui or the kvlm website).
-- **Duplicating** asks every time: "Neuer Vorgang" (preselected, a copy as today; the customer may be
-  changed) or "In diesem Vorgang" (customer locked). From phase 8 a new one is a Folgevorgang.
+- **Document history**: a vertical timeline as the last card of the document view and of the
+  Vorgang page (the merged history of its documents).
+- **Duplicating** asks every time: "Neuer Vorgang" (preselected, a copy; the customer may be
+  changed) or "In diesem Vorgang" (customer locked). A Folgeangebot is a copy in a Folgevorgang.
 
 ## Relations
 

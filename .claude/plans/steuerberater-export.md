@@ -56,8 +56,8 @@ API needs Marktplatz partner registration and OAuth, too heavy for this app. The
 
 ## Frontend (tier A)
 
-- "Export for advisor" entry in the invoice list (or its own view): period presets, status, preview count and totals before exporting, then the save dialog.
-- Invoice list: same period filter to reuse (the filter is useful on its own).
+- "Export für den Steuerberater" as its own view or a settings page (the lists of invoices are gone, the Vorgänge are the list): period presets, status, preview count and totals before exporting, then the save dialog.
+- The period filter may also serve the Vorgänge (an overview of a period's invoices).
 
 ## Tests
 
@@ -69,7 +69,7 @@ API needs Marktplatz partner registration and OAuth, too heavy for this app. The
 
 ## Manual checks
 
-Invoice list filters, export dialog and presets, opened ZIP and CSV in Excel/Numbers (German locale), a PDF from the ZIP opened in the DATEV/ZUGFeRD viewer the advisor uses.
+Export dialog and presets, opened ZIP and CSV in Excel/Numbers (German locale), a PDF from the ZIP opened in the DATEV/ZUGFeRD viewer the advisor uses.
 
 ## Leftovers
 
