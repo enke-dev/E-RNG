@@ -30,8 +30,10 @@ Status (2026-11-03): the Vorgänge list by customer and the document graph are b
 - A document opens inside its Vorgang (`/cases/case-12/7`, the Vorgang stays selected in the list,
   `Schließen` goes back to it).
 - A Vorgang with one document shows a graph of one card.
-- The "Angebote" and "Rechnungen" entries stay for now, to get a feel for the new list; they may go
-  later, unless the flat lists earn their place (an overview of all open invoices, say).
+- The "Angebote" and "Rechnungen" entries are gone (2026-11-03): the menu starts with the
+  Vorgänge, `Neu` there is `Neuer Vorgang` or `Sammelrechnung`, documents start on the Vorgang
+  page; the old addresses lead into the Vorgänge. An overview of all open invoices may come back
+  as a filter of the Vorgänge if it is missed.
 
 Why a graph and not a row of page thumbnails ordered by date: invoices look alike at thumbnail size,
 and a row hides what a Vorgang is about, which invoice billed which offer, what is still open, what

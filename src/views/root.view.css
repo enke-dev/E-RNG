@@ -4,21 +4,22 @@
   height: 100dvh;
 }
 
-/* room for the traffic lights of the overlay title bar */
-:host([macos]) header {
-  padding-top: 2.25rem;
-}
-
 header {
   display: flex;
   align-items: start;
   gap: var(--wa-space-m);
-  padding: var(--wa-space-m) var(--wa-space-l);
+  padding: var(--wa-space-m) var(--wa-space-l) 0;
   border-bottom: var(--wa-border-width-s) var(--wa-border-style) var(--wa-color-surface-border);
+
+  /* room for the traffic lights of the overlay title bar */
+  :host([macos]) & {
+    padding-top: 2.25rem;
+  }
 }
 
 #start {
   display: flex;
+  padding-bottom: var(--wa-space-m);
   flex-direction: column;
   pointer-events: none;
 
@@ -36,6 +37,7 @@ header {
 
 nav {
   display: flex;
+  align-self: end;
   flex-direction: row;
   gap: var(--wa-space-m);
   margin-left: auto;
@@ -44,7 +46,7 @@ nav {
     color: var(--wa-color-text-quiet);
     text-decoration: none;
 
-    padding-block: var(--wa-space-2xs) var(--wa-space-xs);
+    padding-block: var(--wa-space-2xs) calc(var(--wa-space-s) - var(--wa-border-width-l));
     border-bottom: var(--wa-border-width-l) solid transparent;
 
     &[aria-current] {

@@ -14,23 +14,6 @@ import { today } from './form.utils.js';
 import { formatDate } from './format.utils.js';
 import { validUntil } from './kind.utils.js';
 
-/**
- * Where a document stands: a draft, or created. An invoice is open until it is paid, an offer valid
- * until its day has passed or the customer answered, or until it is out of the running: replaced
- * by a created Ersatzangebot, or lapsed because another offer of its alternatives was accepted.
- */
-export type Stage =
-  | 'draft'
-  | 'open'
-  | 'paid'
-  | 'valid'
-  | 'expired'
-  | 'accepted'
-  | 'declined'
-  | 'superseded'
-  | 'lapsed'
-  | 'cancelled';
-
 /** How an offer that refers to another is called: as a tag, as a document, on the row naming it */
 export const RELATIONS: Record<
   Relation,
@@ -59,24 +42,6 @@ export const RELATIONS: Record<
   },
 };
 
-export const STAGES: Record<Kind, [Stage, string][]> = {
-  invoice: [
-    ['draft', 'Entwürfe'],
-    ['open', 'Offen'],
-    ['paid', 'Bezahlt'],
-    ['cancelled', 'Storniert'],
-  ],
-  offer: [
-    ['draft', 'Entwürfe'],
-    ['valid', 'Gültig'],
-    ['expired', 'Abgelaufen'],
-    ['accepted', 'Angenommen'],
-    ['declined', 'Abgelehnt'],
-    ['superseded', 'Ersetzt'],
-    ['lapsed', 'Alternative angenommen'],
-  ],
-};
-
 /**
  * A created offer whose day has passed unanswered; one without a validity never expires, one out of
  * the running does not either
@@ -88,29 +53,6 @@ export const expired = (entry: Standing) =>
   !entry.lapsed &&
   entry.valid_until !== null &&
   entry.valid_until < today();
-
-export const stageOf = (entry: ListEntry): Stage => {
-  if (entry.status === 'draft') {
-    return 'draft';
-  }
-  if (entry.kind === 'offer') {
-    return (
-      entry.answer ??
-      (entry.superseded
-        ? 'superseded'
-        : entry.lapsed
-          ? 'lapsed'
-          : expired(entry)
-            ? 'expired'
-            : 'valid')
-    );
-  }
-  // a cancelled invoice and its Stornorechnung are settled with each other
-  if (entry.cancelled || entry.corrects?.kind === 'cancel') {
-    return 'cancelled';
-  }
-  return entry.paid_at ? 'paid' : 'open';
-};
 
 /** The context as its tag names it everywhere, else the seller the invoice was made with */
 const contextName = (entry: ListEntry) => {

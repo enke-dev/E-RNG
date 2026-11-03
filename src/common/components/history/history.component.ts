@@ -9,10 +9,11 @@ import { customElement, property, state } from 'lit/decorators.js';
 import type { DocumentEvent, InvoiceDraft, Kind, StoredInvoice } from '../../utils/api.utils.js';
 import { api } from '../../utils/api.utils.js';
 import { ErngElement } from '../../utils/base.utils.js';
+import { casesRoute } from '../../utils/cases.utils.js';
 import { diffDrafts } from '../../utils/diff.utils.js';
 import { RELATIONS } from '../../utils/documents.utils.js';
 import { formatDate, formatMoment, money } from '../../utils/format.utils.js';
-import { kindRoute, KINDS } from '../../utils/kind.utils.js';
+import { KINDS } from '../../utils/kind.utils.js';
 import { goto } from '../../utils/routing.utils.js';
 import type { VersionKey } from '../compare/compare.component.js';
 import { versionLabel } from '../compare/compare.component.js';
@@ -47,8 +48,8 @@ export class HistoryComponent extends ErngElement.withStyles(styles) {
   /** Raised by the editor whenever something may have happened, the history is read again */
   @property({ type: Number }) revision = 0;
 
-  /** Where a document named by an entry opens, in the list it is shown in */
-  @property({ attribute: false }) route: (kind: Kind, id: number) => string = kindRoute;
+  /** Where a document named by an entry opens: by its id in the Vorgänge, or as the view says */
+  @property({ attribute: false }) route: (kind: Kind, id: number) => string = casesRoute;
 
   /** The draft as it is now, to compare the kept versions with; none for a created document */
   @property({ attribute: false }) current: InvoiceDraft | undefined;

@@ -69,14 +69,13 @@ import {
   quantityOf,
   sourceName,
 } from '../../common/utils/billing.utils.js';
-import { caseRoute } from '../../common/utils/cases.utils.js';
+import { caseRoute, casesRoute } from '../../common/utils/cases.utils.js';
 import { activeContext, contextById, ensureContexts } from '../../common/utils/context.utils.js';
 import { detailTags, RELATIONS, standingOf, statusOf } from '../../common/utils/documents.utils.js';
 import { nullable, text } from '../../common/utils/form.utils.js';
 import { formatDate, percent } from '../../common/utils/format.utils.js';
 import {
   draftTitle,
-  kindRoute,
   KINDS,
   otherKind,
   parseDays,
@@ -116,8 +115,8 @@ export class InvoiceEditView extends ErngElement.withStyles(reorderStyles, style
   /** A new document goes into this Vorgang and takes its customer; else it gets one of its own */
   @property({ type: Number, attribute: 'case-id' }) caseId: number | null = null;
 
-  /** Where a document is shown: its kind's list, or the Vorgänge when opened from there */
-  @property({ attribute: false }) route: (kind: Kind, id?: number | string) => string = kindRoute;
+  /** Where a document is shown, in the Vorgänge; the view gives a route that keeps the Vorgang */
+  @property({ attribute: false }) route: (kind: Kind, id?: number | string) => string = casesRoute;
 
   private readonly reorder = new Reorder(this, {
     rows: '.position:not(.head)',

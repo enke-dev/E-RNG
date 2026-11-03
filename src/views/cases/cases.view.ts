@@ -35,18 +35,11 @@ import {
   parseSelection,
   STAGE_VARIANTS,
 } from '../../common/utils/cases.utils.js';
-import {
-  activeContext,
-  available,
-  contextById,
-  label,
-  ready,
-  readyForOffers,
-} from '../../common/utils/context.utils.js';
+import { activeContext, available, contextById, label } from '../../common/utils/context.utils.js';
 import styles from '../../common/utils/documents.utils.css';
 import { yearOf } from '../../common/utils/documents.utils.js';
 import { formatDate, money } from '../../common/utils/format.utils.js';
-import { haystack, kindRoute, KINDS } from '../../common/utils/kind.utils.js';
+import { haystack, KINDS } from '../../common/utils/kind.utils.js';
 import { notifyError } from '../../common/utils/notify.utils.js';
 import { goto, redirect } from '../../common/utils/routing.utils.js';
 
@@ -293,15 +286,6 @@ export class CasesView extends ErngElement.withStyles(styles) {
     this.stages = stages;
   }
 
-  /**
-   * A new document starts here, in a Vorgang or one of its own, unless its context lacks what the
-   * kind needs: its route sends the user there
-   */
-  private create(kind: Kind, inCase?: number) {
-    const fit = kind === 'offer' ? readyForOffers.get() : ready.get();
-    goto(fit ? casesRoute(kind, 'new', inCase) : kindRoute(kind, 'new'));
-  }
-
   /** What the status menu says when closed */
   private get statusLabel(): string {
     const picked = STAGES.filter(([stage]) => this.stages.has(stage)).map(([, name]) => name);
@@ -463,7 +447,7 @@ export class CasesView extends ErngElement.withStyles(styles) {
     `;
   }
 
-  /** "Neu": an offer or invoice of its own, or a Vorgang to put them in */
+  /** "Neu": a Vorgang to put documents in, or a Sammelrechnung of several; documents start in theirs */
   private renderCreate(slot: string) {
     return html`
       <wa-dropdown
@@ -474,19 +458,14 @@ export class CasesView extends ErngElement.withStyles(styles) {
             this.starting = true;
           } else if (value === 'collect') {
             this.collecting = true;
-          } else {
-            this.create(value as Kind);
           }
         }}"
       >
         <wa-button slot="trigger" size="s" variant="brand" with-caret ?disabled="${this.unsaved}">
           Neu
         </wa-button>
-        <wa-dropdown-item value="offer">${KINDS.offer.newLabel}</wa-dropdown-item>
-        <wa-dropdown-item value="invoice">${KINDS.invoice.newLabel}</wa-dropdown-item>
-        <wa-divider></wa-divider>
-        <wa-dropdown-item value="case">Neuer Vorgang …</wa-dropdown-item>
-        <wa-dropdown-item value="collect">Sammelrechnung …</wa-dropdown-item>
+        <wa-dropdown-item value="case">Neuer Vorgang</wa-dropdown-item>
+        <wa-dropdown-item value="collect">Sammelrechnung</wa-dropdown-item>
       </wa-dropdown>
     `;
   }

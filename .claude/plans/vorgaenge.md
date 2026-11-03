@@ -84,7 +84,8 @@ from the history of its documents. Users who only want offers and invoices never
 Reuse what exists, the looks are not decided yet.
 
 - **Navigation**: while this plan is built, "Vorgänge" is a new main entry before "Angebote" and
-  "Rechnungen". When it is done, both may be dropped in favour of "Vorgänge" alone.
+  "Rechnungen". When it is done, both may be dropped in favour of "Vorgänge" alone (done with the
+  UI follow-ups).
 - **Vorgänge list**: the sidebar list with inset items, as in the settings. Every Vorgang is a group,
   the single-document ones too (to be revisited with the UI follow-ups): number, customer and the
   internal title last as the header, which opens the Vorgang page; its documents inset below by issue

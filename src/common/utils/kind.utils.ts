@@ -3,14 +3,11 @@ import { formatDate, money } from './format.utils.js';
 
 /** What a kind of document is called in the UI: invoices and offers share their views, not their words */
 export interface KindTexts {
-  /** The list in the menu and the heading of its views */
+  /** The plural, a heading over several */
   list: string;
   /** What one document is called, for headings and dialogs */
   noun: string;
   newLabel: string;
-  search: string;
-  empty: string;
-  none: string;
   dateLabel: string;
   /** The default headline of a draft, the file name of its PDF; the settings may write another */
   draftTitle: string;
@@ -35,9 +32,6 @@ export const KINDS: Record<Kind, KindTexts> = {
     list: 'Rechnungen',
     noun: 'Rechnung',
     newLabel: 'Neue Rechnung',
-    search: 'Rechnungen suchen',
-    empty: 'Noch keine Rechnungen.',
-    none: 'Keine Rechnung ausgewählt.',
     dateLabel: 'Rechnungsdatum',
     draftTitle: 'Rechnungsentwurf',
     create: 'Prüfen und erstellen',
@@ -55,9 +49,6 @@ export const KINDS: Record<Kind, KindTexts> = {
     list: 'Angebote',
     noun: 'Angebot',
     newLabel: 'Neues Angebot',
-    search: 'Angebote suchen',
-    empty: 'Noch keine Angebote.',
-    none: 'Kein Angebot ausgewählt.',
     dateLabel: 'Angebotsdatum',
     draftTitle: 'Angebotsentwurf',
     create: 'Angebot erstellen',
@@ -72,15 +63,6 @@ export const KINDS: Record<Kind, KindTexts> = {
     missingContext: 'Für das Angebot fehlt der Kontext.',
   },
 };
-
-/** The address of a kind's list, or of one of its documents (`new`, `none`, an id); `/` stays the invoices */
-export function kindRoute(kind: Kind, id?: number | string): string {
-  const base = kind === 'offer' ? '/offers' : '/invoices';
-  if (id === undefined) {
-    return kind === 'offer' ? base : '/';
-  }
-  return `${base}/${id}`;
-}
 
 /** The headline of a draft as the settings of its kind write it, else the default */
 export function draftTitle(settings: Settings | undefined, kind: Kind): string {

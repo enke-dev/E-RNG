@@ -62,6 +62,7 @@ import {
   ensureContexts,
   label,
   loadContexts,
+  missingFor,
   switchContext,
 } from '../../common/utils/context.utils.js';
 import {
@@ -797,8 +798,7 @@ export class SettingsView extends ErngElement.withStyles(styles) {
       notify('Gespeichert. Bereits exportierte Rechnungen behalten ihre alten Angaben.');
       const back = blockedAt.get();
       // the way to the offers is open with less than the way to the invoices
-      const open =
-        (back?.startsWith('/offers') ? saved.missing_for_offers : saved.missing).length === 0;
+      const open = back !== undefined && missingFor(saved, back).length === 0;
       if (open && back !== undefined) {
         // the guard sent the user here, so they can go on where they wanted to
         blockedAt.set(undefined);

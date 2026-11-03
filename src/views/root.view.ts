@@ -35,8 +35,6 @@ import styles from './root.view.css';
 
 const NAV = [
   ['/cases', 'Vorgänge'],
-  ['/offers', 'Angebote'],
-  ['/', 'Rechnungen'],
   ['/customers', 'Kunden'],
   ['/templates', 'Positionen'],
   ['/settings', 'Einstellungen'],
@@ -44,17 +42,12 @@ const NAV = [
 
 /** Views that issue documents wait for a context that can, offers need less than invoices */
 const NEEDS_CONTEXT = new Map([
-  ['/', ready],
   ['/customers', ready],
   ['/templates', ready],
-  ['/offers', readyForOffers],
   ['/cases', readyForOffers],
 ]);
 
-const isActive = (href: string) =>
-  href === '/'
-    ? location.pathname === '/' || location.pathname.startsWith('/invoices')
-    : location.pathname.startsWith(href);
+const isActive = (href: string) => location.pathname.startsWith(href);
 
 @customElement('erng-root')
 export class RootView extends ErngElement.withStyles(styles) {

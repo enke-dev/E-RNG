@@ -1,6 +1,6 @@
 import { computed, signal } from '@lit-labs/signals';
 
-import type { Context } from './api.utils.js';
+import type { Context, Kind } from './api.utils.js';
 import { api } from './api.utils.js';
 import { confirmLeave } from './leave.utils.js';
 import { recallText, rememberText } from './memory.utils.js';
@@ -37,6 +37,19 @@ export const readyForOffers = computed(() => {
   const active = activeContext.get();
   return active !== undefined && active.missing_for_offers.length === 0;
 });
+
+/**
+ * What a view at `path` makes, so what its context needs: the Vorgänge offers unless a new invoice
+ * is started there (offers ask less of a context), the other views invoices
+ */
+export const neededFor = (path: string): Kind =>
+  path.startsWith('/cases') && !path.includes('new-invoice') ? 'offer' : 'invoice';
+
+/** What the context still lacks for what a view at `path` makes */
+export const missingFor = (
+  context: Pick<Context, 'missing' | 'missing_for_offers'>,
+  path: string
+) => (neededFor(path) === 'offer' ? context.missing_for_offers : context.missing);
 
 /** Where the user wanted to go when the guard sent them to a context's form, to go back there */
 export const blockedAt = signal<string | undefined>(undefined);
@@ -88,15 +101,13 @@ export function applyBrand(brand: string | undefined) {
  * Makes another context the active one. The views of the old context go away with the switch, so
  * unsaved edits are the user's call. The settings stay where they are (the same page of the other
  * context, a layout stays a layout) unless the new context cannot issue invoices yet, then its form
- * opens; an invoice or offer stays with the context it was made under, so the list of the new one
- * opens instead. Returns whether the switch happened.
+ * opens; a document or Vorgang stays with the context it was made under, so the Vorgänge of the new
+ * one open instead. Returns whether the switch happened.
  */
 export async function switchContext(id: number): Promise<boolean> {
   const next = contextById(id);
   const path = location.pathname;
-  // offers ask less of a context than invoices do
-  const missing = path.startsWith('/offers') ? next?.missing_for_offers : next?.missing;
-  const incomplete = (missing?.length ?? 0) > 0;
+  const incomplete = next !== undefined && missingFor(next, path).length > 0;
   // in the settings the page stays: the same page of the other context, a layout stays a layout
   const page = /^\/settings\/context-(?:new|\d+)-(company|bank|rates|units|offers|invoices)$/.exec(
     path
@@ -108,11 +119,9 @@ export async function switchContext(id: number): Promise<boolean> {
       ? `/settings/context-${id}-${page}`
       : inSettings
         ? path
-        : path.startsWith('/invoices/')
-          ? '/'
-          : path.startsWith('/offers/')
-            ? '/offers'
-            : path;
+        : path.startsWith('/cases/')
+          ? '/cases'
+          : path;
   if (!(await confirmLeave(target))) {
     return false;
   }
