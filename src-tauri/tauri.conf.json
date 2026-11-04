@@ -5,7 +5,7 @@
   "identifier": "dev.enke.e-rng",
   "build": {
     "beforeDevCommand": "bun run generate && vite dev --config .configs/vite.config.ts",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:2300",
     "beforeBuildCommand": "bun run generate && vite build --config .configs/vite.config.ts",
     "frontendDist": "../dist"
   },
