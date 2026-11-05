@@ -275,13 +275,21 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          git apply bump.patch
+          # A rerun after a failed tag push finds the bump already on main.
+          if git apply --check bump.patch 2>/dev/null; then
+            git apply bump.patch
+            git add -A -- . ':!bump.patch'
+            git commit -m "chore: release ${VERSION}"
+            git push origin HEAD:main
+          elif git apply -R --check bump.patch 2>/dev/null; then
+            echo "Release commit for ${VERSION} is already on main."
+          else
+            echo "::error::bump.patch neither applies nor is applied on main." && exit 1
+          fi
           rm bump.patch
-          git add -A
-          git commit -m "chore: release ${VERSION}"
-          git push origin HEAD:main
-          # Move tauri-action's tag onto the release commit.
-          git tag -f "v${VERSION}" -m "E-RNG ${VERSION}"
+          # Move tauri-action's tag onto the release commit; main may have moved on since a first attempt.
+          release=$(git log -1 --format=%H --grep="^chore: release ${VERSION//./\\.}$")
+          git tag -f "v${VERSION}" -m "E-RNG ${VERSION}" "${release:?no release commit for ${VERSION}}"
           git push -f origin "v${VERSION}"
 
       - name: Publish release
