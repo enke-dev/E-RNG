@@ -1,23 +1,23 @@
 {
-  "version": "0.9.0",
+  "version": "0.9.1",
   "notes": "See the assets to download this version and install.",
-  "pub_date": "2026-11-03T22:42:33.696Z",
+  "pub_date": "2026-11-04T23:13:58.027Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Z3k4bWN2dCtoR2xocVoyOEd5MzFGR3NHU2ZwZ081TG55Ti9OMkMrNVBGSUtpQ0cyeTJnSEt3YTBHV0hCVnRzd3FUdDEzSHdpSDZqSlRyRjZRU2xqWGdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNzQ1NjYyCWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuOS4wCjIxVzJzTi9vcEIwMlFPb1Z3dHoyc3M4QmY3TnlyM25nMFBYWm9oa25GM3FOSjNrNVZIdEtnb2ljdDdMcDh1V0t0MHRYTWQxOG16YjgzWlBnWnpaK0RRPT0K",
-      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.9.0/E-RNG_0.9.0_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Zy9LdXowdmI0ZVhPRHF6L0kzL3UwNUJoVDEyN3Z3bnBRaVoySjg2WGQ3RFIxOUNYN2pKdUE3MzVYTm1MeFNPZG5RVDgwblovSWF4S29qVHY5K3NFY1FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODMzOTYwCWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuOS4xCkZBRWcxWkJBRkRTdTc4N0VWR3A5RHE3aG5ZUTBrTzc2U2dYSGtFYTIzMFRVcmhTeVYrbFdtY1RNZjNlWm55S3F6WnQ4UXljOHlZS1hIU3dEbWVDbURnPT0K",
+      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.9.1/E-RNG_0.9.1_aarch64.app.tar.gz"
     },
     "darwin-aarch64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Z3k4bWN2dCtoR2xocVoyOEd5MzFGR3NHU2ZwZ081TG55Ti9OMkMrNVBGSUtpQ0cyeTJnSEt3YTBHV0hCVnRzd3FUdDEzSHdpSDZqSlRyRjZRU2xqWGdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNzQ1NjYyCWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuOS4wCjIxVzJzTi9vcEIwMlFPb1Z3dHoyc3M4QmY3TnlyM25nMFBYWm9oa25GM3FOSjNrNVZIdEtnb2ljdDdMcDh1V0t0MHRYTWQxOG16YjgzWlBnWnpaK0RRPT0K",
-      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.9.0/E-RNG_0.9.0_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Zy9LdXowdmI0ZVhPRHF6L0kzL3UwNUJoVDEyN3Z3bnBRaVoySjg2WGQ3RFIxOUNYN2pKdUE3MzVYTm1MeFNPZG5RVDgwblovSWF4S29qVHY5K3NFY1FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODMzOTYwCWZpbGU6RS1STkcuYXBwLnRhci5negl2ZXJzaW9uOjAuOS4xCkZBRWcxWkJBRkRTdTc4N0VWR3A5RHE3aG5ZUTBrTzc2U2dYSGtFYTIzMFRVcmhTeVYrbFdtY1RNZjNlWm55S3F6WnQ4UXljOHlZS1hIU3dEbWVDbURnPT0K",
+      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.9.1/E-RNG_0.9.1_aarch64.app.tar.gz"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzBWQm93OHBXR25vZTV4VHRPMjRzSHlydzFDaFpoR212MUl6bzl4TmRWUXdDSHFpaDJtSEhoOG1CbHlVaGhCemsvV3dscGhldk1QN3FsR2dVRHJaeEFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNzQ1NzM1CWZpbGU6RS1STkdfMC45LjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuOS4wCndnclUxY2RlVnRkbHExb3lPcnhkbjV6Tnc2K01Qc0RUbVRjcEJ1OTZGVHhVbG54RVM1UFBBR1JpWnhGa1Z5TE1DYUlGY0JnRGNGaHdTMkxZcmk1UUN3PT0K",
-      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.9.0/E-RNG_0.9.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Zy9yaEtQNXcrRFNtVDZMV1NQdTFUMXY4VVJsZnFXSDZ1Y1JPRkJrSlRQRUJGcnFEWndxMjNxWVREbG5jTjBXTU13elJwc3VVNUpWRHVPcStnSlc0Z2dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODM0MDIyCWZpbGU6RS1STkdfMC45LjFfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuOS4xCjdPbFlpWmtpdVBQaFFIVjJjNHk5Qi8veDNVWVlCcFNkVTFxNnRpK3JvQW4wYnFaenpMSE5KRHgzbllwc2VPZE1SN2UxaDQ5TWtxQUNyQUdGdGZ1eENnPT0K",
+      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.9.1/E-RNG_0.9.1_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1ZzBWQm93OHBXR25vZTV4VHRPMjRzSHlydzFDaFpoR212MUl6bzl4TmRWUXdDSHFpaDJtSEhoOG1CbHlVaGhCemsvV3dscGhldk1QN3FsR2dVRHJaeEFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzNzQ1NzM1CWZpbGU6RS1STkdfMC45LjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuOS4wCndnclUxY2RlVnRkbHExb3lPcnhkbjV6Tnc2K01Qc0RUbVRjcEJ1OTZGVHhVbG54RVM1UFBBR1JpWnhGa1Z5TE1DYUlGY0JnRGNGaHdTMkxZcmk1UUN3PT0K",
-      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.9.0/E-RNG_0.9.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTRGxBY25ubnU1Zy9yaEtQNXcrRFNtVDZMV1NQdTFUMXY4VVJsZnFXSDZ1Y1JPRkJrSlRQRUJGcnFEWndxMjNxWVREbG5jTjBXTU13elJwc3VVNUpWRHVPcStnSlc0Z2dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODM0MDIyCWZpbGU6RS1STkdfMC45LjFfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuOS4xCjdPbFlpWmtpdVBQaFFIVjJjNHk5Qi8veDNVWVlCcFNkVTFxNnRpK3JvQW4wYnFaenpMSE5KRHgzbllwc2VPZE1SN2UxaDQ5TWtxQUNyQUdGdGZ1eENnPT0K",
+      "url": "https://github.com/enke-dev/E-RNG/releases/download/v0.9.1/E-RNG_0.9.1_x64-setup.exe"
     }
   }
 }
